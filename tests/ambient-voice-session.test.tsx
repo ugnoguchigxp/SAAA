@@ -236,9 +236,15 @@ describe("ambient voice session", () => {
     const permission = new Promise<MediaStream>((resolve) => {
       resolvePermission = resolve;
     });
+    let permissionRequests = 0;
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
-      value: { getUserMedia: () => permission },
+      value: {
+        getUserMedia: () =>
+          ++permissionRequests === 1
+            ? permission
+            : Promise.resolve({ getTracks: () => [{ stop: () => undefined }] }),
+      },
     });
     const { createRoot } = await import("react-dom/client");
     const { createElement } = await import("react");
@@ -265,10 +271,16 @@ describe("ambient voice session", () => {
       await Promise.resolve();
     });
     expect(apiRef.current!.voiceState).toBe("preparing");
+    expect(invokeCalls.some((call) => call.command === "start_voice_asr_session")).toBe(false);
     await act(async () => {
       await apiRef.current!.toggleAmbientListening(false);
     });
-    expect(apiRef.current!.voiceState).toBe("preparing");
+    expect(apiRef.current!.voiceState).toBe("stopped");
+
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening();
+    });
+    expect(apiRef.current!.voiceState).toBe("listening");
 
     let lateTrackStopped = false;
     resolvePermission({
@@ -278,8 +290,126 @@ describe("ambient voice session", () => {
       await startPromise;
     });
     expect(lateTrackStopped).toBe(true);
-    expect(apiRef.current!.voiceState).toBe("stopped");
+    expect(apiRef.current!.voiceState).toBe("listening");
     expect(apiRef.current!.voiceActionInProgress).toBe(false);
+  });
+
+  test("a repeated start request does not invalidate the pending microphone request", async () => {
+    restoreDom = installJsdom().restore;
+    restoreAudio = installAudioGlobals();
+    let resolvePermission!: (stream: MediaStream) => void;
+    let permissionRequests = 0;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: () => {
+          if (++permissionRequests !== 1)
+            return Promise.resolve({ getTracks: () => [{ stop: () => undefined }] });
+          return new Promise<MediaStream>((resolve) => {
+            resolvePermission = resolve;
+          });
+        },
+      },
+    });
+    const { createRoot } = await import("react-dom/client");
+    const { createElement } = await import("react");
+    const apiRef: MutableRefObject<SessionApi | null> = { current: null };
+    const sessionRef: MutableRefObject<ConversationSession> = {
+      current: { ...initialConversationSession },
+    };
+    const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
+    root = createRoot(document.getElementById("root")!);
+    await act(async () =>
+      root!.render(
+        createElement(Harness, { apiRef, sessionRef, pendingRef, settings: voiceSettings }),
+      ),
+    );
+    let startPromise!: Promise<void>;
+    await act(async () => {
+      startPromise = apiRef.current!.toggleAmbientListening(true);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening(true);
+    });
+    resolvePermission({ getTracks: () => [{ stop: () => undefined }] } as unknown as MediaStream);
+    await act(async () => {
+      await startPromise;
+    });
+    expect(apiRef.current!.voiceState).toBe("listening");
+    expect(apiRef.current!.voiceActionInProgress).toBe(false);
+  });
+
+  test("returns to stopped and allows retry after ASR startup fails", async () => {
+    restoreDom = installJsdom().restore;
+    restoreAudio = installAudioGlobals();
+    const { createRoot } = await import("react-dom/client");
+    const { createElement } = await import("react");
+    const apiRef: MutableRefObject<SessionApi | null> = { current: null };
+    const sessionRef: MutableRefObject<ConversationSession> = {
+      current: { ...initialConversationSession },
+    };
+    const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
+    root = createRoot(document.getElementById("root")!);
+    await act(async () =>
+      root!.render(
+        createElement(Harness, { apiRef, sessionRef, pendingRef, settings: voiceSettings }),
+      ),
+    );
+    let starts = 0;
+    invokeImpl.handler = async (command) => {
+      if (command === "start_voice_asr_session" && ++starts === 1)
+        throw new Error("asr-provider-unavailable");
+      return command;
+    };
+
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening();
+    });
+    expect(apiRef.current!.voiceState).toBe("stopped");
+    expect(apiRef.current!.listeningEnabled).toBe(false);
+
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening();
+    });
+    expect(starts).toBe(2);
+    expect(apiRef.current!.voiceState).toBe("listening");
+  });
+
+  test("records a microphone permission failure before ASR starts", async () => {
+    restoreDom = installJsdom().restore;
+    restoreAudio = installAudioGlobals();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          throw new DOMException("denied", "NotAllowedError");
+        },
+      },
+    });
+    const { createRoot } = await import("react-dom/client");
+    const { createElement } = await import("react");
+    const apiRef: MutableRefObject<SessionApi | null> = { current: null };
+    const sessionRef: MutableRefObject<ConversationSession> = {
+      current: { ...initialConversationSession },
+    };
+    const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
+    root = createRoot(document.getElementById("root")!);
+    await act(async () =>
+      root!.render(
+        createElement(Harness, { apiRef, sessionRef, pendingRef, settings: voiceSettings }),
+      ),
+    );
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening();
+    });
+    expect(apiRef.current!.voiceState).toBe("stopped");
+    const auditNames = invokeCalls
+      .filter((call) => call.command === "record_frontend_audit_event")
+      .map((call) => (call.args as { input: { eventName: string } }).input.eventName);
+    expect(auditNames).toContain("capture-toggle-requested");
+    expect(auditNames).toContain("capture-preflight-failed");
+    expect(invokeCalls.some((call) => call.command === "start_voice_asr_session")).toBe(false);
   });
 
   test("releases capture and returns to stopped when ASR stop fails", async () => {

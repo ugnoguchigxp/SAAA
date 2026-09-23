@@ -46,11 +46,8 @@ pub(crate) fn selected_tts_route(state: &AppState) -> Result<(TtsRoute, String, 
 
 pub(crate) fn stop_tts(state: &AppState, run_id: String) -> Result<(), String> {
     validate_identifier(&run_id, "run id")?;
-    if let Ok(active_runs) = state.active_runs.lock() {
-        if let Some(cancellation) = active_runs.get(&run_id) {
-            cancellation.cancel();
-        }
-    }
+    // Speech playback can share a run ID with an unfinished reasoning turn.
+    // Stopping audio must not cancel the model or its pending tool follow-up.
     state.streaming_tts.cancel(&run_id);
     Ok(())
 }
@@ -76,7 +73,7 @@ mod tests {
     }
 
     #[test]
-    fn stop_tts_validates_the_run_id_and_cancels_an_active_run() {
+    fn stop_tts_validates_the_run_id_without_cancelling_reasoning() {
         let state = state();
         assert!(stop_tts(&state, "bad run".into()).is_err());
         stop_tts(&state, "run_idle".into()).expect("missing speech session is ignored");
@@ -86,7 +83,7 @@ mod tests {
             .lock()
             .expect("active runs")
             .insert("run_speech".into(), cancellation.clone());
-        stop_tts(&state, "run_speech".into()).expect("active run cancels");
-        assert!(cancellation.is_cancelled());
+        stop_tts(&state, "run_speech".into()).expect("speech stops");
+        assert!(!cancellation.is_cancelled());
     }
 }

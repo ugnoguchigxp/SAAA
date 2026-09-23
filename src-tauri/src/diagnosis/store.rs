@@ -48,6 +48,16 @@ impl DiagnosisStore {
         Some(self.revision.fetch_add(1, Ordering::SeqCst) + 1)
     }
 
+    pub(crate) fn stage(&self, mut report: DiagnosisReport) {
+        report.running = true;
+        report.finished_at = None;
+        report.overall = DiagnosisStatus::Running;
+        *self
+            .latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = report;
+    }
+
     pub(crate) fn publish(&self, mut report: DiagnosisReport) {
         report.running = false;
         *self

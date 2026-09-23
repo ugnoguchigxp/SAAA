@@ -155,7 +155,16 @@ export function createConversationTurnControls(input: {
           break;
         }
         setRuntimeActivity((current) =>
-          appendConversationActivity(current, { type: "providerWorking" }),
+          appendConversationActivity(current, {
+            type:
+              event.kind === "web-search-started"
+                ? "webSearching"
+                : event.kind === "source-fetch-started"
+                  ? "sourceFetching"
+                  : event.kind === "source-retrieval-completed"
+                    ? "answerPreparing"
+                    : "providerWorking",
+          }),
         );
         break;
       case "providerFailed":
@@ -253,7 +262,7 @@ export function createConversationTurnControls(input: {
     const issueScope = issueCoordinatorRef.current.begin();
     markReasoningCancellation(runId);
     try {
-      await cancelRun(runId);
+      await cancelRun(runId, "user-stop");
     } catch (cause) {
       clearReasoningCancellation(runId);
       publishIssue(issueScope, toMessage(cause));

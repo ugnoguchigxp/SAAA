@@ -9,7 +9,7 @@ mock.module("@tauri-apps/api/event", () => ({
   listen: async () => async () => undefined,
 }));
 
-const { DiagnosisModal } = await import("../src/features/diagnosis/DiagnosisModal");
+const { DiagnosisPage } = await import("../src/features/diagnosis/DiagnosisPage");
 
 const ready = {
   revision: 1,
@@ -36,6 +36,69 @@ const ready = {
       message: "No model providers are configured",
       latencyMs: null,
     },
+    {
+      id: "harness.reachability",
+      group: "harness",
+      label: "Harness reachability",
+      status: "ok",
+      severity: "degraded",
+      message: "Agent connection and model readiness probe succeeded",
+      latencyMs: 12,
+    },
+    {
+      id: "harness.llm",
+      group: "harness",
+      label: "Harness LLM",
+      status: "skipped",
+      severity: "info",
+      message: "llm is not advertised",
+      latencyMs: null,
+    },
+    {
+      id: "harness.embedding",
+      group: "harness",
+      label: "Harness embedding",
+      status: "ok",
+      severity: "degraded",
+      message: "Embedding request returned a vector",
+      latencyMs: 20,
+    },
+    {
+      id: "harness.tts",
+      group: "harness",
+      label: "Harness TTS",
+      status: "fail",
+      severity: "degraded",
+      message: "Capability is not advertised by this Harness",
+      latencyMs: null,
+    },
+    {
+      id: "provider.system-tts",
+      group: "voice",
+      label: "System Voice",
+      status: "ok",
+      severity: "degraded",
+      message: "System text-to-speech is available",
+      latencyMs: 4,
+    },
+    {
+      id: "provider.deepseek",
+      group: "llm",
+      label: "DeepSeek V4.1 Flash",
+      status: "fail",
+      severity: "degraded",
+      message: "DeepSeek V4.1 Flash: Provider request failed",
+      latencyMs: null,
+    },
+    {
+      id: "provider.codex-sdk",
+      group: "llm",
+      label: "Codex SDK",
+      status: "ok",
+      severity: "degraded",
+      message: "Codex SDK: gpt-5.6-luna is ready",
+      latencyMs: null,
+    },
   ],
 };
 
@@ -49,38 +112,90 @@ afterEach(async () => {
   restore = null;
 });
 
-async function renderModal(report: typeof ready, onClose = () => undefined) {
+async function renderPage(report: typeof ready | null) {
   resetTauriCoreMock();
-  invokeImpl.handler = async () => report;
+  invokeImpl.handler = async (command) => {
+    if (command === "run_diagnosis") return report;
+    return null;
+  };
   restore = installJsdom().restore;
   await i18n.changeLanguage("ja");
   const { createRoot } = await import("react-dom/client");
   const { createElement } = await import("react");
   root = createRoot(document.getElementById("root")!);
-  await act(async () => root!.render(createElement(DiagnosisModal, { onClose })));
+  await act(async () => root!.render(createElement(DiagnosisPage)));
   await act(async () => {
     await Promise.resolve();
   });
 }
 
-test("diagnosis modal shows grouped items, blocks rerun while running, and closes on escape", async () => {
-  let closed = 0;
-  await renderModal(ready, () => {
-    closed += 1;
+test("diagnosis page shows stages, item list, and blocks rerun while running", async () => {
+  await renderPage(ready);
+  expect(document.body.textContent).toContain("診断開始");
+  expect(document.body.textContent).not.toContain("データベース");
+  const start = [...document.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("診断開始"),
+  );
+  await act(async () => {
+    start?.click();
+    await Promise.resolve();
   });
-  expect(document.querySelector('[role="dialog"]')).toBeTruthy();
-  expect(document.querySelectorAll(".diagnosis-modal-group")).toHaveLength(2);
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  const services = document.querySelector(".diagnosis-services")?.textContent ?? "";
+  const response = [...document.querySelectorAll(".diagnosis-services article")].find(
+    (card) => card.querySelector("strong")?.textContent === "応答",
+  );
+  expect(response?.textContent).toContain("正常");
+  expect(response?.textContent).not.toContain("対象外");
+  expect(services).toContain("応答");
+  expect(services).not.toContain("音声認識");
+  const speech = [...document.querySelectorAll(".diagnosis-services article")].find(
+    (card) => card.querySelector("strong")?.textContent === "音声合成",
+  );
+  expect(speech?.textContent).toContain("正常");
+  expect(speech?.textContent).not.toContain("失敗");
+  expect(services).toContain("音声合成");
+  const embedding = [...document.querySelectorAll(".diagnosis-services article")].find(
+    (card) => card.querySelector("strong")?.textContent === "埋め込み",
+  );
+  expect(embedding?.textContent).toContain("正常");
+  expect(embedding?.textContent).not.toContain("対象外");
+  expect(services).toContain("埋め込み");
+  expect(services).not.toContain("保存");
+  expect(services).not.toContain("DeepSeek");
+  expect(services).not.toContain("Codex SDK");
+  expect(document.querySelector(".diagnosis-foundation")).toBeNull();
+  const state = document.querySelector(".diagnosis-state")?.textContent ?? "";
+  expect(state).toContain("データベース");
+  expect(state).not.toContain("個人状態");
+  expect(state).not.toContain("ワールドモデル");
+  expect(state).not.toContain("ToolChain");
+  const reasoning = document.querySelector(".diagnosis-reasoning")?.textContent ?? "";
+  expect(reasoning).toContain("DeepSeek");
+  expect(reasoning).toContain("Codex SDK");
+  expect(document.body.textContent).toContain("一部に注意があります");
   expect(document.body.textContent).toContain("データベース");
   expect(document.body.textContent).toContain("モデルプロバイダ設定");
   const rerun = [...document.querySelectorAll("button")].find((button) =>
     button.textContent?.includes("再診断"),
   );
   expect(rerun?.hasAttribute("disabled")).toBe(false);
-  window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  expect(closed).toBe(1);
 
   await act(async () => root?.unmount());
-  await renderModal({ ...ready, running: true, overall: "running" });
+  resetTauriCoreMock();
+  invokeImpl.handler = async () => new Promise(() => undefined);
+  restore = installJsdom().restore;
+  const { createRoot } = await import("react-dom/client");
+  const { createElement } = await import("react");
+  root = createRoot(document.getElementById("root")!);
+  await act(async () => root!.render(createElement(DiagnosisPage)));
+  const pendingStart = [...document.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("診断開始"),
+  );
+  await act(async () => {
+    pendingStart?.click();
+    await Promise.resolve();
+  });
   const busy = [...document.querySelectorAll("button")].find((button) =>
     button.textContent?.includes("診断中"),
   );

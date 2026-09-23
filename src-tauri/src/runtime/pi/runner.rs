@@ -20,11 +20,11 @@ pub fn run(writer: Arc<SqliteWriter>, run: String) {
     let result = execute(&writer, &run);
     let committed = writer.write(|c| {
         let tx = c.transaction().map_err(database_error)?;
-        let (job, delivery, status): (String, String, String) = tx
+        let (job, delivery, status, settings_json): (String, String, String, String) = tx
             .query_row(
-                "SELECT job_id,delivery,state FROM coding_runs WHERE id=?1",
+                "SELECT r.job_id,r.delivery,r.state,j.settings_json FROM coding_runs r JOIN coding_jobs j ON j.id=r.job_id WHERE r.id=?1",
                 [&run],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .map_err(database_error)?;
         let (state, value) = match result {
@@ -99,7 +99,14 @@ pub fn run(writer: Arc<SqliteWriter>, run: String) {
                 None,
                 None,
                 value["exitCode"].as_i64(),
-                crate::steward::evidence::PRODUCER_HOST_PI,
+                if serde_json::from_str::<Value>(&settings_json)
+                    .ok()
+                    .and_then(|settings| settings.get("implementationMethod").and_then(Value::as_str).map(str::to_string))
+                    .as_deref() == Some("codex-sdk") {
+                    crate::steward::evidence::PRODUCER_HOST_CODEX
+                } else {
+                    crate::steward::evidence::PRODUCER_HOST_PI
+                },
             );
             let _ = crate::steward::evidence::persist(&tx, &evidence);
         }
@@ -143,6 +150,12 @@ fn execute(writer: &SqliteWriter, run: &str) -> Result<Value, String> {
     let (job,workspace,session,settings,payload,binding):(String,String,String,String,String,Option<String>)=writer.read_serialized(|c|c.query_row("SELECT j.id,j.workspace_path,j.session_path,j.settings_json,r.payload,j.session_id FROM coding_runs r JOIN coding_jobs j ON j.id=r.job_id WHERE r.id=?1",[run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(database_error))?;
     let settings: CodingSettings =
         serde_json::from_str(&settings).map_err(|_| "coding_settings_invalid")?;
+    if !crate::coding::contracts::valid_implementation(&settings) {
+        return Err("coding_settings_invalid".into());
+    }
+    if settings.implementation_method == "codex-sdk" {
+        return crate::coding::codex_runner::execute(writer, run, &settings);
+    }
     process::check_settings(&settings)?;
     let workspace = PathBuf::from(workspace);
     if std::fs::canonicalize(&workspace).map_err(|_| "workspace_missing")? != workspace {
@@ -267,7 +280,7 @@ fn execute(writer: &SqliteWriter, run: &str) -> Result<Value, String> {
         json!({"summary":result.summary,"errors":result.errors+errors,"modelErrors":result.model_errors,"tools":result.tools,"lastEntryId":result.leaf,"sessionId":result.id,"complete":result.complete,"truncated":!result.complete,"meaning":"execution ended; goal achievement is not certified"}),
     )
 }
-fn source_valid(c: &rusqlite::Connection, run: &str) -> Result<bool, String> {
+pub(crate) fn source_valid(c: &rusqlite::Connection, run: &str) -> Result<bool, String> {
     c.query_row("SELECT EXISTS(
         SELECT 1 FROM coding_runs r
         JOIN coding_jobs j ON j.id=r.job_id

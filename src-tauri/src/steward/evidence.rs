@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const SCHEMA_VERSION: i64 = 1;
 pub(crate) const PRODUCER_HOST_PI: &str = "host_pi";
+pub(crate) const PRODUCER_HOST_CODEX: &str = "host_codex";
 pub(crate) const PRODUCER_HOST_RECIPE: &str = "host_recipe";
 pub(crate) const PRODUCER_LEGACY: &str = "legacy_unverified";
 
@@ -67,7 +68,7 @@ pub(crate) fn validate(evidence: &ExecutionEvidence) -> EvidenceStatus {
     }
     if !matches!(
         evidence.producer.as_str(),
-        PRODUCER_HOST_PI | PRODUCER_HOST_RECIPE
+        PRODUCER_HOST_PI | PRODUCER_HOST_CODEX | PRODUCER_HOST_RECIPE
     ) {
         return EvidenceStatus::Unknown("producer_unknown");
     }

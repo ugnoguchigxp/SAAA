@@ -72,10 +72,12 @@ describe("macOS microphone bundle configuration", () => {
 
   test("guards capture startup and finalization independently", () => {
     const app = chatVoiceSource();
-    expect(containsSource(app, "if (voiceSessionRef.current.actionInProgress) return")).toBe(true);
-    expect(app.indexOf("if (!shouldEnable)")).toBeLessThan(
-      app.indexOf("if (voiceSessionRef.current.actionInProgress) return"),
-    );
+    expect(
+      containsSource(app, "if (shouldEnable && voiceSessionRef.current.actionInProgress) {"),
+    ).toBe(true);
+    expect(
+      app.indexOf("if (shouldEnable && voiceSessionRef.current.actionInProgress) {"),
+    ).toBeLessThan(app.indexOf("const generation = ++voiceToggleGenerationRef.current"));
     expect(containsSource(app, "if (voiceSessionRef.current.finalizing)")).toBe(true);
     expect(containsSource(app, 'applyVoiceEvent({ type: "finalizeRequested", mode })')).toBe(true);
     expect(containsSource(app, 'applyEvent({ type: "captureStarting" })')).toBe(true);

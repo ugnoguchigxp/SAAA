@@ -104,7 +104,16 @@ pub(crate) fn list_settings_documents(
     let mut statement = connection
         .prepare_cached(
             "SELECT namespace, key, schema_version, value_json, updated_at
-             FROM settings_documents ORDER BY namespace, key",
+             FROM settings_documents
+             WHERE (namespace = 'providers.model' AND key = 'default')
+                OR (namespace = 'providers.agent' AND key = 'codex-sdk')
+                OR (namespace = 'routing.tasks' AND key = 'default')
+                OR (namespace = 'voice.runtime' AND key = 'default')
+                OR (namespace = 'security.runtime' AND key = 'default')
+                OR (namespace = 'ui.preferences' AND key = 'default')
+                OR (namespace = 'situation.runtime' AND key = 'default')
+                OR (namespace = 'routing.roles' AND key = 'default')
+             ORDER BY namespace, key",
         )
         .map_err(database_error)?;
     let documents = statement

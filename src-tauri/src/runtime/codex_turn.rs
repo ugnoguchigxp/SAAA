@@ -84,6 +84,7 @@ pub(crate) async fn execute_codex_turn(
             on_event_for_worker.as_ref(),
             &cancellation_for_worker,
             Some(&mut dispatch),
+            false,
         )
     })
     .await

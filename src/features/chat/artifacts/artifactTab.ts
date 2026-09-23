@@ -13,7 +13,14 @@ export type InteractivePreviewTab = {
   title: string;
 };
 
-export type ArtifactTab = SemanticUiTab | InteractivePreviewTab;
+export type SourceTab = {
+  kind: "source";
+  conversationId: string;
+  url: string;
+  title: string;
+};
+
+export type ArtifactTab = SemanticUiTab | InteractivePreviewTab | SourceTab;
 
 export type ArtifactWorkspaceState = {
   tabs: ArtifactTab[];
@@ -26,9 +33,9 @@ export type ArtifactWorkspaceAction =
   | { type: "select"; tabId: string };
 
 export function artifactTabId(tab: ArtifactTab): string {
-  return tab.kind === "semantic-ui"
-    ? tab.instance.viewId
-    : `preview:${tab.artifactId}:${tab.revisionId}`;
+  if (tab.kind === "semantic-ui") return tab.instance.viewId;
+  if (tab.kind === "source") return `source:${tab.conversationId}:${tab.url}`;
+  return `preview:${tab.artifactId}:${tab.revisionId}`;
 }
 
 export function artifactTabTitle(tab: ArtifactTab): string {

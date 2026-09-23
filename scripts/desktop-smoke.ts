@@ -25,6 +25,14 @@ try {
         ? join(root, "src-tauri/target/debug/bundle/macos/SAAA.app/Contents/MacOS/saaa")
         : join(root, `src-tauri/target/debug/saaa${process.platform === "win32" ? ".exe" : ""}`),
     ],
+    requiredChecks: [
+      "frontendRendered",
+      "ipcReady",
+      "snapshotLoaded",
+      "primaryConversationLoaded",
+      "databaseInitialized",
+    ],
+    readyTimeoutMs: 30_000,
     verifyBundle: mac ? () => verifyMacBundle(root) : undefined,
   });
   console.log("Desktop smoke passed: packaged frontend reported IPC ready.");

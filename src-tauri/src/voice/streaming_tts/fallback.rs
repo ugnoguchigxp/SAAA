@@ -89,10 +89,8 @@ async fn play_one(
     };
     match route {
         TtsRoute::Cloud(provider) => {
-            let provider = crate::voice::cloud_tts::speech_directive::apply_expression(
-                &provider,
-                expression,
-            );
+            let provider =
+                crate::voice::cloud_tts::speech_directive::apply_expression(&provider, expression);
             crate::voice::http_audio::play_with_situation(
                 &provider,
                 text,

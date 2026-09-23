@@ -62,6 +62,7 @@ for line in sys.stdin:
         &sink,
         &crate::RunCancellation::default(),
         Some(&mut dispatch),
+        false,
     )
     .unwrap();
     let messages = std::fs::read_to_string(log)

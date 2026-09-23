@@ -80,7 +80,20 @@ pub fn execute(
             }
             Ok(())
         })?;
-        crate::runtime::pi::process::probe(&settings, &state.data_directory)?;
+        let implementation = if call.name == "coding_continue" {
+            let job = canonical["jobId"].as_str().ok_or("invalid_arguments")?;
+            state.sqlite_readers.read(|connection| {
+                let saved: String = connection.query_row(
+                    "SELECT settings_json FROM coding_jobs WHERE id=?1 AND conversation_id=?2",
+                    params![job, input.conversation_id],
+                    |row| row.get(0),
+                ).map_err(database_error)?;
+                serde_json::from_str::<CodingSettings>(&saved).map_err(|_| "coding_settings_invalid".into())
+            })?
+        } else {
+            settings
+        };
+        probe_implementation(&implementation, &state.data_directory)?;
     }
     let mut launch = None;
     let result = state.sqlite_writer.write(|c| {
@@ -137,7 +150,7 @@ pub fn execute_delegated(
     if !settings.enabled {
         return Err("coding_disabled".into());
     }
-    crate::runtime::pi::process::probe(&settings, &state.data_directory)?;
+    probe_implementation(&settings, &state.data_directory)?;
     let mut launch = None;
     let value = state.sqlite_writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
@@ -260,6 +273,23 @@ pub fn commit_delegated_job(
 pub fn spawn_run(state: &AppState, run: String) {
     let writer = Arc::clone(&state.sqlite_writer);
     std::thread::spawn(move || crate::runtime::pi::runner::run(writer, run));
+}
+
+fn probe_implementation(
+    settings: &CodingSettings,
+    directory: &std::path::Path,
+) -> Result<(), String> {
+    if !super::contracts::valid_implementation(settings) {
+        return Err("coding_configuration_invalid".into());
+    }
+    if settings.implementation_method == "codex-sdk" {
+        let mut child = crate::runtime::codex_cli::spawn_codex_app_server()?;
+        child.kill().map_err(|_| "codex_probe_failed")?;
+        child.wait().map_err(|_| "codex_probe_failed")?;
+        Ok(())
+    } else {
+        crate::runtime::pi::process::probe(settings, directory)
+    }
 }
 
 pub fn cancel(

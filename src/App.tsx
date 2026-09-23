@@ -11,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 import "./App.css";
 import { ChatPage } from "./features/chat/ChatPage";
+import { DiagnosisPage } from "./features/diagnosis/DiagnosisPage";
 import { useConversationTurn } from "./features/chat/useConversationTurn";
 import { useRoleRouting } from "./features/chat/useRoleRouting";
 import { useAmbientVoiceSession } from "./features/voice/useAmbientVoiceSession";
@@ -222,6 +223,7 @@ function App() {
     if (next === "settings" && !canChangeConversation()) return;
     setAppError(null);
     setRoute(next);
+    if (next === "settings") void refreshSnapshot();
   }
 
   function openSettings() {
@@ -277,6 +279,8 @@ function App() {
               />
             ) : route === "audit" ? (
               <AuditLogPage />
+            ) : route === "diagnosis" ? (
+              <DiagnosisPage />
             ) : (
               <ChatPage
                 setupSnapshot={snapshot}

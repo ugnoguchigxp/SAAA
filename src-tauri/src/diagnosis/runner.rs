@@ -1,7 +1,6 @@
 use super::checks;
 use super::contract::{DiagnosisItem, DiagnosisReport, DiagnosisSeverity, DiagnosisStatus};
 use crate::AppState;
-use std::time::Duration;
 use tauri::{Emitter, Manager};
 
 const GROUP_ORDER: [&str; 6] = ["storage", "settings", "llm", "voice", "harness", "memory"];
@@ -19,19 +18,15 @@ pub(crate) async fn run_and_publish(app: &tauri::AppHandle) -> DiagnosisReport {
         store.wait_finished().await;
         return store.snapshot();
     };
-    let mut flight = InFlight::start(Some(app.clone()), store, revision, crate::now_iso());
-    let items = match tokio::time::timeout(Duration::from_secs(20), collect(&state)).await {
-        Ok(items) => items,
-        Err(_) => vec![checks::item(
-            "diagnosis.timeout",
-            "storage",
-            "Diagnosis timed out",
-            DiagnosisStatus::Fail,
-            DiagnosisSeverity::Degraded,
-            "診断が時間内に終わりませんでした。再診断してください。",
-            None,
-        )],
-    };
+    let started_at = crate::now_iso();
+    let mut flight = InFlight::start(Some(app.clone()), store, revision, started_at);
+    let mut items = Vec::new();
+    stream(&state, |batch| {
+        items.extend(batch);
+        items.sort_by_key(|item| group_rank(&item.group));
+        flight.progress(items.clone(), app);
+    })
+    .await;
     let report = flight.finish(items);
     let _ = app.emit("diagnosis-updated", &report);
     eprintln!(
@@ -64,6 +59,15 @@ impl InFlight {
             started_at,
             finished: false,
         }
+    }
+
+    fn progress(&mut self, items: Vec<DiagnosisItem>, app: &tauri::AppHandle) {
+        let mut report = report_from(self.revision, self.started_at.clone(), items);
+        report.running = true;
+        report.finished_at = None;
+        report.overall = DiagnosisStatus::Running;
+        self.store.stage(report.clone());
+        let _ = app.emit("diagnosis-updated", &report);
     }
 
     fn finish(&mut self, items: Vec<DiagnosisItem>) -> DiagnosisReport {
@@ -116,21 +120,41 @@ fn report_from(revision: u64, started_at: String, items: Vec<DiagnosisItem>) -> 
 }
 
 pub(crate) async fn collect(state: &AppState) -> Vec<DiagnosisItem> {
-    let (sqlite_item, settings_item, provider_items, harness_items, memory_items) = tokio::join!(
-        async { checks::sqlite::sqlite(state) },
-        async { checks::settings::settings(state) },
-        checks::providers::providers(state),
-        checks::harness::harness(state),
-        async { checks::memory::memory(state) },
-    );
     let mut items = Vec::new();
-    items.push(sqlite_item);
-    items.push(settings_item);
-    items.extend(provider_items);
-    items.extend(harness_items);
-    items.extend(memory_items);
+    stream(state, |batch| items.extend(batch)).await;
     items.sort_by_key(|item| group_rank(&item.group));
     items
+}
+
+async fn stream(state: &AppState, mut on_batch: impl FnMut(Vec<DiagnosisItem>)) {
+    let enabled = checks::providers::enabled_providers(state);
+    let mut pending: Vec<
+        std::pin::Pin<Box<dyn std::future::Future<Output = Vec<DiagnosisItem>> + Send + '_>>,
+    > = vec![
+        Box::pin(async { vec![checks::sqlite::sqlite(state)] }),
+        Box::pin(async { vec![checks::settings::settings(state)] }),
+        Box::pin(async { checks::harness::harness(state).await }),
+        Box::pin(async { checks::memory::memory(state) }),
+    ];
+    for provider in &enabled {
+        let provider = provider.clone();
+        pending.push(Box::pin(async move {
+            checks::providers::probe_one(state, &provider).await
+        }));
+    }
+    pending.push(Box::pin(async {
+        checks::providers::codex_item(state)
+            .await
+            .into_iter()
+            .collect()
+    }));
+    while !pending.is_empty() {
+        let (batch, _index, rest) = futures_util::future::select_all(pending).await;
+        pending = rest;
+        if !batch.is_empty() {
+            on_batch(batch);
+        }
+    }
 }
 
 pub(crate) fn overall(items: &[DiagnosisItem]) -> DiagnosisStatus {
@@ -161,7 +185,7 @@ mod tests {
     use crate::diagnosis::contract::{DiagnosisItem, DiagnosisSeverity, DiagnosisStatus};
     use crate::ModelProviderSettings;
     use rusqlite::Connection;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     fn sample(status: DiagnosisStatus, severity: DiagnosisSeverity) -> DiagnosisItem {
         DiagnosisItem {

@@ -27,13 +27,17 @@ export function CodingConnectionFields({
         >
           <option value="trusted-local-v1">pi標準</option>
           <option value="delegated-read-test-macos-v1">委譲調査・テスト（macOS制限）</option>
-          <option value="delegated-codex-sdk-macos-v1">委譲 Codex SDK（macOS制限）</option>
-          <option value="codex-sdk-v1">Codex SDK</option>
+          {settings.profile === "delegated-codex-sdk-macos-v1" && (
+            <option value="delegated-codex-sdk-macos-v1">既存のPi拡張: 委譲 Codex SDK</option>
+          )}
+          {settings.profile === "codex-sdk-v1" && (
+            <option value="codex-sdk-v1">既存のPi拡張: Codex SDK</option>
+          )}
         </select>
       </label>
       {settings.profile.includes("codex-sdk") && (
         <label>
-          Codex SDK拡張の絶対パス
+          Pi用Codex SDK拡張の絶対パス
           <input
             value={settings.sdkExtensionPath ?? ""}
             onChange={(e) => setSettings({ ...settings, sdkExtensionPath: e.target.value })}

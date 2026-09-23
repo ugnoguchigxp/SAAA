@@ -5,6 +5,10 @@ use ts_rs::TS;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CodingSettings {
     pub enabled: bool,
+    #[serde(default = "default_implementation_method")]
+    pub implementation_method: String,
+    #[serde(default = "default_codex_model")]
+    pub codex_model: String,
     pub executable: String,
     pub version: String,
     pub provider: String,
@@ -17,6 +21,8 @@ impl Default for CodingSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            implementation_method: default_implementation_method(),
+            codex_model: default_codex_model(),
             executable: String::new(),
             version: "0.86.1".into(),
             provider: "openai-codex".into(),
@@ -25,6 +31,17 @@ impl Default for CodingSettings {
             sdk_extension_path: None,
         }
     }
+}
+fn default_implementation_method() -> String {
+    "pi".into()
+}
+fn default_codex_model() -> String {
+    "gpt-5.6-luna".into()
+}
+pub fn valid_implementation(settings: &CodingSettings) -> bool {
+    matches!(settings.implementation_method.as_str(), "pi" | "codex-sdk")
+        && !settings.codex_model.trim().is_empty()
+        && settings.codex_model.len() <= 160
 }
 pub fn valid_profile(settings: &CodingSettings) -> bool {
     match settings.profile.as_str() {

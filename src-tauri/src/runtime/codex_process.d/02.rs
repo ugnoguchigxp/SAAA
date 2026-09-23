@@ -10,6 +10,7 @@ pub(crate) fn run_codex_turn_process_with_dispatch(
     on_event: &dyn RuntimeEventSender,
     cancellation: &RunCancellation,
     mut dispatch: Option<&mut super::codex_context::Dispatch>,
+    coding_mode: bool,
 ) -> Result<CodexTurnOutcome, CodexTurnFailure> {
     use crate::runtime::codex_app_server::{CodexEventProjector, ProjectedCodexEvent};
     use crate::runtime::contracts::{RunFailureCode, RunOutcome, RunSignal, TerminalStatus};
@@ -87,13 +88,17 @@ pub(crate) fn run_codex_turn_process_with_dispatch(
         let mut params = json!({
             "cwd": workspace_text,
             "approvalPolicy": "never",
-            "sandbox": "read-only",
+            "sandbox": if coding_mode { "workspace-write" } else { "read-only" },
             "config": {
                 "web_search": "disabled",
                 "mcp_servers": {},
                 "sandbox_workspace_write": { "network_access": false }
             },
-            "developerInstructions": developer_instructions(host_context)
+            "developerInstructions": if coding_mode {
+                "Implement the user's request only inside the selected Git workspace. Report the files changed and any checks performed. Do not use network access.".to_string()
+            } else {
+                developer_instructions(host_context)
+            }
         });
         if !model.is_empty() {
             params["model"] = Value::String(model.to_string());

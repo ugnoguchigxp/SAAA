@@ -109,6 +109,15 @@
   margin-bottom: 18px;
   font-size: 1.15rem;
 }
+.artifact-source-url {
+  overflow-wrap: anywhere;
+}
+.artifact-source-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.6;
+}
 .artifact-toolbar {
   display: flex;
   align-items: end;

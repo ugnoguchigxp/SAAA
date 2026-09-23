@@ -48,6 +48,7 @@ pub(in crate::diagnosis) fn memory(state: &AppState) -> Vec<DiagnosisItem> {
             "ContextStill search",
             state.context_still_search.is_configured(),
         ),
+        toolchain(state),
         capacity_item(0, RECORDS_DB_SOFT_LIMIT_BYTES),
     ]
 }
@@ -96,6 +97,35 @@ fn world(state: &AppState) -> DiagnosisItem {
             "world.status",
             "memory",
             "World model",
+            DiagnosisStatus::Fail,
+            DiagnosisSeverity::Degraded,
+            &error,
+            None,
+        ),
+    }
+}
+
+fn toolchain(state: &AppState) -> DiagnosisItem {
+    match state.sqlite_readers.read(|connection| {
+        connection
+            .query_row("SELECT COUNT(*) FROM tool_selection_catalog", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(crate::database_error)
+    }) {
+        Ok(count) => item(
+            "tool_selection.catalog",
+            "memory",
+            "ToolChain",
+            DiagnosisStatus::Ok,
+            DiagnosisSeverity::Degraded,
+            &format!("{count} tools"),
+            None,
+        ),
+        Err(error) => item(
+            "tool_selection.catalog",
+            "memory",
+            "ToolChain",
             DiagnosisStatus::Fail,
             DiagnosisSeverity::Degraded,
             &error,

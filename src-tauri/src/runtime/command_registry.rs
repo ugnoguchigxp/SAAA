@@ -100,6 +100,7 @@ macro_rules! saaa_invoke_handler {
             artifact_preview::commands::prepare_artifact_preview,
             artifact_preview::commands::release_artifact_preview,
             artifact_preview::commands::mount_artifact_preview,
+            artifact_preview::commands::read_source_artifact,
             get_conversation_voice_policy,
             update_conversation_voice_policy,
             reset_conversation_voice_policy,

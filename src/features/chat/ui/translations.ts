@@ -57,6 +57,11 @@ export const uiEnglish = {
   previewReady: "Interactive preview of {{title}} is visible.",
   previewSafeError: "The preview could not be opened. Retry without exposing file contents.",
   openInteractivePreview: "Open interactive HTML preview",
+  sourceLoading: "Loading the saved source…",
+  sourceFailed: "The saved source could not be loaded.",
+  sourceUnavailable: "No saved page text is available for this URL. Open the original site with the link above.",
+  sourceCapturedAt: "Retrieved: {{time}}",
+  sourceTruncated: "Showing the first part of the saved page.",
 };
 export const uiJapanese: typeof uiEnglish = {
   compatibility:
@@ -116,4 +121,9 @@ export const uiJapanese: typeof uiEnglish = {
   previewReady: "{{title}} の対話プレビューを表示しています。",
   previewSafeError: "プレビューを開けませんでした。本文は表示せず再試行できます。",
   openInteractivePreview: "対話HTMLプレビューを開く",
+  sourceLoading: "保存した出典を読み込み中…",
+  sourceFailed: "保存した出典を読み込めませんでした。",
+  sourceUnavailable: "このURLの保存済み本文はありません。上のリンクから元サイトを開けます。",
+  sourceCapturedAt: "取得時刻: {{time}}",
+  sourceTruncated: "保存したページの先頭部分を表示しています。",
 };

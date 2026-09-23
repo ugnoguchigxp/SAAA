@@ -258,6 +258,51 @@ fn migrate_security_document(value: &mut Value) {
         .entry("diagnosticsRedaction")
         .or_insert(Value::Bool(true));
 }
+fn remove_direct_qwen_provider(providers: &mut Value) {
+    let Some(items) = providers.get_mut("providers").and_then(Value::as_array_mut) else {
+        return;
+    };
+    items.retain(|item| {
+        item.get("id").and_then(Value::as_str) != Some(crate::QWEN_DIRECT_PROVIDER_ID)
+    });
+}
+
+fn clear_direct_qwen_route(routing: &mut Value) {
+    let Some(conversation) = routing
+        .get_mut("conversationRespond")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if conversation
+        .get("primaryProviderId")
+        .and_then(Value::as_str)
+        == Some(crate::QWEN_DIRECT_PROVIDER_ID)
+    {
+        conversation.insert("source".to_string(), Value::String("harness".to_string()));
+        conversation.insert("primaryProviderId".to_string(), Value::Null);
+        conversation.insert("fallbackProviderIds".to_string(), json!([]));
+        return;
+    }
+    if let Some(ids) = conversation
+        .get_mut("fallbackProviderIds")
+        .and_then(Value::as_array_mut)
+    {
+        ids.retain(|id| id.as_str() != Some(crate::QWEN_DIRECT_PROVIDER_ID));
+    }
+}
+
+fn retarget_direct_qwen_actors(roles: &mut Value) {
+    let Some(actors) = roles.get_mut("actors").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for actor in actors {
+        if actor.get("providerId").and_then(Value::as_str) == Some(crate::QWEN_DIRECT_PROVIDER_ID) {
+            actor["providerId"] = json!(DYNAMIC_LAN_PROVIDER_ID);
+        }
+    }
+}
+
 fn migrate_agent_document(value: &mut Value) {
     let Some(document) = value.as_object_mut() else {
         return;
@@ -294,6 +339,7 @@ pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::
         if providers.schema_version < 15 {
             migrate_http_bases(&mut providers.value);
         }
+        remove_direct_qwen_provider(&mut providers.value);
 
         if providers.schema_version < SETTINGS_SCHEMA_VERSION || providers.value != before {
             write_document(connection, "providers.model", "default", &providers.value)?;
@@ -306,6 +352,7 @@ pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::
                 migrate_obsolete_direct_lan_route(&providers.value, &mut routing.value);
             }
         }
+        clear_direct_qwen_route(&mut routing.value);
         migrate_routing_document(&mut routing.value);
         if routing.schema_version < SETTINGS_SCHEMA_VERSION || routing.value != before {
             write_document(connection, "routing.tasks", "default", &routing.value)?;
@@ -325,6 +372,13 @@ pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::
         migrate_security_document(&mut security.value);
         if security.schema_version < SETTINGS_SCHEMA_VERSION || security.value != before {
             write_document(connection, "security.runtime", "default", &security.value)?;
+        }
+    }
+    if let Some(mut roles) = read_document(connection, "routing.roles", "default")? {
+        let before = roles.value.clone();
+        retarget_direct_qwen_actors(&mut roles.value);
+        if roles.value != before {
+            write_document(connection, "routing.roles", "default", &roles.value)?;
         }
     }
     if let Some(mut agent) = read_document(connection, "providers.agent", "codex-sdk")? {

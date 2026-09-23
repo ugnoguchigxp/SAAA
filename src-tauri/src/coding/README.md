@@ -1,6 +1,6 @@
 # Coding
 
-Owner: registered workspaces, coding job/run receipts, command dispatch, cancellation, and recovery. Runtime/pi owns process execution; Steward owns delegated goals and grants.
+Owner: registered workspaces, coding job/run receipts, command dispatch, cancellation, and recovery. The saved implementation method selects Runtime/pi or the direct Codex runner; Steward owns delegated goals and grants.
 
 Preserve:
 - Workspace registration is not authorization for arbitrary work. Bind requests to the persisted input and validated settings/profile.
@@ -15,6 +15,7 @@ Locate:
 - Atomic job operations: `service_transactions.rs`; queries: `service_queries.rs`; storage/settings: `repository.rs`, `settings.rs`.
 - Workspace checks: `workspace.rs`; recovery: `recovery.rs`.
 - Actual process/session: `../runtime/pi/runner.rs`, `../runtime/pi/process.rs`, `../runtime/pi/session_reader.rs`.
+- Direct Codex execution: `codex_runner.rs` and `../runtime/codex_process.rs`. Existing Pi Codex SDK extension profiles remain Pi jobs.
 - Delegation/profile/recipes: `../steward/dispatch.rs`, `../runtime/pi/delegated_profile.rs`, `../runtime/pi/recipe_runner.rs`.
 - World status projection: `world_snapshot.rs`.
 - Tests: `tests.rs`, `integration/tests.rs`, `e2e/`, `../runtime/pi/tests.rs`.

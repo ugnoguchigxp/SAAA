@@ -57,7 +57,13 @@ export function ApiKeyControl({
   }, [persisted, provider.authentication, provider.id, storageSupport]);
 
   if (provider.authentication !== "api-key") return <span>{t("settings.providers.authNone")}</span>;
-  if (!persisted) return <span>{t("settings.providers.saveBeforeKey")}</span>;
+  if (!persisted) return (
+    <div>
+      <label htmlFor={`provider-api-key-${provider.id}`}>{t("settings.providers.apiKey")}</label>
+      <input id={`provider-api-key-${provider.id}`} type="password" value="" placeholder={t("settings.providers.enterKey")} disabled />
+      <p className="muted">{t("settings.providers.saveBeforeKey")}</p>
+    </div>
+  );
   if (storageSupport === "unsupported")
     return (
       <span className="provider-test-result error" role="status">
@@ -111,7 +117,9 @@ export function ApiKeyControl({
         </p>
       )}
       <div>
+        <label htmlFor={`provider-api-key-${provider.id}`}>{t("settings.providers.apiKey")}</label>
         <input
+          id={`provider-api-key-${provider.id}`}
           type="password"
           value={apiKey}
           autoComplete="off"

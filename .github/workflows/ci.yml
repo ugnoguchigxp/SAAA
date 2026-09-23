@@ -64,7 +64,7 @@ jobs:
           workspaces: src-tauri
       - run: bun install --frozen-lockfile
       - name: Frontend static checks
-        run: bun run format:check && bun run lint && bun run size:check && bun run build:frontend
+        run: bun run freeze:check && bun run format:check && bun run lint && bun run size:check && bun run build:frontend
       - name: Frontend tests
         run: bun run ${{ matrix.frontend-test }}
       - name: Rust format

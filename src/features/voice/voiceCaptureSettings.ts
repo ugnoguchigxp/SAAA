@@ -7,6 +7,8 @@ export function voiceStartupMessage(cause: unknown): string {
   if (cause instanceof MicrophoneCaptureError) return microphoneErrorMessage(cause);
   if (toMessage(cause).startsWith("lfm-")) return `LFMを準備できません: ${toMessage(cause)}`;
   switch (toMessage(cause)) {
+    case "microphone-startup-timeout":
+      return uiMessage("voiceProfileMicrophoneTimeout");
     case "asr-provider-unavailable":
       return uiMessage("chatVoiceAsrUnavailable");
     case "asr-session-exists":

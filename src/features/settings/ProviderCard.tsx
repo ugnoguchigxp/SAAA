@@ -25,6 +25,7 @@ export function ProviderCard({
   persisted,
   onChange,
   onRemove,
+  removable = true,
   testProvider = testModelProvider,
 }: {
   provider: ModelProviderSettings;
@@ -32,6 +33,7 @@ export function ProviderCard({
   persisted: boolean;
   onChange: (value: ModelProviderSettings) => void;
   onRemove: () => void;
+  removable?: boolean;
 }) {
   const { t } = useTranslation();
   const fingerprint = JSON.stringify(provider);
@@ -121,19 +123,26 @@ export function ProviderCard({
       {persisted && <WorldProviderCapabilities providerId={provider.id} revision={fingerprint} />}
       <ProviderHeader provider={provider} onChange={onChange} />
       {provider.kind === "openai-compatible" && (
-        <>
-          <LlmFields provider={provider} onChange={onChange} />
-          <LlmRequestFields
-            value={provider.requestOptions}
-            onChange={(requestOptions) => onChange({ ...provider, requestOptions })}
-          />
-        </>
+        <LlmFields provider={provider} onChange={onChange} />
       )}
       {provider.kind === "agent-session" && (
         <AgentSessionFields provider={provider} onChange={onChange} />
       )}
       {provider.kind === "cloud-asr" && <AsrFields provider={provider} onChange={onChange} />}
       {provider.kind === "cloud-tts" && <TtsFields provider={provider} onChange={onChange} />}
+      <div className="provider-credential-section">
+        <ApiKeyControl
+          provider={provider}
+          persisted={persisted}
+          onCredentialChange={invalidateTest}
+        />
+      </div>
+      {provider.kind === "openai-compatible" && (
+        <LlmRequestFields
+          value={provider.requestOptions}
+          onChange={(requestOptions) => onChange({ ...provider, requestOptions })}
+        />
+      )}
       {testResult.state !== "idle" && (
         <div
           className={`provider-test-result detailed ${testResult.state}`}
@@ -162,11 +171,6 @@ export function ProviderCard({
         </div>
       )}
       <div className="provider-card-footer">
-        <ApiKeyControl
-          provider={provider}
-          persisted={persisted}
-          onCredentialChange={invalidateTest}
-        />
         <div>
           <button
             className="text-button"
@@ -179,9 +183,9 @@ export function ProviderCard({
           >
             {t("settings.providers.testConnection")}
           </button>
-          <button className="text-button danger" type="button" onClick={onRemove}>
+          {removable && <button className="text-button danger" type="button" onClick={onRemove}>
             {t("settings.providers.removeProvider")}
-          </button>
+          </button>}
         </div>
       </div>
     </section>

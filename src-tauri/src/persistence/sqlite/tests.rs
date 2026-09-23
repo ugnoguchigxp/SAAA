@@ -398,6 +398,52 @@ fn settings_snapshot_cache_ignores_unrelated_writes_and_refreshes_on_settings_ch
 }
 
 #[test]
+fn reopening_legacy_settings_restores_the_settings_snapshot() {
+    let directory = tempfile::tempdir().expect("temporary directory creates");
+    let path = directory.path().join("legacy-settings.sqlite3");
+    let writer = SqliteWriter::open(&path).expect("writer opens");
+    writer
+        .write(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO settings_documents(namespace,key,schema_version,value_json,updated_at)
+                     VALUES('tool_selection','principal',15,'{}',?1)",
+                    [crate::now_iso()],
+                )
+                .map_err(crate::database_error)?;
+            connection
+                .execute(
+                    r#"UPDATE settings_documents
+                     SET value_json=json_set(value_json, '$.actors',
+                         json('[{"id":"legacy","label":"Legacy","aliases":[],"transport":"provider","providerId":"local","model":"old-model","location":"local","resourceGroup":"local","maxInputBytes":1024,"capabilities":[]}]'))
+                     WHERE namespace='routing.roles' AND key='default'"#,
+                    [],
+                )
+                .map_err(crate::database_error)?;
+            Ok(())
+        })
+        .expect("legacy settings stored");
+    drop(writer);
+    let writer = SqliteWriter::open(&path).expect("legacy database reopens");
+    let readers = SqliteReaders::open(&path).expect("readers open");
+    let snapshot = readers
+        .read(|connection| readers.settings_snapshot(connection))
+        .expect("settings snapshot loads");
+    assert!(snapshot
+        .iter()
+        .any(|document| document.namespace == "voice.runtime"));
+    assert!(!snapshot
+        .iter()
+        .any(|document| document.namespace == "tool_selection"));
+    let roles = snapshot
+        .iter()
+        .find(|document| document.namespace == "routing.roles")
+        .expect("role settings exist");
+    assert!(roles.value_json["actors"][0]["model"].is_null());
+    drop(writer);
+}
+
+#[test]
 fn second_process_is_rejected_before_database_open() {
     let directory = tempfile::tempdir().expect("temporary directory creates");
     let database_path = directory.path().join("saaa.sqlite3");

@@ -237,6 +237,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
         &transaction,
         previous_version,
     )?;
+    crate::role_routing::schema::clear_legacy_provider_actor_models(&transaction)?;
     crate::role_routing::learning::schema::migrate(&transaction)?;
     crate::role_routing::recovery::reconcile_startup_in_transaction(
         &transaction,

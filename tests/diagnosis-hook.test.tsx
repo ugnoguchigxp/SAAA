@@ -50,11 +50,10 @@ afterEach(async () => {
   listeners.length = 0;
 });
 
-test("diagnosis hook loads once, marks rerun as running, and applies events", async () => {
+test("diagnosis hook stays empty until start, then applies each progress event", async () => {
   resetTauriCoreMock();
   let finish = (_report: DiagnosisReport) => undefined;
   invokeImpl.handler = async (command) => {
-    if (command === "get_diagnosis_report") return report(1);
     if (command === "run_diagnosis") {
       return new Promise<DiagnosisReport>((resolve) => {
         finish = resolve;
@@ -71,13 +70,34 @@ test("diagnosis hook loads once, marks rerun as running, and applies events", as
   await act(async () => {
     await Promise.resolve();
   });
-  expect(invokeCalls.filter((call) => call.command === "get_diagnosis_report")).toHaveLength(1);
-  expect(apiRef.current?.report?.revision).toBe(1);
+  expect(invokeCalls.filter((call) => call.command === "get_diagnosis_report")).toHaveLength(0);
+  expect(apiRef.current?.report).toBeNull();
+  await act(async () => {
+    listeners[0]?.({ payload: report(1) });
+  });
+  expect(apiRef.current?.report).toBeNull();
   let rerun: Promise<void> | undefined;
   await act(async () => {
     rerun = apiRef.current!.rerun();
     await Promise.resolve();
   });
+  expect(apiRef.current?.running).toBe(true);
+  const partial = report(2, true);
+  partial.items = [
+    {
+      id: "sqlite",
+      group: "storage",
+      label: "SQLite",
+      status: "ok",
+      severity: "fatal",
+      message: "",
+      latencyMs: 1,
+    },
+  ];
+  await act(async () => {
+    listeners[0]?.({ payload: partial });
+  });
+  expect(apiRef.current?.report?.items.map((item) => item.id)).toEqual(["sqlite"]);
   expect(apiRef.current?.running).toBe(true);
   finish(report(2));
   await act(async () => {
@@ -85,45 +105,12 @@ test("diagnosis hook loads once, marks rerun as running, and applies events", as
   });
   expect(apiRef.current?.report?.revision).toBe(2);
   expect(apiRef.current?.running).toBe(false);
-  await act(async () => {
-    listeners[0]?.({ payload: report(3) });
-  });
-  expect(apiRef.current?.report?.revision).toBe(3);
-});
-
-test("diagnosis hook keeps a newer report when an older fetch resolves later", async () => {
-  resetTauriCoreMock();
-  let resolveGet: (value: DiagnosisReport) => void = () => undefined;
-  invokeImpl.handler = async (command) => {
-    if (command === "get_diagnosis_report") {
-      return new Promise<DiagnosisReport>((resolve) => {
-        resolveGet = resolve;
-      });
-    }
-    return report(1);
-  };
-  restore = installJsdom().restore;
-  const { createRoot } = await import("react-dom/client");
-  const { createElement } = await import("react");
-  const apiRef: MutableRefObject<ReturnType<typeof useDiagnosisReport> | null> = { current: null };
-  root = createRoot(document.getElementById("root")!);
-  await act(async () => root!.render(createElement(Harness, { apiRef })));
-  await act(async () => {
-    listeners[0]?.({ payload: report(2) });
-  });
-  expect(apiRef.current?.report?.revision).toBe(2);
-  resolveGet(report(1));
-  await act(async () => {
-    await Promise.resolve();
-  });
-  expect(apiRef.current?.report?.revision).toBe(2);
 });
 
 test("diagnosis hook ignores an older rerun result after a newer event", async () => {
   resetTauriCoreMock();
   let resolveRun: (value: DiagnosisReport) => void = () => undefined;
   invokeImpl.handler = async (command) => {
-    if (command === "get_diagnosis_report") return report(1);
     if (command === "run_diagnosis") {
       return new Promise<DiagnosisReport>((resolve) => {
         resolveRun = resolve;

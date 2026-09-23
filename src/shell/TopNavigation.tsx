@@ -1,7 +1,6 @@
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { appRoutes, type AppRoute } from "./appRoute";
-import { DiagnosisNavButton } from "./DiagnosisNavButton";
 
 export function TopNavigation({
   active,
@@ -39,7 +38,6 @@ export function TopNavigation({
           {t(`navigation.${route}`)}
         </button>
       ))}
-      <DiagnosisNavButton />
     </nav>
   );
 }

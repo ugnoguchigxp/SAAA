@@ -218,6 +218,41 @@ pub(crate) fn migrate_v35_to_v36_larm_conversation_profile(
     Ok(())
 }
 
+/// Older provider actors sometimes stored a model alongside providerId. The provider document
+/// owns the model; retaining the old field makes the entire settings snapshot fail validation.
+pub(crate) fn clear_legacy_provider_actor_models(connection: &Connection) -> rusqlite::Result<()> {
+    let stored: Option<String> = connection
+        .query_row(
+            "SELECT value_json FROM settings_documents
+             WHERE namespace='routing.roles' AND key='default'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(stored) = stored else { return Ok(()) };
+    let Ok(mut policy) = serde_json::from_str::<Value>(&stored) else {
+        return Ok(());
+    };
+    let Some(actors) = policy.get_mut("actors").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    let mut changed = false;
+    for actor in actors {
+        if actor["transport"] == "provider" && !actor["model"].is_null() {
+            actor["model"] = Value::Null;
+            changed = true;
+        }
+    }
+    if changed {
+        connection.execute(
+            "UPDATE settings_documents SET value_json=?1, updated_at=?2
+             WHERE namespace='routing.roles' AND key='default'",
+            params![policy.to_string(), crate::now_iso()],
+        )?;
+    }
+    Ok(())
+}
+
 /// Adds the approval-consumption column to databases created before it existed. Consumption is
 /// tracked with a timestamp rather than a new status so the shipped status CHECK is not rewritten.
 fn ensure_rr_proposal_consumed(connection: &Connection) -> rusqlite::Result<()> {
@@ -252,6 +287,42 @@ fn ensure_rr_input_generation(connection: &Connection) -> rusqlite::Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn clears_legacy_model_from_provider_actor_without_changing_codex_actor() {
+        let connection = Connection::open_in_memory().expect("connection");
+        connection
+            .execute_batch(
+                "CREATE TABLE settings_documents (
+                    namespace TEXT NOT NULL, key TEXT NOT NULL, schema_version INTEGER NOT NULL,
+                    value_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(namespace,key)
+                )",
+            )
+            .expect("settings table");
+        let policy = json!({"actors": [
+            {"id": "provider", "transport": "provider", "providerId": "local", "model": "old-model"},
+            {"id": "codex", "transport": "codex_sdk", "providerId": null, "model": "gpt-6-sol"}
+        ]});
+        connection
+            .execute(
+                "INSERT INTO settings_documents VALUES('routing.roles','default',15,?1,'1')",
+                [policy.to_string()],
+            )
+            .expect("legacy policy");
+        clear_legacy_provider_actor_models(&connection).expect("migration");
+        clear_legacy_provider_actor_models(&connection).expect("idempotent migration");
+        let stored: String = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents WHERE namespace='routing.roles'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("stored policy");
+        let stored: Value = serde_json::from_str(&stored).expect("policy json");
+        assert!(stored["actors"][0]["model"].is_null());
+        assert_eq!(stored["actors"][1]["model"], "gpt-6-sol");
+    }
 
     #[test]
     fn schema_34_moves_only_the_shipped_reasoner_to_direct_qwen() {

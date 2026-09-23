@@ -19,11 +19,10 @@ const policy: ConversationVoicePolicySnapshot = {
   effectiveSilenceTimeoutMs: 1500,
 };
 
-test("conversation behavior menu opens diagnosis", async () => {
+test("conversation behavior menu keeps diagnosis on its own screen", async () => {
   resetTauriCoreMock();
   const env = installJsdom();
   const root = createRoot(document.getElementById("root")!);
-  let opened = 0;
   await i18n.changeLanguage("ja");
   try {
     await act(async () => {
@@ -32,21 +31,13 @@ test("conversation behavior menu opens diagnosis", async () => {
           policy={policy}
           disabled={false}
           onOpenSettings={() => undefined}
-          onOpenDiagnosis={() => {
-            opened += 1;
-          }}
           onSetSpeechOutput={() => undefined}
           onSetListeningPace={() => undefined}
           onReset={() => undefined}
         />,
       );
     });
-    const button = [...document.querySelectorAll("button")].find(
-      (candidate) => candidate.textContent === "自己診断",
-    );
-    expect(button).toBeTruthy();
-    await act(() => button!.click());
-    expect(opened).toBe(1);
+    expect(document.body.textContent).not.toContain("自己診断");
   } finally {
     await act(() => root.unmount());
     env.dom.window.close();

@@ -105,7 +105,7 @@ fn attach_fetch(
             parent_execution_id: None,
             rank: None,
             observed_at: crate::schedule::tick::now_ms(),
-            locator: json!({"url": value["finalUrl"]}),
+            locator: json!({"url": value["document"]["url"]}),
             scope_keys: &scopes,
         },
         text.as_bytes(),
@@ -120,6 +120,10 @@ fn attach_fetch(
     Ok(json!({
         "type": "fetch_content_result",
         "recordId": stored.id,
+        "document": {
+            "url": value["document"]["url"],
+            "fetchedAt": value["document"]["fetchedAt"],
+        },
         "bytes": text.len(),
         "sha256": stored.sha256,
         "outline": outline.items.iter().map(|item| json!({"start": item.start_byte, "text": item.text})).collect::<Vec<_>>(),
@@ -184,13 +188,26 @@ mod tests {
     fn cw_31_fetch_over_8kib_returns_outline_not_body() {
         let connection = db();
         let text = "a".repeat(9_000);
-        let raw = json!({"type":"fetch_content_result","document":{"text": text}}).to_string();
+        let raw = json!({"type":"fetch_content_result","document":{"url":"https://example.com/quote","text": text,"fetchedAt":"2026-09-23T12:00:00Z"}}).to_string();
         let output: Value = serde_json::from_str(
             &attach(&connection, &auth(), "fetch_content", &raw, None).unwrap(),
         )
         .unwrap();
         assert_eq!(output["readHint"], "read_record");
-        assert!(output.get("document").is_none());
+        assert_eq!(output["document"]["url"], "https://example.com/quote");
+        assert_eq!(output["document"]["fetchedAt"], "2026-09-23T12:00:00Z");
+        assert!(output["document"].get("text").is_none());
+        let locator: String = connection
+            .query_row(
+                "SELECT locator_json FROM records WHERE id=?1",
+                [output["recordId"].as_str().unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&locator).unwrap()["url"],
+            "https://example.com/quote"
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@ import type { FinalVoiceUtterance } from "./voiceFinalDeliveryQueue";
 function failureCode(cause: unknown): string {
   if (cause instanceof MicrophoneCaptureError) return cause.code;
   const code = toMessage(cause);
+  if (code === "microphone-startup-timeout") return code;
   if (
     code.startsWith("larm-session-prepare-failed:") ||
     code.startsWith("lfm-session-prepare-failed:")
@@ -21,6 +22,42 @@ function failureCode(cause: unknown): string {
   ].includes(code)
     ? code
     : "unknown";
+}
+
+export function auditVoiceToggleRequested(
+  conversationId: string | null,
+  requestedEnabled: boolean,
+  captureState: string,
+) {
+  recordAuditEvent({
+    component: "microphone",
+    eventName: "capture-toggle-requested",
+    phase: "request",
+    conversationId,
+    attributes: { enabled: requestedEnabled, state: captureState },
+  });
+}
+
+export function auditVoiceStartBlocked(conversationId: string | null, reason: string) {
+  recordAuditEvent({
+    component: "microphone",
+    eventName: "capture-start-blocked",
+    phase: "decision",
+    outcome: "blocked",
+    conversationId,
+    failureCode: reason,
+  });
+}
+
+export function auditVoicePreflightFailed(conversationId: string | null, cause: unknown) {
+  recordAuditEvent({
+    component: "microphone",
+    eventName: "capture-preflight-failed",
+    phase: "error",
+    outcome: "failure",
+    conversationId,
+    failureCode: failureCode(cause),
+  });
 }
 
 export function auditCaptureStarted(

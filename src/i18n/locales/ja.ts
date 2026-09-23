@@ -6,5 +6,6 @@ export const ja = {
   ...jaCore,
   ...jaSettings,
   ...jaVoice,
+  navigation: { ...jaCore.navigation, diagnosis: "自己診断" },
   chat: { ...jaCore.chat, diagnosis: jaDiagnosis },
 } as const;

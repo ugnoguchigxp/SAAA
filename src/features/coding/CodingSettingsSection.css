@@ -1,0 +1,91 @@
+.coding-method-section {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.coding-method-current {
+  padding: 11px 14px;
+  border: 1px solid #32605d;
+  border-radius: 8px;
+  color: #d3eee8;
+  background: #172827;
+}
+
+.coding-method-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.coding-method-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid #303947;
+  border-radius: 10px;
+  background: #171d26;
+}
+
+.coding-method-card.selected {
+  border-color: #57c9bb;
+}
+
+.coding-method-card label:not(.coding-method-choice) {
+  display: grid;
+  gap: 5px;
+  color: #c9d4df;
+}
+
+.coding-method-card label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+}
+
+.coding-method-card input:not([type="radio"]):not([type="checkbox"]),
+.coding-method-card select {
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-section.coding-method-section > label {
+  display: flex;
+  align-items: center;
+}
+
+.coding-method-section label.coding-method-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.coding-method-section .coding-method-choice input[type="radio"] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.coding-method-choice span {
+  display: grid;
+  gap: 4px;
+}
+
+.coding-method-choice small {
+  color: #a5b4c2;
+}
+
+.coding-method-actions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 950px) {
+  .coding-method-cards {
+    grid-template-columns: 1fr;
+  }
+}

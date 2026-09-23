@@ -190,7 +190,7 @@ describe("frontend IPC wrappers", () => {
       },
       (event) => events.push(event),
     );
-    await cancelRun("run-1");
+    await cancelRun("run-1", "user-stop");
     await testModelProvider({
       kind: "openai-compatible",
       id: "local",
@@ -225,6 +225,10 @@ describe("frontend IPC wrappers", () => {
 
     const names = invokeCalls.map((call) => call.command);
     expect(names).toContain("start_turn");
+    expect(invokeCalls.find((call) => call.command === "cancel_run")?.args).toEqual({
+      runId: "run-1",
+      reason: "user-stop",
+    });
     expect(names).toContain("save_settings_documents");
     expect(invokeCalls.find((call) => call.command === "list_audit_events")?.args).toEqual({
       input: { sortBy: "occurredAt", direction: "desc" },

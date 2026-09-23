@@ -196,8 +196,37 @@ fn record_frontend_audit_event(
     persistence::audit::record_frontend_event(&state, &input)
 }
 #[tauri::command]
-fn cancel_run(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), String> {
+fn cancel_run(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+    reason: Option<String>,
+) -> Result<(), String> {
     validate_identifier(&run_id, "run id")?;
+    let reason = match reason.as_deref() {
+        Some("invalid-ipc-event") => "invalid-ipc-event",
+        Some("conversation-unmounted") => "conversation-unmounted",
+        Some("replaced-by-new-prompt") => "replaced-by-new-prompt",
+        Some("user-stop") => "user-stop",
+        _ => "unknown",
+    };
+    let event = persistence::audit::FrontendAuditEventInput {
+        component: "conversation".into(),
+        event_name: "run-cancel-requested".into(),
+        phase: "request".into(),
+        outcome: None,
+        correlation_id: Some(run_id.clone()),
+        causation_id: None,
+        conversation_id: None,
+        runtime_run_id: Some(run_id.clone()),
+        session_id: None,
+        subject_id: Some(run_id.clone()),
+        failure_code: None,
+        attributes: std::collections::BTreeMap::from([(
+            "reason".into(),
+            persistence::audit::AuditAttributeValue::Tag(reason.into()),
+        )]),
+    };
+    let _ = persistence::audit::record_frontend_event(&state, &event);
     let active = state
         .active_runs
         .lock()

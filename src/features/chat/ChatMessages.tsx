@@ -7,17 +7,21 @@ import { recordMarkdownPaint } from "./streamingPerformance";
 
 import { UiBoundary } from "./ui/UiBoundary";
 import { renderMermaidDiagrams } from "./ui/mermaid";
+import { useArtifactWorkspace } from "./artifacts/ArtifactDrawer";
 
 const InlineUi = lazy(() => import("./ui/InlineUi"));
 
 const MarkdownMessage = memo(function MarkdownMessage({
   messageId,
+  conversationId,
   content,
 }: {
   messageId: string;
+  conversationId: string;
   content: string;
 }) {
   const { t } = useTranslation();
+  const artifacts = useArtifactWorkspace();
   const [html, setHtml] = useState<string | null>(null);
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -43,7 +47,19 @@ const MarkdownMessage = memo(function MarkdownMessage({
   return html === null ? (
     <p className="markdown-pending">{content}</p>
   ) : (
-    <div ref={host} className="markdown-content" dangerouslySetInnerHTML={{ __html: html }} />
+    <div
+      ref={host}
+      className="markdown-content"
+      onClick={(event) => {
+        const anchor = (event.target as Element).closest("a[href]");
+        if (!anchor || !event.currentTarget.contains(anchor) || !artifacts) return;
+        const href = anchor.getAttribute("href");
+        if (!href || !/^https?:\/\//i.test(href)) return;
+        event.preventDefault();
+        artifacts.openSource({ conversationId, url: href, title: anchor.textContent?.trim() || href });
+      }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 });
 
@@ -86,11 +102,11 @@ export const CompletedMessage = memo(function CompletedMessage({
               </Suspense>
             </UiBoundary>
           ) : (
-            <MarkdownMessage key={index} messageId={`${message.id}:${index}`} content={part.text} />
+            <MarkdownMessage key={index} messageId={`${message.id}:${index}`} conversationId={message.conversationId} content={part.text} />
           ),
         )
       ) : message.role === "assistant" ? (
-        <MarkdownMessage messageId={message.id} content={message.content} />
+        <MarkdownMessage messageId={message.id} conversationId={message.conversationId} content={message.content} />
       ) : (
         <p>{message.content}</p>
       )}

@@ -15,7 +15,7 @@ describe("top-level workspace redesign", () => {
     const chat = source("src/features/chat/ChatPage.tsx");
 
     expect(routes).toContain(
-      '[\n  "conversation",\n  "memory",\n  "work",\n  "records",\n  "audit",\n  "settings",\n]',
+      '[\n  "conversation",\n  "memory",\n  "work",\n  "records",\n  "audit",\n  "diagnosis",\n  "settings",\n]',
     );
     expect(shell).toContain("<TopNavigation");
     expect(shellStyles).toContain("position: absolute");

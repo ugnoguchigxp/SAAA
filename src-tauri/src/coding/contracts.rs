@@ -9,7 +9,7 @@ pub const NAMES: [&str; 4] = [
 ];
 pub const MAX_REQUEST_CHARS: usize = 32_000;
 
-pub use super::settings::{valid_profile, CodingSettings};
+pub use super::settings::{valid_implementation, valid_profile, CodingSettings};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Start {

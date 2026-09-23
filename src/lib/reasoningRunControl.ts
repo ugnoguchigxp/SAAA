@@ -8,7 +8,7 @@ export async function cancelReasoningRun(runId: string | null): Promise<void> {
   if (!runId || !isReasoningRun(runId)) return;
   markReasoningCancellation(runId);
   try {
-    await cancelRun(runId);
+    await cancelRun(runId, "replaced-by-new-prompt");
   } catch (error) {
     clearReasoningCancellation(runId);
     throw error;

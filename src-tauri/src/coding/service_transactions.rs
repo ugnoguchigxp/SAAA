@@ -119,6 +119,20 @@ fn continue_job(
     if !matches!(status.as_str(), "settled" | "failed" | "interrupted") {
         return Err("busy".into());
     }
+    let (saved_settings, delivery): (String, String) = tx
+        .query_row(
+            "SELECT j.settings_json,r.delivery FROM coding_jobs j JOIN coding_runs r ON r.id=j.current_run_id WHERE j.id=?1",
+            [&args.job_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(crate::database_error)?;
+    if delivery == "unknown"
+        && serde_json::from_str::<CodingSettings>(&saved_settings)
+            .map_err(|_| "coding_settings_invalid")?
+            .implementation_method == "codex-sdk"
+    {
+        return Err("coding_outcome_unknown".into());
+    }
     let run = new_id("coding_run");
     queries::insert_run(
         tx,

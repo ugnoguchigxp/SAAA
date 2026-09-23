@@ -25,6 +25,12 @@ import {
 import { resetVoiceActivityDetector } from "./ambientVoiceCapture";
 import { initialVoiceAsrProjection } from "./voiceAsrProjection";
 import { microphoneCaptureConstraints, requestMicrophoneStream } from "../../lib/microphone";
+import { withTimeout } from "../../lib/promiseTimeout";
+import {
+  auditVoicePreflightFailed,
+  auditVoiceStartBlocked,
+  auditVoiceToggleRequested,
+} from "./voiceAudit";
 
 export type { VoiceCaptureState } from "../../lib/voiceSession";
 export type AmbientVoiceAvailability = VoiceCaptureState;
@@ -212,6 +218,7 @@ export function useAmbientVoiceSession({
         speechRunId: conversationSessionRef.current.speechRunId,
         capture: voiceSessionRef.current.capture,
         hasStream: Boolean(voiceStreamRef.current),
+        actionInProgress: voiceSession.actionInProgress,
       })
     )
       return;
@@ -224,6 +231,7 @@ export function useAmbientVoiceSession({
     conversationSessionRef,
     attachVoiceCaptureCommitted,
     voiceStreamRef,
+    voiceSession.actionInProgress,
   ]);
 
   function updateListeningEnabled(enabled: boolean) {
@@ -233,9 +241,14 @@ export function useAmbientVoiceSession({
   }
 
   async function toggleAmbientListening(requestedEnabled?: boolean) {
-    const generation = ++voiceToggleGenerationRef.current;
     const currentUiState = voiceCaptureState(voiceSessionRef.current, listeningEnabledRef.current);
     const shouldEnable = requestedEnabled ?? currentUiState === "stopped";
+    auditVoiceToggleRequested(selectedConversationIdRef.current, shouldEnable, currentUiState);
+    if (shouldEnable && voiceSessionRef.current.actionInProgress) {
+      auditVoiceStartBlocked(selectedConversationIdRef.current, "action-in-progress");
+      return;
+    }
+    const generation = ++voiceToggleGenerationRef.current;
     if (!shouldEnable) {
       // Stopping is always accepted. Keep the UI in preparing until owned
       // microphone resources have actually been released.
@@ -244,10 +257,12 @@ export function useAmbientVoiceSession({
         await pauseAmbientCapture(true);
       } catch (cause) {
         if (generation === voiceToggleGenerationRef.current) setError(voiceStartupMessage(cause));
+      } finally {
+        if (generation === voiceToggleGenerationRef.current)
+          applyVoiceEvent({ type: "actionFinished" });
       }
       return;
     }
-    if (voiceSessionRef.current.actionInProgress) return;
     updateListeningEnabled(true);
     applyVoiceEvent({ type: "actionStarted" });
     let persistedEnabled = false;
@@ -268,8 +283,13 @@ export function useAmbientVoiceSession({
         )
           return;
       }
-      const permissionStream = await requestMicrophoneStream(
-        microphoneCaptureConstraints(voiceSettingsRef.current.inputDeviceId),
+      const permissionStream = await withTimeout(
+        requestMicrophoneStream(
+          microphoneCaptureConstraints(voiceSettingsRef.current.inputDeviceId),
+        ),
+        30_000,
+        "microphone-startup-timeout",
+        (lateStream) => lateStream.getTracks().forEach((track) => track.stop()),
       );
       permissionStream.getTracks().forEach((track) => track.stop());
       if (generation !== voiceToggleGenerationRef.current || !listeningEnabledRef.current) return;
@@ -283,12 +303,14 @@ export function useAmbientVoiceSession({
       await attachVoiceCapture();
     } catch (cause) {
       if (generation === voiceToggleGenerationRef.current && listeningEnabledRef.current) {
+        auditVoicePreflightFailed(selectedConversationIdRef.current, cause);
         updateListeningEnabled(false);
         if (persistedEnabled) await persistListeningEnabled(false).catch(() => undefined);
         setError(voiceStartupMessage(cause));
       }
     } finally {
-      applyVoiceEvent({ type: "actionFinished" });
+      if (generation === voiceToggleGenerationRef.current)
+        applyVoiceEvent({ type: "actionFinished" });
     }
   }
 

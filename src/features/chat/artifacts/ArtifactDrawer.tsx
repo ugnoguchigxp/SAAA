@@ -19,16 +19,19 @@ import {
   artifactTabTitle,
   reduceArtifactWorkspace,
   type InteractivePreviewTab,
+  type SourceTab,
 } from "./artifactTab";
 import { artifactWidthFor } from "./artifactWidth";
 import "./artifact.css";
 
 const ArtifactPanel = lazy(() => import("./ArtifactPanel"));
 const InteractivePreview = lazy(() => import("./InteractivePreview"));
+const SourceArtifact = lazy(() => import("./SourceArtifact"));
 
 type ArtifactWorkspaceContextValue = {
   open: (instance: UiInstance, conversationId: string) => void;
   openInteractivePreview: (tab: Omit<InteractivePreviewTab, "kind">) => void;
+  openSource: (tab: Omit<SourceTab, "kind">) => void;
 };
 const ArtifactWorkspaceContext = createContext<ArtifactWorkspaceContextValue | null>(null);
 
@@ -53,9 +56,13 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
     openerRef.current = document.activeElement as HTMLElement | null;
     dispatch({ type: "open", tab: { kind: "interactive-preview", ...tab } });
   }, []);
+  const openSource = useCallback((tab: Omit<SourceTab, "kind">) => {
+    openerRef.current = document.activeElement as HTMLElement | null;
+    dispatch({ type: "open", tab: { kind: "source", ...tab } });
+  }, []);
   const contextValue = useMemo(
-    () => ({ open, openInteractivePreview }),
-    [open, openInteractivePreview],
+    () => ({ open, openInteractivePreview, openSource }),
+    [open, openInteractivePreview, openSource],
   );
   const close = useCallback((tabId: string) => dispatch({ type: "close", tabId }), []);
   const active = tabs.find((tab) => artifactTabId(tab) === activeTabId) ?? null;
@@ -169,7 +176,7 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                     />
                   </Suspense>
                 </UiBoundary>
-              ) : (
+              ) : active.kind === "interactive-preview" ? (
                 <UiBoundary
                   key={artifactTabId(active)}
                   fallback={<p>{t("genui.previewUnavailable")}</p>}
@@ -182,6 +189,10 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                     />
                   </Suspense>
                 </UiBoundary>
+              ) : (
+                <Suspense fallback={<p>{t("genui.loading")}</p>}>
+                  <SourceArtifact conversationId={active.conversationId} url={active.url} />
+                </Suspense>
               )}
             </div>
           </aside>

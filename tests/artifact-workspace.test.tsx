@@ -23,6 +23,7 @@ await import("../src/i18n");
 await import("../src/features/chat/artifacts/ArtifactPanel");
 const { ArtifactWorkspaceProvider, useArtifactWorkspace } =
   await import("../src/features/chat/artifacts/ArtifactDrawer");
+const { CompletedMessage } = await import("../src/features/chat/ChatMessages");
 
 const instance: UiInstance = {
   id: "ui-1",
@@ -73,6 +74,24 @@ function OpenArtifact() {
       onClick: () => workspace?.open(instance, "conversation-1"),
     },
     "open artifact",
+  );
+}
+
+function OpenSource() {
+  const workspace = useArtifactWorkspace();
+  return createElement(
+    "button",
+    {
+      type: "button",
+      className: "open-source",
+      onClick: () =>
+        workspace?.openSource({
+          conversationId: "conversation-1",
+          url: "https://example.com/weather",
+          title: "Weather source",
+        }),
+    },
+    "open source",
   );
 }
 
@@ -132,6 +151,14 @@ describe("artifact workspace", () => {
             download: "deny",
             tauriIpc: "deny",
           },
+        };
+      }
+      if (command === "read_source_artifact") {
+        return {
+          url: "https://example.com/weather",
+          text: "Saved <script>text</script>",
+          observedAt: 1_790_000_000_000,
+          truncated: false,
         };
       }
       return undefined;
@@ -284,5 +311,52 @@ describe("artifact workspace", () => {
     expect(document.querySelector(".artifact-webview-host")).not.toBeNull();
     await act(async () => tabs[0].dispatchEvent(new Event("click", { bubbles: true })));
     expect(document.querySelector(".artifact-webview-host")).toBeNull();
+  });
+
+  test("opens a saved source as plain text in the artifact panel", async () => {
+    restore = installJsdom().restore;
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(document.getElementById("root")!);
+    await act(async () =>
+      root!.render(createElement(ArtifactWorkspaceProvider, null, createElement(OpenSource))),
+    );
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(".open-source")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.querySelector(".artifact-source-text")?.textContent).toBe(
+      "Saved <script>text</script>",
+    );
+    expect(document.querySelector(".artifact-source script")).toBeNull();
+  });
+
+  test("assistant source links open the artifact panel", async () => {
+    restore = installJsdom().restore;
+    const { createRoot } = await import("react-dom/client");
+    root = createRoot(document.getElementById("root")!);
+    await act(async () =>
+      root!.render(
+        createElement(
+          ArtifactWorkspaceProvider,
+          null,
+          createElement(CompletedMessage, {
+            message: {
+              id: "assistant-1",
+              conversationId: "conversation-1",
+              role: "assistant",
+              content: "[Source](https://example.com/weather)",
+              createdAt: "2026-09-23T00:00:00Z",
+            },
+          }),
+        ),
+      ),
+    );
+    for (let step = 0; step < 4; step += 1)
+      await act(async () => await new Promise((resolve) => setTimeout(resolve, 0)));
+    await act(async () => {
+      document.querySelector<HTMLAnchorElement>(".message a")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.querySelector(".artifact-panel")?.textContent).toContain("Source");
   });
 });

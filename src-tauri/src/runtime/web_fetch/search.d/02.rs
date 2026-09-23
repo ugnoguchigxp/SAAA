@@ -122,7 +122,8 @@ fn extract_result_anchors(html: &str, limit: usize) -> Vec<(String, String)> {
         }
         let text = strip_tags(&html[text_start..close]);
         // Snippet: first following `result__snippet` block within 8 KiB.
-        let snippet_window = &html[close..(close + 8_192).min(html.len())];
+        let window_end = floor_char_boundary(html, (close + 8_192).min(html.len()));
+        let snippet_window = &html[close..window_end];
         let snippet = snippet_after(snippet_window);
         out.push((href, format!("{text}\u{1f}{snippet}")));
         cursor = close + 4;
@@ -134,6 +135,13 @@ fn find(haystack: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
         .windows(needle.len())
         .position(|window| window == needle)
         .map(|pos| from + pos)
+}
+fn floor_char_boundary(value: &str, mut end: usize) -> usize {
+    end = end.min(value.len());
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
 }
 fn is_result_anchor(tag: &str) -> bool {
     let lower = tag.to_ascii_lowercase();
@@ -235,7 +243,7 @@ fn snippet_after(window: &str) -> String {
     };
     let text_start = &after[tag_end + 1..];
     let end = text_start.find('<').unwrap_or(text_start.len());
-    strip_tags(&text_start[..end.min(2_000)])
+    strip_tags(&text_start[..floor_char_boundary(text_start, end.min(2_000))])
 }
 fn parse_ddg_html(html: &str) -> Result<Vec<RawHit>, WebFetchFailure> {
     parse_ddg_anchors(html, "duckduckgo")

@@ -17,7 +17,6 @@ import {
 import { attachAmbientVoiceCapture, resetVoiceActivityDetector } from "./ambientVoiceCapture";
 import { VoiceAsrPacketSender } from "./voiceAsrPacketSender";
 import { projectVoiceAsrEvent } from "./voiceAsrProjection";
-import { MicrophoneCaptureError } from "../../lib/microphone";
 import { effectiveCaptureSettings, voiceStartupMessage } from "./voiceCaptureSettings";
 import {
   auditCaptureCancelled,
@@ -208,7 +207,7 @@ export function createAmbientVoiceCaptureActions(input: {
       voiceAsrConversationsRef.current.delete(sessionId);
       applyVoiceEvent({ type: "captureDetached" });
       await detachVoiceCapture(false);
-      if (cause instanceof MicrophoneCaptureError) {
+      if (listeningEnabledRef.current) {
         updateListeningEnabled(false);
         await persistListeningEnabled(false).catch(() => undefined);
       }

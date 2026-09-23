@@ -290,4 +290,94 @@ mod tests {
         );
         assert_eq!(read("voice.runtime")["listeningEnabled"], true);
     }
+
+    #[test]
+    fn direct_qwen_registration_is_removed() {
+        let connection = Connection::open_in_memory().unwrap();
+        crate::initialize_database(&connection).unwrap();
+        let mut providers: Value = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents WHERE namespace='providers.model' AND key='default'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map(|raw| serde_json::from_str(&raw).unwrap())
+            .unwrap();
+        providers["providers"].as_array_mut().unwrap().push(json!({
+            "kind": "openai-compatible",
+            "id": crate::QWEN_DIRECT_PROVIDER_ID,
+            "enabled": true,
+            "label": "LAN LLM · Qwen3.8 27B (direct)",
+            "location": "local",
+            "endpoint": "http://192.168.0.130:8080/v1",
+            "model": "Qwen3.8-27B-ROCmFP4-FAST.gguf",
+            "authentication": "none"
+        }));
+        connection
+            .execute(
+                "UPDATE settings_documents SET value_json=?1 WHERE namespace='providers.model' AND key='default'",
+                [providers.to_string()],
+            )
+            .unwrap();
+        let update = |namespace: &str, value: Value| {
+            connection
+                .execute(
+                    "UPDATE settings_documents SET value_json=?1 WHERE namespace=?2 AND key='default'",
+                    params![value.to_string(), namespace],
+                )
+                .unwrap();
+        };
+        let mut routing = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents WHERE namespace='routing.tasks' AND key='default'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map(|raw| serde_json::from_str::<Value>(&raw).unwrap())
+            .unwrap();
+        routing["conversationRespond"]["source"] = json!("provider");
+        routing["conversationRespond"]["primaryProviderId"] = json!(crate::QWEN_DIRECT_PROVIDER_ID);
+        update("routing.tasks", routing);
+        let mut roles = connection
+            .query_row(
+                "SELECT value_json FROM settings_documents WHERE namespace='routing.roles' AND key='default'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map(|raw| serde_json::from_str::<Value>(&raw).unwrap())
+            .unwrap();
+        roles["actors"].as_array_mut().unwrap().push(json!({
+            "id": "direct",
+            "transport": "provider",
+            "providerId": crate::QWEN_DIRECT_PROVIDER_ID
+        }));
+        update("routing.roles", roles);
+
+        migrate_settings_to_current(&connection).unwrap();
+
+        let read = |namespace: &str| -> Value {
+            connection
+                .query_row(
+                    "SELECT value_json FROM settings_documents WHERE namespace=?1 AND key='default'",
+                    [namespace],
+                    |row| row.get::<_, String>(0),
+                )
+                .map(|raw| serde_json::from_str(&raw).unwrap())
+                .unwrap()
+        };
+        let providers = read("providers.model");
+        assert!(providers["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|provider| { provider["id"] != crate::QWEN_DIRECT_PROVIDER_ID }));
+        let route = &read("routing.tasks")["conversationRespond"];
+        assert_eq!(route["source"], "harness");
+        assert!(route["primaryProviderId"].is_null());
+        assert!(read("routing.roles")["actors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|actor| { actor["providerId"] != crate::QWEN_DIRECT_PROVIDER_ID }));
+    }
 }

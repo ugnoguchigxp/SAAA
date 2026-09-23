@@ -7,7 +7,10 @@ export type ConversationRuntimeActivity =
   | { type: "providerWorking" }
   | { type: "providerFailed" }
   | { type: "generationCancelled" }
-  | { type: "voiceQueryQueued" };
+  | { type: "voiceQueryQueued" }
+  | { type: "webSearching" }
+  | { type: "sourceFetching" }
+  | { type: "answerPreparing" };
 
 export function appendConversationActivity(
   current: ConversationRuntimeActivity[],

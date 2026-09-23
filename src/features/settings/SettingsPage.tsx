@@ -29,6 +29,7 @@ type SettingsTab =
   | "general"
   | "connection"
   | "providers"
+  | "coding"
   | "routing"
   | "voice"
   | "security"
@@ -77,6 +78,7 @@ export function SettingsPage({
       label: t("settings.tabs.providers.label"),
       detail: t("settings.tabs.providers.detail"),
     },
+    { id: "coding", label: "実装方法", detail: "Pi / Codex SDK" },
     { id: "routing", label: "Role routing", detail: "モデルの役割と学習" },
     {
       id: "schedule",
@@ -257,14 +259,17 @@ export function SettingsPage({
               onValidityChange={setConnectionSettingsValid}
             />
           )}
-          {activeTab === "providers" && <CodingSettingsSection />}
           {activeTab === "providers" && (
             <IndividualProvidersSection
               settings={draft.providers}
+              codex={draft.codex}
               persistedProviderIds={persistedProviderIds}
+              primaryProviderId={draft.routing.conversationRespond.primaryProviderId}
               onChange={(providers) => changeDraft((current) => ({ ...current, providers }))}
+              onCodexChange={(codex) => changeDraft((current) => ({ ...current, codex }))}
             />
           )}
+          {activeTab === "coding" && <CodingSettingsSection />}
           {activeTab === "routing" && (
             <RoleRoutingSection
               settings={draft.roleRouting}
@@ -302,7 +307,7 @@ export function SettingsPage({
           )}
         </div>
       </div>
-      <footer className="settings-save-bar">
+      {activeTab !== "coding" && <footer className="settings-save-bar">
         <p>{dirty ? t("settings.pendingRuntime") : t("settings.showingSaved")}</p>
         <div>
           <button
@@ -320,7 +325,7 @@ export function SettingsPage({
             {saveState === "saving" ? t("settings.saving") : t("settings.saveSettings")}
           </button>
         </div>
-      </footer>
+      </footer>}
     </section>
   );
 }

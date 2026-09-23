@@ -374,20 +374,20 @@
       "production": 22
     },
     "src-tauri/src/diagnosis/checks/harness.rs": {
-      "total": 229,
-      "production": 143
+      "total": 426,
+      "production": 300
     },
     "src-tauri/src/diagnosis/checks/memory.rs": {
-      "total": 140,
-      "production": 98
+      "total": 229,
+      "production": 160
     },
     "src-tauri/src/diagnosis/checks/mod.rs": {
       "total": 28,
       "production": 28
     },
     "src-tauri/src/diagnosis/checks/providers.rs": {
-      "total": 176,
-      "production": 90
+      "total": 327,
+      "production": 171
     },
     "src-tauri/src/diagnosis/checks/settings.rs": {
       "total": 86,
@@ -1346,12 +1346,12 @@
       "production": 131
     },
     "src-tauri/src/persistence/settings_migration.d/01.rs": {
-      "total": 343,
-      "production": 343
+      "total": 397,
+      "production": 397
     },
     "src-tauri/src/persistence/settings_migration.d/02.rs": {
-      "total": 294,
-      "production": 294
+      "total": 384,
+      "production": 384
     },
     "src-tauri/src/persistence/settings_migration.rs": {
       "total": 654,
@@ -3597,14 +3597,6 @@
       "total": 208,
       "production": 208
     },
-    "src/features/audit/VoicePipelineMonitorPanel.css": {
-      "total": 167,
-      "production": 167
-    },
-    "src/features/audit/VoicePipelineMonitorPanel.tsx": {
-      "total": 78,
-      "production": 78
-    },
     "src/features/chat/artifacts/artifact.css": {
       "total": 39,
       "production": 39
@@ -3889,13 +3881,13 @@
       "total": 41,
       "production": 41
     },
-    "src/features/diagnosis/DiagnosisModal.css": {
-      "total": 136,
-      "production": 136
+    "src/features/diagnosis/DiagnosisPage.css": {
+      "total": 293,
+      "production": 293
     },
-    "src/features/diagnosis/DiagnosisModal.tsx": {
-      "total": 98,
-      "production": 98
+    "src/features/diagnosis/DiagnosisPage.tsx": {
+      "total": 270,
+      "production": 270
     },
     "src/features/diagnosis/api.ts": {
       "total": 40,
@@ -4110,8 +4102,8 @@
       "production": 295
     },
     "src/i18n/locales/enDiagnosis.ts": {
-      "total": 46,
-      "production": 46
+      "total": 71,
+      "production": 71
     },
     "src/i18n/locales/enErrors.ts": {
       "total": 76,
@@ -4134,8 +4126,8 @@
       "production": 292
     },
     "src/i18n/locales/jaDiagnosis.ts": {
-      "total": 46,
-      "production": 46
+      "total": 71,
+      "production": 71
     },
     "src/i18n/locales/jaErrors.ts": {
       "total": 79,
@@ -4526,8 +4518,8 @@
       "production": 158
     },
     "tests/diagnosis-modal.test.tsx": {
-      "total": 89,
-      "production": 89
+      "total": 165,
+      "production": 165
     },
     "tests/diagnosis-nav.test.tsx": {
       "total": 43,

@@ -104,7 +104,7 @@ export function useConversationTurn({
       coordinator.dispose();
       const runId = conversationSessionRef.current.runId;
       const ttsRunId = conversationSessionRef.current.speechRunId;
-      if (runId) void cancelRun(runId).catch(() => undefined);
+      if (runId) void cancelRun(runId, "conversation-unmounted").catch(() => undefined);
       if (ttsRunId) void stopTts(ttsRunId).catch(() => undefined);
     };
   }, [conversationSessionRef]);

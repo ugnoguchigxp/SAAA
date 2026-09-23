@@ -15,6 +15,20 @@ pub(super) async fn execute(
     timeout: Duration,
     generated: &GeneratedToolSnapshot,
 ) -> (String, bool) {
+    let web_activity = match call.name.as_str() {
+        "web_search" => Some("web-search-started"),
+        "fetch_content" => Some("source-fetch-started"),
+        _ => None,
+    };
+    if let Some(kind) = web_activity {
+        let _ = context
+            .on_event
+            .send(crate::ipc_contract::RuntimeEvent::Activity {
+                run_id: context.input.run_id.clone(),
+                kind: kind.into(),
+                summary: "Retrieving public source information.".into(),
+            });
+    }
     let audit = crate::providers::session_store::ToolExecutionAudit::start(context, call);
     let tool = audit.run_with_outcome(catch_tool_execution(execute_agent_tool(
         context.output_persistence,
@@ -29,7 +43,17 @@ pub(super) async fn execute(
         .then(|| progress_text(&call.name, &language))
         .flatten()
     else {
-        return (tool.await, false);
+        let result = tool.await;
+        if web_activity.is_some() {
+            let _ = context
+                .on_event
+                .send(crate::ipc_contract::RuntimeEvent::Activity {
+                    run_id: context.input.run_id.clone(),
+                    kind: "source-retrieval-completed".into(),
+                    summary: "Source retrieval finished; preparing the answer.".into(),
+                });
+        }
+        return (result, false);
     };
     let progress = crate::larm_voice::render_response(
         &context.input.conversation_id,
@@ -40,7 +64,7 @@ pub(super) async fn execute(
     );
     tokio::pin!(tool);
     tokio::pin!(progress);
-    tokio::select! {
+    let result = tokio::select! {
         biased;
         result = &mut tool => (result, false),
         rendered = &mut progress => {
@@ -56,7 +80,17 @@ pub(super) async fn execute(
             }
             (tool.await, spoken)
         }
+    };
+    if web_activity.is_some() {
+        let _ = context
+            .on_event
+            .send(crate::ipc_contract::RuntimeEvent::Activity {
+                run_id: context.input.run_id.clone(),
+                kind: "source-retrieval-completed".into(),
+                summary: "Source retrieval finished; preparing the answer.".into(),
+            });
     }
+    result
 }
 
 async fn catch_tool_execution(

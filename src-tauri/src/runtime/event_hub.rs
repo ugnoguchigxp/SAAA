@@ -265,9 +265,10 @@ impl TurnEventHub {
             };
         }
         if let RuntimeEvent::MessageCompleted { message, .. } = &mut event {
-            let (visible, _) = crate::voice::cloud_tts::speech_directive::project_complete_assistant_content(
-                &message.content,
-            );
+            let (visible, _) =
+                crate::voice::cloud_tts::speech_directive::project_complete_assistant_content(
+                    &message.content,
+                );
             message.content = visible;
         }
         let hub_accepted_at = Instant::now();

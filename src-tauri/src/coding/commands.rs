@@ -11,7 +11,8 @@ pub fn save_coding_settings(
     settings: CodingSettings,
 ) -> Result<(), String> {
     if settings.version != "0.86.1"
-        || !super::contracts::valid_profile(&settings)
+        || !super::contracts::valid_implementation(&settings)
+        || (settings.implementation_method == "pi" && !super::contracts::valid_profile(&settings))
         || settings.executable.len() > 4096
         || settings.provider.len() > 160
         || settings.model.len() > 160
@@ -30,6 +31,15 @@ pub fn save_coding_settings(
 #[tauri::command]
 pub async fn probe_coding(state: tauri::State<'_, AppState>) -> Result<Value, String> {
     let settings = state.sqlite_readers.read(repo::settings)?;
+    if !super::contracts::valid_implementation(&settings) {
+        return Err("coding_configuration_invalid".into());
+    }
+    if settings.implementation_method == "codex-sdk" {
+        let mut child = crate::runtime::codex_cli::spawn_codex_app_server()?;
+        child.kill().map_err(|_| "codex_probe_failed")?;
+        child.wait().map_err(|_| "codex_probe_failed")?;
+        return Ok(json!({"available":true,"method":"codex-sdk","model":settings.codex_model,"authentication":"existing Codex login; live request not tested"}));
+    }
     let directory = state.data_directory.clone();
     tauri::async_runtime::spawn_blocking(move||{
         crate::runtime::pi::process::check_settings(&settings)?;

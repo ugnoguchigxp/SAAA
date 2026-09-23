@@ -53,14 +53,20 @@ export async function startTurn(
     onEvent,
     runtimeEventOrder(input.runId),
     () => {
-      void cancelRun(input.runId).catch(() => undefined);
+      void cancelRun(input.runId, "invalid-ipc-event").catch(() => undefined);
     },
   );
   return invoke<void>("start_turn", { input, onEvent: channel });
 }
 
-export async function cancelRun(runId: string): Promise<void> {
-  return invoke<void>("cancel_run", { runId });
+export type CancelRunReason =
+  | "invalid-ipc-event"
+  | "conversation-unmounted"
+  | "replaced-by-new-prompt"
+  | "user-stop";
+
+export async function cancelRun(runId: string, reason: CancelRunReason): Promise<void> {
+  return invoke<void>("cancel_run", { runId, reason });
 }
 
 export type TtsVoiceCatalog = {

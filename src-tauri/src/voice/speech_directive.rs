@@ -94,7 +94,8 @@ impl SpeechDirectiveProjection {
                 }
             }
             Phase::Body {
-                candidate: Some(held), ..
+                candidate: Some(held),
+                ..
             } => {
                 let visible = if held.starts_with("[$") {
                     String::new()
@@ -365,10 +366,7 @@ mod tests {
             (visible.as_str(), expression),
             ("[通常文] $natural", SpeechExpression::Natural)
         );
-        assert_eq!(
-            project_complete_assistant_content("ends [").0,
-            "ends ["
-        );
+        assert_eq!(project_complete_assistant_content("ends [").0, "ends [");
     }
 
     #[test]

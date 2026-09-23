@@ -14,8 +14,6 @@ import "./AuditLogPage.css";
 import { useDialogFocus } from "../../components/useDialogFocus";
 import { AppIcon } from "../../components/AppIcon";
 import { auditTimestampIso, formatAuditTimestamp } from "./auditTimestamp";
-import { projectLatestResponsePipeline } from "./voicePipelineMonitor";
-import { VoicePipelineMonitor } from "./VoicePipelineMonitorPanel";
 
 const auditTableFeatures = tableFeatures({ rowSortingFeature });
 const auditColumnHelper = createColumnHelper<typeof auditTableFeatures, AuditEvent>();
@@ -157,8 +155,6 @@ export function AuditLogPage() {
         ? auditQuery.error.message
         : String(auditQuery.error);
 
-  const voicePipeline = useMemo(() => projectLatestResponsePipeline(events), [events]);
-
   const { dialogRef, fallbackRef } = useDialogFocus(selectedEvent !== null, () =>
     setSelectedEventId(null),
   );
@@ -235,8 +231,6 @@ export function AuditLogPage() {
       </div>
 
       <div className="audit-log-content">
-        <VoicePipelineMonitor snapshot={voicePipeline} locale={locale} />
-
         <div className="audit-log-summary">
           <span>{t("audit.rawEvents", { count: events.length })}</span>
           {auditQuery.isFetching ? <span>{t("audit.loading")}</span> : null}

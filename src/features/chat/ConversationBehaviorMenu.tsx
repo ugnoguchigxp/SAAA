@@ -9,7 +9,6 @@ export function ConversationBehaviorMenu({
   policy,
   disabled,
   onOpenSettings,
-  onOpenDiagnosis,
   onSetSpeechOutput,
   onSetListeningPace,
   onReset,
@@ -18,7 +17,6 @@ export function ConversationBehaviorMenu({
   policy: ConversationVoicePolicySnapshot;
   disabled: boolean;
   onOpenSettings: () => void;
-  onOpenDiagnosis: () => void;
   onSetSpeechOutput: (value: "inherit" | "muted") => void;
   onSetListeningPace: (value: "inherit" | "quick" | "balanced" | "patient") => void;
   onReset: () => void;
@@ -39,9 +37,6 @@ export function ConversationBehaviorMenu({
           onSetListeningPace={onSetListeningPace}
           onReset={onReset}
         />
-        <button type="button" onClick={onOpenDiagnosis}>
-          {t("chat.diagnosis.open")}
-        </button>
       </div>
     </details>
   );

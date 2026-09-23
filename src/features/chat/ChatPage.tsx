@@ -1,5 +1,5 @@
 import { SetupChecklist } from "./SetupChecklist";
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useRef, type CSSProperties, type FormEvent } from "react";
 import { useLatestMessageScroll } from "./useLatestMessageScroll";
 import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../components/AppIcon";
@@ -9,7 +9,6 @@ import { ConversationBehaviorMenu } from "./ConversationBehaviorMenu";
 import { VirtualMessages } from "./VirtualMessages";
 import { StreamingPlainText } from "./ChatMessages";
 import { RoutingProposal } from "./RoutingProposal";
-import { DiagnosisModal } from "../diagnosis/DiagnosisModal";
 import type { ChatPageProps } from "./chatPageTypes";
 
 const VOICE_BAR_WEIGHTS = [0.18, 0.32, 0.54, 0.78, 1, 0.7, 0.48, 0.72, 0.46, 0.28, 0.16];
@@ -60,7 +59,6 @@ export function ChatPage({
   onDecideRoutingProposal,
 }: ChatPageProps) {
   const { t } = useTranslation();
-  const [diagnosisOpen, setDiagnosisOpen] = useState(false);
   const {
     messageAreaRef,
     messageContentRef,
@@ -169,10 +167,15 @@ export function ChatPage({
             </article>
           )}
           {activeRunId ? (
-            <div className="llm-thinking-indicator" role="status" aria-label={t("chat.thinking")}>
-              <span />
-              <span />
-              <span />
+            <div role="status">
+              <div className="llm-thinking-indicator" aria-label={t("chat.thinking")}>
+                <span />
+                <span />
+                <span />
+              </div>
+              {runtimeActivity.length > 0 ? (
+                <p>{localizeRuntimeActivity(t, runtimeActivity[runtimeActivity.length - 1])}</p>
+              ) : null}
             </div>
           ) : null}
           {runtimeActivity.length > 0 && (
@@ -266,7 +269,6 @@ export function ChatPage({
                 policy={voicePolicy}
                 disabled={voicePolicyUpdating}
                 onOpenSettings={onOpenSettings}
-                onOpenDiagnosis={() => setDiagnosisOpen(true)}
                 onSetSpeechOutput={onSetConversationSpeechOutput}
                 onSetListeningPace={onSetConversationListeningPace}
                 onReset={onResetConversationVoiceOverrides}
@@ -361,7 +363,6 @@ export function ChatPage({
           {localizeUiMessage(t, error, "chat")}
         </p>
       )}
-      {diagnosisOpen && <DiagnosisModal onClose={() => setDiagnosisOpen(false)} />}
     </section>
   );
 }

@@ -128,7 +128,10 @@ mod tests {
             model: "fixture".into(),
             voice: "voice".into(),
             response_format: "wav".into(),
-            style: None, speed: None, pitch_scale: None, intonation_scale: None,
+            style: None,
+            speed: None,
+            pitch_scale: None,
+            intonation_scale: None,
         };
         let output = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let result = play_with_situation(

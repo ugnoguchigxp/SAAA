@@ -247,6 +247,12 @@ export function localizeRuntimeActivity(
       return t("chat.activity.generationCancelled");
     case "voiceQueryQueued":
       return t("chat.activity.voiceQueryQueued");
+    case "webSearching":
+      return t("chat.activity.webSearching");
+    case "sourceFetching":
+      return t("chat.activity.sourceFetching");
+    case "answerPreparing":
+      return t("chat.activity.answerPreparing");
   }
 }
 

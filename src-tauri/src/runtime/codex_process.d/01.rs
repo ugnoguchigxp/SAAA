@@ -84,5 +84,6 @@ pub(crate) fn run_codex_turn_process_with_policy_and_context(
         on_event,
         cancellation,
         None,
+        false,
     )
 }

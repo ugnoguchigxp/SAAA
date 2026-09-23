@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import type { DiagnosisReport } from "../../lib/generated/diagnosis";
-import { getDiagnosisReport, parseDiagnosisReport, runDiagnosis } from "./api";
+import { parseDiagnosisReport, runDiagnosis } from "./api";
 
 export function useDiagnosisReport() {
   const [report, setReport] = useState<DiagnosisReport | null>(null);
@@ -24,16 +24,8 @@ export function useDiagnosisReport() {
   useEffect(() => {
     mounted.current = true;
     let stop = false;
-    void getDiagnosisReport()
-      .then((next) => {
-        if (!stop) accept.current(next);
-      })
-      .catch((cause: unknown) => {
-        if (!stop && mounted.current)
-          setError(cause instanceof Error ? cause.message : String(cause));
-      });
     const unlisten = listen<unknown>("diagnosis-updated", (event) => {
-      if (stop) return;
+      if (stop || !rerunning.current) return;
       try {
         if (accept.current(parseDiagnosisReport(event.payload)) && mounted.current) setError(null);
       } catch (cause) {

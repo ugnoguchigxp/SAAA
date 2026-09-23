@@ -38,6 +38,29 @@ mod tests {
     }
 
     #[test]
+    fn html_snippet_window_ending_inside_utf8_character_does_not_panic() {
+        let anchor = "<a class=\"result__a\" href=\"https://example.com/page\">Title</a>";
+        let before_character = "</a><div class=\"result__snippet\">";
+        let padding = "a".repeat(8_191 - before_character.len());
+        let html = format!("{anchor}<div class=\"result__snippet\">{padding}先</div>");
+        let close = html.find("</a>").unwrap();
+        assert!(!html.is_char_boundary(close + 8_192));
+
+        let hits = parse_ddg_html(&html).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "Title");
+    }
+
+    #[test]
+    fn snippet_text_limit_ending_inside_utf8_character_does_not_panic() {
+        let window = format!(
+            "<div class=\"result__snippet\">{}先</div>",
+            "a".repeat(1_999)
+        );
+        assert_eq!(snippet_after(&window), "a".repeat(1_999));
+    }
+
+    #[test]
     fn lite_and_brave_fixtures_parse() {
         let lite = parse_ddg_lite(LITE_FIXTURE).unwrap();
         assert_eq!(lite.len(), 1);

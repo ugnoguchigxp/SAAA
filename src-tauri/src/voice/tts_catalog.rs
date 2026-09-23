@@ -262,19 +262,20 @@ async fn load_harness_catalog(state: &crate::AppState) -> Result<TtsVoiceCatalog
     let harness = state
         .sqlite_readers
         .read(|connection| Ok(crate::persistence::load_model_providers(connection)?.harness))?;
-    crate::persistence::validate_model_providers(
-        &crate::ModelProvidersSettings {
-            harness: harness.clone(),
-            providers: Vec::new(),
-            reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
-        },
-    )?;
+    crate::persistence::validate_model_providers(&crate::ModelProvidersSettings {
+        harness: harness.clone(),
+        providers: Vec::new(),
+        reasoning_effort: crate::providers::default_conversation_reasoning_effort(),
+    })?;
     let credential =
         crate::providers::dynamic_lan::credential::load().map_err(|error| error.code())?;
     let (_alive, cancellation) = tokio::sync::watch::channel(false);
     let session = saaa_larm_session::Session::connect_with_profile_and_credential(
         &harness.address,
-        harness.larm_profile.as_deref().unwrap_or(saaa_larm_session::DEFAULT_PROFILE),
+        harness
+            .larm_profile
+            .as_deref()
+            .unwrap_or(saaa_larm_session::DEFAULT_PROFILE),
         credential.token().to_string(),
         cancellation,
     )
@@ -305,11 +306,14 @@ async fn fetch_catalog(
     token: Option<&str>,
     bypass_proxy: bool,
 ) -> Result<TtsVoiceCatalog, String> {
-    let mut url = crate::providers::openai_compatible::provider_operation_url(endpoint, "audio/voices")
-        .map_err(|_| "catalog-protocol".to_string())?;
+    let mut url =
+        crate::providers::openai_compatible::provider_operation_url(endpoint, "audio/voices")
+            .map_err(|_| "catalog-protocol".to_string())?;
     {
         let mut parsed = url::Url::parse(&url).map_err(|_| "catalog-protocol".to_string())?;
-        parsed.query_pairs_mut().append_pair("model", "voicevox-core");
+        parsed
+            .query_pairs_mut()
+            .append_pair("model", "voicevox-core");
         url = parsed.to_string();
     }
     let client = crate::voice::http_audio::client::build(

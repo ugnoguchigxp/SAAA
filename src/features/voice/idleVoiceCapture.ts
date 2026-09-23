@@ -8,6 +8,7 @@ export function idleCaptureShouldStart({
   speechRunId,
   capture,
   hasStream,
+  actionInProgress,
 }: {
   listeningEnabled: boolean;
   selectedConversationId: string | null;
@@ -16,6 +17,7 @@ export function idleCaptureShouldStart({
   speechRunId: string | null | undefined;
   capture: string;
   hasStream: boolean;
+  actionInProgress: boolean;
 }): boolean {
   return Boolean(
     listeningEnabled &&
@@ -23,6 +25,7 @@ export function idleCaptureShouldStart({
     voiceSettings &&
     !situationHold &&
     !speechRunId &&
+    !actionInProgress &&
     capture === "idle" &&
     !hasStream,
   );
