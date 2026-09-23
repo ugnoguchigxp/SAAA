@@ -185,7 +185,7 @@ pub(super) async fn execute(
         ))
         .await;
     }
-    return persist_conversation_success_with_state(
+    persist_conversation_success_with_state(
         state,
         input,
         &result_content,
@@ -205,5 +205,5 @@ pub(super) async fn execute(
             )
         },
     )
-    .map_err(Into::into);
+    .map_err(Into::into)
 }

@@ -1,5 +1,4 @@
 use super::*;
-use crate::memory::typed_recall::TYPED_RECALL_TOOL_NAMES;
 #[cfg(test)]
 const MAX_TOOL_ARGUMENT_CHARS: usize = 200_000;
 #[cfg(test)]

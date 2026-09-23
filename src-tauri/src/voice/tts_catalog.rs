@@ -228,7 +228,7 @@ async fn load_provider_catalog(
     let provider_id = provider_id.ok_or("catalog-unsupported-model")?;
     let settings = state
         .sqlite_readers
-        .read(|connection| Ok(crate::persistence::load_model_providers(connection)?))?;
+        .read(crate::persistence::load_model_providers)?;
     let provider = settings
         .providers
         .into_iter()

@@ -16,6 +16,7 @@ pub use scope_kind::{
     Duration, Evidence, ExtractedFeedback, FeedbackCondition, RuleAction, RuleState, Scenario,
     ScopeKind, StoredRule,
 };
+#[allow(unused_imports)]
 use selection_mode::restrict_mock_to_fixture_environment;
 pub use selection_mode::{
     now_ms, FeedbackKind, InputKind, ObjectType, Operation, Phase, ToolSelectionError,

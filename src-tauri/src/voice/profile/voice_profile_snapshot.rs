@@ -1,5 +1,4 @@
 use super::codec::*;
-use super::*;
 use crate::persistence::{SqliteReaders, SqliteWriter};
 use crate::voice::speaker::SpeakerExtractor;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -9,7 +8,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Mutex,
 };
-use zeroize::Zeroizing;
 pub(super) const PROFILE_ID: &str = "default";
 pub(super) const CANONICAL_SAMPLE_RATE: u32 = 16_000;
 pub(super) const MIN_SAMPLE_SECONDS: f32 = 10.0;

@@ -21,6 +21,7 @@ use authorize_routing_tool::{
     authorize_routing_tool, reserve_routing_operation, resolve_role_tool_effect,
     settle_routing_operation,
 };
+#[allow(unused_imports)]
 use role_step_binding::routing_operation_key;
 pub use role_step_binding::{
     append_tool_definitions, describe_schema, dispatch, dispatch_external, error_envelope,

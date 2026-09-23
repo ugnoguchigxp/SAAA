@@ -227,13 +227,12 @@ fn store_blob(
     bytes: &[u8],
 ) -> Result<(String, String), String> {
     let sha = crate::generated_capabilities::contracts::sha256_hex(bytes);
-    if let Some(id) = connection
+    if let Ok(id) = connection
         .query_row(
             "SELECT id FROM blobs WHERE dedup_domain=?1 AND sha256=?2",
             params![domain, sha],
             |row| row.get::<_, String>(0),
         )
-        .ok()
     {
         connection
             .execute(

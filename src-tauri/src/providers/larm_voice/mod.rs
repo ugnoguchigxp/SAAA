@@ -94,12 +94,12 @@ pub(crate) async fn begin_larm_voice_session(
 }
 async fn close_owner(owner: &Owner) -> Result<(), String> {
     if owner.started.load(Ordering::Acquire) {
-        let released = match owner.ready.get_or_init(|| initialize(owner)).await {
+        match owner.ready.get_or_init(|| initialize(owner)).await {
             Ok(ready) => ready.close().await?,
             Err(error) => error.release().await?,
         };
         rotate_lease_key(&owner.sqlite_writer, &owner.lease_key)?;
-        Ok(released)
+        Ok(())
     } else {
         Ok(())
     }
