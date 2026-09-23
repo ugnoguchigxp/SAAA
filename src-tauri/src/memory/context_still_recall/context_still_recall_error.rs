@@ -399,7 +399,10 @@ pub(super) fn tool_name(memory_type: TypedMemoryType) -> &'static str {
         TypedMemoryType::Skill => TYPED_RECALL_TOOL_NAMES[2],
     }
 }
-pub(super) fn parse_rpc_result(body: &[u8], expected_id: u64) -> Result<Value, ContextStillRecallError> {
+pub(super) fn parse_rpc_result(
+    body: &[u8],
+    expected_id: u64,
+) -> Result<Value, ContextStillRecallError> {
     let value: Value =
         serde_json::from_slice(body).map_err(|_| ContextStillRecallError::Protocol)?;
     let object = value.as_object().ok_or(ContextStillRecallError::Protocol)?;
@@ -447,7 +450,9 @@ pub(super) fn validate_tool_catalog(result: &Value) -> Result<(), ContextStillRe
     }
     Ok(())
 }
-pub(super) fn require_json_content_type(headers: &HeaderMap) -> Result<(), ContextStillRecallError> {
+pub(super) fn require_json_content_type(
+    headers: &HeaderMap,
+) -> Result<(), ContextStillRecallError> {
     let content_type = headers
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())

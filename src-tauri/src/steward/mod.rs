@@ -56,10 +56,17 @@ mod tests {
 
 #[cfg(test)]
 mod dwr_tests {
-    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
+    pub(crate) use super::contracts::{
+        GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier,
+    };
     pub(super) use super::repository as repo;
-    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
-    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(crate) use super::{
+        authority, budget, commands, evidence, faults, intake, invalidation, pump, queue, verifier,
+        views,
+    };
+    pub(super) use super::{
+        flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER,
+    };
     pub(super) use crate::persistence::schema::initialize_database;
     pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;
@@ -75,11 +82,19 @@ mod dwr_tests {
 
 #[cfg(test)]
 mod migration_tests {
-    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
+    pub(crate) use super::contracts::{
+        GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier,
+    };
     pub(super) use super::repository as repo;
-    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
-    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(crate) use super::{
+        authority, budget, commands, evidence, faults, intake, invalidation, pump, queue, verifier,
+        views,
+    };
+    pub(super) use super::{
+        flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER,
+    };
     pub(super) use crate::persistence::schema::initialize_database;
+    pub(super) use crate::persistence::schema::DATABASE_SCHEMA_VERSION;
     pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;
     pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
@@ -89,17 +104,23 @@ mod migration_tests {
     pub(super) use std::sync::mpsc;
     pub(super) use std::sync::{Mutex, OnceLock};
     pub(super) use std::time::{Duration, Instant};
-    pub(super) use crate::persistence::schema::DATABASE_SCHEMA_VERSION;
     include!("tests/migration.rs");
 }
 
 #[cfg(test)]
 mod latency_tests {
+    pub(crate) use super::contracts::{
+        GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier,
+    };
     pub(crate) use super::pump::Wake;
-    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
     pub(super) use super::repository as repo;
-    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
-    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(crate) use super::{
+        authority, budget, commands, evidence, faults, intake, invalidation, pump, queue, verifier,
+        views,
+    };
+    pub(super) use super::{
+        flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER,
+    };
     pub(super) use crate::persistence::schema::initialize_database;
     pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;
@@ -115,10 +136,17 @@ mod latency_tests {
 
 #[cfg(test)]
 mod rf5_tests {
-    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
+    pub(crate) use super::contracts::{
+        GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier,
+    };
     pub(super) use super::repository as repo;
-    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
-    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(crate) use super::{
+        authority, budget, commands, evidence, faults, intake, invalidation, pump, queue, verifier,
+        views,
+    };
+    pub(super) use super::{
+        flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER,
+    };
     pub(super) use crate::persistence::schema::initialize_database;
     pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;
@@ -134,10 +162,17 @@ mod rf5_tests {
 
 #[cfg(test)]
 mod sc_tests {
-    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
+    pub(crate) use super::contracts::{
+        GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier,
+    };
     pub(super) use super::repository as repo;
-    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
-    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(crate) use super::{
+        authority, budget, commands, evidence, faults, intake, invalidation, pump, queue, verifier,
+        views,
+    };
+    pub(super) use super::{
+        flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER,
+    };
     pub(super) use crate::persistence::schema::initialize_database;
     pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;

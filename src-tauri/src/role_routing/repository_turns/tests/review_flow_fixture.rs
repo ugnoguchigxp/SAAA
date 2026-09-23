@@ -483,7 +483,7 @@ pub(super) fn rr_04_receipt_rows_rollback_with_the_runtime_transaction() {
                 ..Default::default()
             },
         )
-            .expect("receipt");
+        .expect("receipt");
         let receipt: (String, String, Option<i64>, String) = tx
             .query_row(
                 "SELECT r.phase,s.status,r.deadline_at_ms,s.config_fingerprint FROM rr_roots r JOIN rr_steps s ON s.root_id=r.root_id WHERE r.root_id='run'",

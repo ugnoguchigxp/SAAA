@@ -51,7 +51,10 @@ pub(super) fn valid_started_at(value: &str) -> bool {
         .and_then(|millis| millis.parse::<u64>().ok())
         .is_some()
 }
-pub(super) fn validate_token_path(run_dir: &Path, token_path: &Path) -> Result<(), ContextStillRecallError> {
+pub(super) fn validate_token_path(
+    run_dir: &Path,
+    token_path: &Path,
+) -> Result<(), ContextStillRecallError> {
     if !token_path.is_absolute() {
         return Err(ContextStillRecallError::Configuration);
     }
@@ -68,7 +71,10 @@ pub(super) fn validate_token_path(run_dir: &Path, token_path: &Path) -> Result<(
     }
     Ok(())
 }
-pub(super) fn read_token(run_dir: &Path, path: &Path) -> Result<Zeroizing<String>, ContextStillRecallError> {
+pub(super) fn read_token(
+    run_dir: &Path,
+    path: &Path,
+) -> Result<Zeroizing<String>, ContextStillRecallError> {
     validate_token_path(run_dir, path)?;
     let content = Zeroizing::new(read_file_limited(path, MAX_TOKEN_BYTES)?);
     let token_bytes = match content.as_slice() {
@@ -84,7 +90,10 @@ pub(super) fn read_token(run_dir: &Path, path: &Path) -> Result<Zeroizing<String
     }
     Ok(Zeroizing::new(token.to_string()))
 }
-pub(super) fn read_file_limited(path: &Path, limit: u64) -> Result<Vec<u8>, ContextStillRecallError> {
+pub(super) fn read_file_limited(
+    path: &Path,
+    limit: u64,
+) -> Result<Vec<u8>, ContextStillRecallError> {
     let file = fs::File::open(path).map_err(|_| ContextStillRecallError::Configuration)?;
     let metadata = file
         .metadata()

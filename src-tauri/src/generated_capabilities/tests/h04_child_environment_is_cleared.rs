@@ -1,4 +1,3 @@
-use super::test_env::*;
 use super::super::{
     contracts::{
         parse_response, HostOutcome, HostRequest, HostResponse, OperationResult, ReportStatus,
@@ -11,6 +10,7 @@ use super::super::{
     repository::{self, RevisionState},
     service::{CapabilityService, ImportCandidate, RevisionRef},
 };
+use super::test_env::*;
 use crate::persistence::SqliteWriter;
 use serde_json::{json, Map, Value};
 use std::{

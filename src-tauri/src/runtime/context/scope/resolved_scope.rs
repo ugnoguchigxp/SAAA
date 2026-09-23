@@ -363,7 +363,11 @@ pub(crate) fn attach_output(
         .map_err(database_error)?;
     Ok(())
 }
-pub(super) fn ensure_scope(connection: &Connection, kind: &str, id: &str) -> Result<String, String> {
+pub(super) fn ensure_scope(
+    connection: &Connection,
+    kind: &str,
+    id: &str,
+) -> Result<String, String> {
     let key = format!("{kind}:{id}");
     connection
         .execute(
@@ -463,7 +467,11 @@ pub(super) fn linked(connection: &Connection, left: &str, right: &str) -> bool {
         )
         .unwrap_or(false)
 }
-pub(super) fn snapshot_digest(status: &str, focus: Option<&str>, scopes: &[ResolvedScope]) -> String {
+pub(super) fn snapshot_digest(
+    status: &str,
+    focus: Option<&str>,
+    scopes: &[ResolvedScope],
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(status.as_bytes());
     hasher.update(focus.unwrap_or_default().as_bytes());

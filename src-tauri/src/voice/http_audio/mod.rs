@@ -119,9 +119,9 @@ async fn receive(
     decoder.finish()?;
     if !pending.is_empty() {
         output.store(true, std::sync::atomic::Ordering::Release);
-        let format = decoder.format.ok_or_else(|| {
-            "HTTP TTS finished without a decoded audio format".to_string()
-        })?;
+        let format = decoder
+            .format
+            .ok_or_else(|| "HTTP TTS finished without a decoded audio format".to_string())?;
         send_packet(sender, cancellation, format, pending).await?;
     }
     Ok(())

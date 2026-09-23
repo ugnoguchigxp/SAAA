@@ -10,10 +10,10 @@ use rusqlite::Connection;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-#[path = "feedback/extraction_failure.rs"]
-mod extraction_failure;
 #[path = "feedback/apply_extraction.rs"]
 mod apply_extraction;
-pub use extraction_failure::{ExtractionFailure, ParsedExtraction, parse_extraction, ApplyOutcome};
-use extraction_failure::{ResolvedScope, resolve_scope, resolved_condition, signature};
-pub use apply_extraction::{apply_extraction};
+#[path = "feedback/extraction_failure.rs"]
+mod extraction_failure;
+pub use apply_extraction::apply_extraction;
+pub use extraction_failure::{parse_extraction, ApplyOutcome, ExtractionFailure, ParsedExtraction};
+use extraction_failure::{resolve_scope, resolved_condition, signature, ResolvedScope};

@@ -67,7 +67,9 @@ pub(super) fn seed(state: &crate::AppState) -> Result<(), String> {
         .sqlite_writer
         .write(move |c| {
             let message_count: i64 = c
-                .query_row("SELECT count(*) FROM conversation_messages", [], |r| r.get(0))
+                .query_row("SELECT count(*) FROM conversation_messages", [], |r| {
+                    r.get(0)
+                })
                 .map_err(crate::database_error)?;
             if message_count != 0 {
                 return Err("seed only a fresh E2E database".into());

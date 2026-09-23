@@ -22,7 +22,7 @@ pub struct McpManager {
     pub(super) shutting_down: AtomicBool,
 }
 impl McpManager {
-pub fn new(
+    pub fn new(
         writer: Arc<SqliteWriter>,
         principal_id: String,
         config_path: Option<PathBuf>,
@@ -53,13 +53,13 @@ pub fn new(
     }
 }
 impl McpManager {
-/// Records this process's own MCP endpoint so a D4 source that points at it can be refused.
+    /// Records this process's own MCP endpoint so a D4 source that points at it can be refused.
     pub async fn set_self_endpoint(&self, endpoint: Option<String>) {
         *self.self_endpoint.write().await = endpoint;
     }
 }
 impl McpManager {
-pub(super) async fn is_self_endpoint(&self, url: &str) -> bool {
+    pub(super) async fn is_self_endpoint(&self, url: &str) -> bool {
         let Some(self_endpoint) = self.self_endpoint.read().await.clone() else {
             return false;
         };
@@ -67,37 +67,40 @@ pub(super) async fn is_self_endpoint(&self, url: &str) -> bool {
     }
 }
 impl McpManager {
-pub fn principal_id(&self) -> &str {
+    pub fn principal_id(&self) -> &str {
         &self.principal_id
     }
 }
 impl McpManager {
-pub fn config_generation(&self) -> i64 {
+    pub fn config_generation(&self) -> i64 {
         self.generation.load(Ordering::SeqCst)
     }
 }
 impl McpManager {
-pub async fn sources(&self) -> Arc<McpSources> {
+    pub async fn sources(&self) -> Arc<McpSources> {
         self.config.read().await.clone()
     }
 }
 impl McpManager {
-pub async fn source_spec(&self, source_id: &str) -> Option<super::super::config::McpSourceSpec> {
+    pub async fn source_spec(
+        &self,
+        source_id: &str,
+    ) -> Option<super::super::config::McpSourceSpec> {
         self.config.read().await.get(source_id).cloned()
     }
 }
 impl McpManager {
-pub async fn is_ready(&self, source_id: &str) -> bool {
+    pub async fn is_ready(&self, source_id: &str) -> bool {
         self.ready.read().await.contains(source_id)
     }
 }
 impl McpManager {
-pub async fn config_diagnostic(&self) -> Option<&'static str> {
+    pub async fn config_diagnostic(&self) -> Option<&'static str> {
         *self.config_diagnostic.read().await
     }
 }
 impl McpManager {
-pub(super) async fn gate_for(&self, source_id: &str) -> Arc<RwLock<()>> {
+    pub(super) async fn gate_for(&self, source_id: &str) -> Arc<RwLock<()>> {
         let mut gates = self.gates.lock().await;
         gates
             .entry(source_id.to_string())
@@ -106,7 +109,7 @@ pub(super) async fn gate_for(&self, source_id: &str) -> Arc<RwLock<()>> {
     }
 }
 impl McpManager {
-/// Registers the configured sources in the ledger (without creating grants), revokes config
+    /// Registers the configured sources in the ledger (without creating grants), revokes config
     /// grants for removed or disabled sources, and keeps the previous valid configuration when a
     /// reload fails.
     pub async fn reload_config(&self) -> Result<(), &'static str> {
@@ -128,7 +131,7 @@ impl McpManager {
     }
 }
 impl McpManager {
-/// Applies a new source list. Disabled or removed sources stop dispatch, are disabled in the
+    /// Applies a new source list. Disabled or removed sources stop dispatch, are disabled in the
     /// ledger with a catalog epoch bump, and lose only the grants this configuration owned.
     pub async fn apply_sources(&self, sources: McpSources) {
         let previous: HashSet<String> = self
@@ -185,7 +188,7 @@ impl McpManager {
     }
 }
 impl McpManager {
-pub(super) async fn register_configured_sources(&self) {
+    pub(super) async fn register_configured_sources(&self) {
         let sources = self.config.read().await.clone();
         let generation = self.config_generation();
         let owner = self.principal_id.clone();
@@ -231,7 +234,7 @@ pub(super) async fn register_configured_sources(&self) {
     }
 }
 impl McpManager {
-pub(super) async fn disable_sources(&self, ids: &[String], generation: i64) {
+    pub(super) async fn disable_sources(&self, ids: &[String], generation: i64) {
         let writer = self.writer.clone();
         let ids = ids.to_vec();
         let owner = self.principal_id.clone();
@@ -282,7 +285,7 @@ pub(super) async fn disable_sources(&self, ids: &[String], generation: i64) {
     }
 }
 impl McpManager {
-/// Runs one source sync under a per-source single-flight guard. Config-derived grants are
+    /// Runs one source sync under a per-source single-flight guard. Config-derived grants are
     /// applied in a separate transaction only after the publish transaction committed.
     pub async fn sync_source(&self, source_id: &str) -> Result<SyncOutcome, SyncError> {
         if self.shutting_down.load(Ordering::SeqCst) {
@@ -354,7 +357,7 @@ impl McpManager {
     }
 }
 impl McpManager {
-pub async fn sync_all(&self) {
+    pub async fn sync_all(&self) {
         let sources = self.config.read().await.clone();
         for source in sources.sources.iter().filter(|source| source.enabled) {
             let _ = self.sync_source(&source.id).await;
@@ -362,7 +365,7 @@ pub async fn sync_all(&self) {
     }
 }
 impl McpManager {
-/// Spawns a small watcher for the optional GET stream. A `tools/list_changed` notification
+    /// Spawns a small watcher for the optional GET stream. A `tools/list_changed` notification
     /// marks the source dirty; the polling loop re-syncs after the debounce. A server that does
     /// not offer GET (405) simply returns no stream.
     async fn watch_notifications(&self, source_id: &str) {
@@ -408,13 +411,13 @@ impl McpManager {
     }
 }
 impl McpManager {
-pub async fn mark_dirty(&self, source_id: &str) {
+    pub async fn mark_dirty(&self, source_id: &str) {
         self.dirty.lock().await.insert(source_id.to_string());
         self.dirty_notify.notify_waiters();
     }
 }
 impl McpManager {
-/// Spawns the periodic poll loop and performs one immediate sync so a restart never serves a
+    /// Spawns the periodic poll loop and performs one immediate sync so a restart never serves a
     /// remote invoke before this process has observed a successful sync. Tests call the
     /// individual methods instead.
     pub fn start_background(self: &Arc<Self>) {

@@ -165,8 +165,9 @@ pub(super) fn replay_scenario<'a>(
     summary: &mut ReplaySummary,
 ) -> Result<(), String> {
     let mut previous_elapsed = None;
-    let mut hysteresis =
-        super::super::classifier::Hysteresis::from_state(super::super::contracts::initial_state("0"));
+    let mut hysteresis = super::super::classifier::Hysteresis::from_state(
+        super::super::contracts::initial_state("0"),
+    );
     for (elapsed_ms, signals, expected_scene, expected_attention) in samples {
         if elapsed_ms > 86_400_000 || previous_elapsed.is_some_and(|previous| elapsed_ms < previous)
         {
@@ -180,9 +181,13 @@ pub(super) fn replay_scenario<'a>(
             u128::from(elapsed_ms),
             parameters,
         );
-        let attention =
-            super::super::classifier::shadow_policy(&state, signals, &signals.observed_at, parameters)
-                .proposed_attention;
+        let attention = super::super::classifier::shadow_policy(
+            &state,
+            signals,
+            &signals.observed_at,
+            parameters,
+        )
+        .proposed_attention;
         match attention.as_str() {
             "IGNORE" => summary.policy_counts[0] += 1,
             "OBSERVE" => summary.policy_counts[1] += 1,

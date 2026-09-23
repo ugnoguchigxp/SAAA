@@ -19,12 +19,12 @@ mod developer_instructions;
 #[path = "codex_process/run_codex_turn_process_with_dispatch.rs"]
 mod run_codex_turn_process_with_dispatch;
 use developer_instructions::developer_instructions;
-pub(crate) use run_codex_turn_process_with_dispatch::run_codex_turn_process_with_dispatch;
 #[cfg(test)]
 pub(crate) use developer_instructions::{
     run_codex_turn_process, run_codex_turn_process_with_policy,
     run_codex_turn_process_with_policy_and_context,
 };
+pub(crate) use run_codex_turn_process_with_dispatch::run_codex_turn_process_with_dispatch;
 #[cfg(test)]
 #[path = "codex_process/tests.rs"]
 mod tests;

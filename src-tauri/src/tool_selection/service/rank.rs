@@ -1,6 +1,6 @@
 use super::*;
 impl ToolSelectionService {
-pub(super) async fn rank(
+    pub(super) async fn rank(
         &self,
         context: &RequestContext,
         scenario: &Scenario,
@@ -246,7 +246,7 @@ pub(super) async fn rank(
     }
 }
 impl ToolSelectionService {
-pub async fn search(
+    pub async fn search(
         &self,
         context: &RequestContext,
         intent: &str,
@@ -259,7 +259,7 @@ pub async fn search(
     }
 }
 impl ToolSelectionService {
-/// Extracts only the scenario for one host call. Correction candidates are deliberately
+    /// Extracts only the scenario for one host call. Correction candidates are deliberately
     /// discarded and the session scenario cache is not touched, so an external MCP intent can
     /// never be persisted as a user correction or bleed into another search.
     pub async fn extract_scenario_only(
@@ -284,7 +284,7 @@ impl ToolSelectionService {
     }
 }
 impl ToolSelectionService {
-/// Search with a request-local scenario. The scenario is never written to the shared session
+    /// Search with a request-local scenario. The scenario is never written to the shared session
     /// cache, so concurrent searches in one session cannot observe each other's intent.
     pub async fn search_with_scenario(
         &self,
@@ -346,8 +346,10 @@ impl ToolSelectionService {
                 created_at_ms: now_ms(),
             };
             let reference = self.references.issue(entry, now_ms())?;
-            let (source_id, source_label) =
-                super::super::mcp::service_support::source_display(&self.writer, &candidate.tool_id);
+            let (source_id, source_label) = super::super::mcp::service_support::source_display(
+                &self.writer,
+                &candidate.tool_id,
+            );
             candidates.push(SearchCandidate {
                 reference,
                 revision_id: candidate.revision_id.clone(),
@@ -370,7 +372,7 @@ impl ToolSelectionService {
     }
 }
 impl ToolSelectionService {
-pub(super) fn persist(
+    pub(super) fn persist(
         &self,
         context: &RequestContext,
         scenario: &Scenario,
@@ -463,7 +465,7 @@ pub(super) fn persist(
     }
 }
 impl ToolSelectionService {
-pub(super) fn read_revision(
+    pub(super) fn read_revision(
         &self,
         revision_id: &str,
     ) -> ToolSelectionResult<Option<repository::RevisionRow>> {

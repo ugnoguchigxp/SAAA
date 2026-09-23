@@ -496,7 +496,8 @@ pub(super) async fn unrelated_scope_input_does_not_abort_a_scoped_extraction_com
         .unwrap();
 }
 #[tokio::test]
-pub(super) async fn request_local_extraction_never_appears_in_another_request_or_shared_projection() {
+pub(super) async fn request_local_extraction_never_appears_in_another_request_or_shared_projection()
+{
     let c = db();
     insert(&c, "local-request", "この依頼だけ日本語で");
     let writer = SqliteWriter::from_connection(c);

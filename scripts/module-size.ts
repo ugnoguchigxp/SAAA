@@ -182,7 +182,12 @@ const INCLUDE_D_PATTERN = /include!\s*\(\s*"[^"]*\.d\//;
 
 export function isForbiddenIncludeDSplit(path: string, content: string, frozen: Set<string>): boolean {
   if (!path.endsWith(".rs") || frozen.has(path) || path.includes(".d/")) return false;
-  return INCLUDE_D_PATTERN.test(content);
+  const directory = path.slice(0, path.lastIndexOf("/"));
+  for (const match of content.matchAll(/include!\s*\(\s*"([^"]*\.d\/[^"]+)"\s*\)/g)) {
+    const included = `${directory}/${match[1]}`;
+    if (!frozen.has(included)) return true;
+  }
+  return false;
 }
 
 /** Non-frozen Rust sources must not keep include!("….d/…") module splits. */

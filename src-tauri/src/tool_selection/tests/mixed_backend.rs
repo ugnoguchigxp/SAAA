@@ -1,4 +1,3 @@
-use super::*;
 use super::super::backends::{BackendOutcome, BackendRequest, FixtureBackend, ToolBackend};
 use super::super::catalog::{self, CatalogEntry, UsagePage};
 use super::super::contracts::*;
@@ -9,6 +8,7 @@ use super::super::inference::{
 };
 use super::super::repository::{self, Epochs};
 use super::super::service::ToolSelectionService;
+use super::*;
 use crate::persistence::SqliteWriter;
 use async_trait::async_trait;
 use rusqlite::{Connection, TransactionBehavior};
@@ -76,8 +76,8 @@ pub(crate) async fn startup_reconcile_settles_running_invocations() {
         Ok(())
     })
     .expect("insert running invocation");
-    let repaired =
-        super::super::service::reconcile_interrupted_invocations(&harness.writer).expect("reconcile");
+    let repaired = super::super::service::reconcile_interrupted_invocations(&harness.writer)
+        .expect("reconcile");
     assert_eq!(repaired, 1);
     let status: String = harness
         .writer

@@ -91,7 +91,12 @@ pub(super) async fn invoke_on(env: &TestEnv, call_id: &str, revision_id: &str) -
     assert_eq!(invoked.revision_id, revision_id);
     capability_id
 }
-pub(super) fn bind_typescript(env: &TestEnv, revision_id: &str, inspection_id: &str, typescript: &str) {
+pub(super) fn bind_typescript(
+    env: &TestEnv,
+    revision_id: &str,
+    inspection_id: &str,
+    typescript: &str,
+) {
     let revision = lifecycle::read(&env.writer, |connection| {
         crate::generated_capabilities::repository::revision_by_id(connection, revision_id)
     })

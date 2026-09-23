@@ -274,7 +274,9 @@ pub(crate) fn rollback_adaptive_artifact(
         learning_snapshot(connection)
     })
 }
-pub(super) fn learning_snapshot(connection: &Connection) -> Result<RoutingLearningSnapshot, String> {
+pub(super) fn learning_snapshot(
+    connection: &Connection,
+) -> Result<RoutingLearningSnapshot, String> {
     let (dirty_roots, ready_datasets, active_artifacts, invalidated_datasets, pending_cleanups) =
         connection
             .query_row(
@@ -464,7 +466,9 @@ pub(super) fn root_snapshot_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Rou
             .unwrap_or_default(),
     })
 }
-pub(super) fn proposal_snapshot_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutingProposalSnapshot> {
+pub(super) fn proposal_snapshot_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<RoutingProposalSnapshot> {
     Ok(RoutingProposalSnapshot {
         id: row.get(0)?,
         root_id: row.get(1)?,
@@ -489,7 +493,10 @@ pub(super) fn proposal_snapshot(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Role-routing premium proposal is unavailable".into())
 }
-pub(super) fn root_snapshot(connection: &Connection, root_id: &str) -> Result<RoutingRootSnapshot, String> {
+pub(super) fn root_snapshot(
+    connection: &Connection,
+    root_id: &str,
+) -> Result<RoutingRootSnapshot, String> {
     connection
         .query_row(
             "SELECT root_id,runtime_run_id,phase,revision,active_slot,cancel_requested,

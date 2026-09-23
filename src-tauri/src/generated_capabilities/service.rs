@@ -1,3 +1,4 @@
+pub use super::contracts::{InvocationResult, InvokeRequest, ResolvedCapability};
 use super::{
     contracts::{self, HostOutcome, HostRequest, OperationResult, PackageManifest, WasmContract},
     errors::*,
@@ -24,14 +25,13 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{oneshot, Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore};
-pub use super::contracts::{InvocationResult, InvokeRequest, ResolvedCapability};
+#[path = "service/import_candidate.rs"]
+mod import_candidate;
 #[cfg(test)]
 #[path = "service/test_support.rs"]
 mod test_support;
-#[path = "service/import_candidate.rs"]
-mod import_candidate;
 #[path = "service/verify_inner.rs"]
 mod verify_inner;
-pub use import_candidate::{ImportCandidate, RevisionRef, VerificationSummary, CapabilityService};
+pub use import_candidate::{CapabilityService, ImportCandidate, RevisionRef, VerificationSummary};
 pub(super) use verify_inner::storage_error;
 // Methods on CapabilityService live in child impl blocks.

@@ -5,7 +5,9 @@
 
 pub(crate) use super::outcome_v2::{commit_prepared_outcome, prepare_outcome_patch};
 pub(crate) use super::query::WorldSeed;
-pub(crate) use super::query_v2::{activate_v2, activate_v2_with_stats, ActivateInputV2, IncludeFlags};
+pub(crate) use super::query_v2::{
+    activate_v2, activate_v2_with_stats, ActivateInputV2, IncludeFlags,
+};
 pub(crate) use super::test_support::*;
 pub(crate) use crate::memory::personal_state::{now, store};
 pub(crate) use crate::persistence::sqlite::SqliteWriter;
@@ -23,7 +25,7 @@ pub(crate) use v2_fixture::*;
 #[path = "v2_tests/chain_fixture.rs"]
 mod chain_fixture;
 pub(crate) use chain_fixture::*;
-#[path = "v2_tests/fixture_chain_v2.rs"]
-mod fixture_chain_v2;
 #[path = "v2_tests/d19_failed_commit_rolls_back_every_write.rs"]
 mod d19_failed_commit_rolls_back_every_write;
+#[path = "v2_tests/fixture_chain_v2.rs"]
+mod fixture_chain_v2;

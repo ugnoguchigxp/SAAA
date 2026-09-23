@@ -12,11 +12,18 @@ use crate::{AppState, RunCancellation};
 use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-#[path = "gateway/role_step_binding.rs"]
-mod role_step_binding;
 #[path = "gateway/authorize_routing_tool.rs"]
 mod authorize_routing_tool;
+#[path = "gateway/role_step_binding.rs"]
+mod role_step_binding;
 pub use super::gateway_schemas::definitions;
-pub use role_step_binding::{TOOL_SEARCH, TOOL_DESCRIBE, TOOL_INVOKE, internal_name, is_selection_tool, search_schema, describe_schema, invoke_schema, ok, error_envelope, dispatch, dispatch_external, append_tool_definitions, execute_for_persistence, execute_for_turn, RoleStepBinding, execute_for_role_root};
-use role_step_binding::{routing_operation_key};
-use authorize_routing_tool::{authorize_routing_tool, resolve_role_tool_effect, reserve_routing_operation, settle_routing_operation};
+use authorize_routing_tool::{
+    authorize_routing_tool, reserve_routing_operation, resolve_role_tool_effect,
+    settle_routing_operation,
+};
+use role_step_binding::routing_operation_key;
+pub use role_step_binding::{
+    append_tool_definitions, describe_schema, dispatch, dispatch_external, error_envelope,
+    execute_for_persistence, execute_for_role_root, execute_for_turn, internal_name, invoke_schema,
+    is_selection_tool, ok, search_schema, RoleStepBinding, TOOL_DESCRIBE, TOOL_INVOKE, TOOL_SEARCH,
+};

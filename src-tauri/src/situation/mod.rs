@@ -10,9 +10,9 @@ pub mod repository;
 mod speech;
 mod tick;
 use crate::persistence::{SqliteReaders, SqliteWriter};
-use classifier::{classify_with_parameters, shadow_policy, Hysteresis};
 #[cfg(test)]
 pub(super) use classifier::classify;
+use classifier::{classify_with_parameters, shadow_policy, Hysteresis};
 pub(super) use contracts::{
     initial_decision, initial_signals, initial_state, AudioSignal, AudioState, CalendarSignal,
     CalendarState, CalibrationParameters, ConversationSignal, ConversationState,
@@ -36,8 +36,8 @@ use tokio::sync::Notify;
 mod situation_runtime;
 use situation_runtime::accumulate_quality;
 mod health_signals;
-pub(crate) use situation_runtime::{SituationRuntime, validate_settings, validate_scene};
-pub(crate) use situation_runtime::{SituationSample};
-use situation_runtime::{MAX_EVENTS, RuntimeInner};
-use health_signals::{signal_health, push_event, epoch_millis, fresh_owned};
+use health_signals::{epoch_millis, fresh_owned, push_event, signal_health};
+pub(crate) use situation_runtime::SituationSample;
+pub(crate) use situation_runtime::{validate_scene, validate_settings, SituationRuntime};
+use situation_runtime::{RuntimeInner, MAX_EVENTS};
 mod tests;

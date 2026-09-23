@@ -1,6 +1,7 @@
+use super::codec::*;
 use super::*;
-use crate::voice::speaker::SpeakerExtractor;
 use crate::persistence::{SqliteReaders, SqliteWriter};
+use crate::voice::speaker::SpeakerExtractor;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -9,7 +10,6 @@ use std::{
     sync::Mutex,
 };
 use zeroize::Zeroizing;
-use super::codec::*;
 pub(super) const PROFILE_ID: &str = "default";
 pub(super) const CANONICAL_SAMPLE_RATE: u32 = 16_000;
 pub(super) const MIN_SAMPLE_SECONDS: f32 = 10.0;
@@ -20,7 +20,8 @@ pub(super) const MIN_READY_DURATION_MS: u64 = 50_000;
 pub(super) const DEFAULT_THRESHOLD: f32 = 0.55;
 pub(super) const ENROLLMENT_CONSISTENCY_THRESHOLD: f32 = 0.35;
 const MODEL_FILE: &str = "model/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx";
-pub(crate) const MODEL_SHA256: &str = "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11";
+pub(crate) const MODEL_SHA256: &str =
+    "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11";
 const LIBRARY_FILE: &str = "lib/libsherpa-onnx-c-api.dylib";
 const ONNX_RUNTIME_FILE: &str = "lib/libonnxruntime.dylib";
 #[derive(Debug, Clone, Serialize)]
@@ -115,7 +116,10 @@ impl VoiceProfileRuntime {
         }
     }
 
-    pub(super) fn with_mutation<T>(&self, operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    pub(super) fn with_mutation<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
         let _guard = self
             .mutation
             .lock()
@@ -376,7 +380,11 @@ impl VoiceProfileRuntime {
         fs::read(absolute_path).map_err(|error| format!("Could not read the voice sample: {error}"))
     }
 
-    pub(super) fn resolve_sample_path(&self, sample_id: &str, stored_path: &str) -> Result<PathBuf, String> {
+    pub(super) fn resolve_sample_path(
+        &self,
+        sample_id: &str,
+        stored_path: &str,
+    ) -> Result<PathBuf, String> {
         let expected = expected_sample_relative_path(sample_id)?;
         if Path::new(stored_path) != expected {
             return Err("Voice sample metadata contains an invalid storage path".to_string());

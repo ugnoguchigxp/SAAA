@@ -33,5 +33,7 @@ use std::time::Duration;
 mod fixture_inspector;
 #[path = "generation_closeout/gc_06_epoch_change_during_update_conflicts.rs"]
 mod gc_06_epoch_change_during_update_conflicts;
-use fixture_inspector::{actor, capability_id, catalog_enabled, generate_a, invoke_on, bind_typescript, GatedGenerator};
+use fixture_inspector::{
+    actor, bind_typescript, capability_id, catalog_enabled, generate_a, invoke_on, GatedGenerator,
+};
 pub(crate) use gc_06_epoch_change_during_update_conflicts::*;

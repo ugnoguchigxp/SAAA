@@ -189,7 +189,8 @@ pub(super) fn flush_unflushed(
     conversation_id: &str,
     now_ms: i64,
 ) -> Result<(), String> {
-    let Some(message_id) = super::super::outbox::flush_unflushed(connection, conversation_id, now_ms)?
+    let Some(message_id) =
+        super::super::outbox::flush_unflushed(connection, conversation_id, now_ms)?
     else {
         return Ok(());
     };

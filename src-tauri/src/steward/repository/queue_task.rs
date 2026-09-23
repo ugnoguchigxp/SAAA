@@ -174,7 +174,9 @@ pub(crate) fn apply_terminal_event(
     let state = match kind {
         "failed" | "interrupted" => "failed",
         "outcome_unknown" => "outcome_unknown",
-        "settled" => super::super::verifier::map_to_task_state(evaluation.as_ref().expect("evaluated")),
+        "settled" => {
+            super::super::verifier::map_to_task_state(evaluation.as_ref().expect("evaluated"))
+        }
         _ => return Ok(()),
     };
     set_loop_state(connection, &task_id, state, None, None)?;

@@ -420,7 +420,10 @@ pub(super) fn ledger_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Situa
     validate_ledger_entry(&entry).map_err(|error| conversion_error(0, &error))?;
     Ok(entry)
 }
-pub(super) fn decode_json_column<T: DeserializeOwned>(index: usize, value: &str) -> rusqlite::Result<T> {
+pub(super) fn decode_json_column<T: DeserializeOwned>(
+    index: usize,
+    value: &str,
+) -> rusqlite::Result<T> {
     serde_json::from_str(value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
             index,

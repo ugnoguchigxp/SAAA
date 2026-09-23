@@ -92,6 +92,9 @@ describe("module-size ratchet", () => {
     const content = 'include!("example_split.d/01.rs");\n';
     expect(isForbiddenIncludeDSplit(path, content, new Set())).toBe(true);
     expect(isForbiddenIncludeDSplit(path, content, new Set([path]))).toBe(false);
+    expect(
+      isForbiddenIncludeDSplit(path, content, new Set(["src-tauri/src/example_split.d/01.rs"])),
+    ).toBe(false);
     expect(isForbiddenIncludeDSplit("src-tauri/src/example_split.d/01.rs", content, new Set())).toBe(
       false,
     );

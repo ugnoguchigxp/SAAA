@@ -95,7 +95,10 @@ impl CapabilityReport {
         Ok(())
     }
 }
-pub(super) fn ensure_unique<'a>(values: impl Iterator<Item = &'a str>, label: &str) -> Result<(), String> {
+pub(super) fn ensure_unique<'a>(
+    values: impl Iterator<Item = &'a str>,
+    label: &str,
+) -> Result<(), String> {
     let mut seen = HashSet::new();
     if values.into_iter().any(|value| !seen.insert(value)) {
         return Err(format!("duplicate {label}"));

@@ -23,26 +23,26 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-#[path = "service/search_candidate.rs"]
-mod search_candidate;
-#[path = "service/rank.rs"]
-mod rank;
 #[path = "service/persist_error.rs"]
 mod persist_error;
+#[path = "service/rank.rs"]
+mod rank;
 #[path = "service/reconcile_interrupted_invocations.rs"]
 mod reconcile_interrupted_invocations;
+#[path = "service/search_candidate.rs"]
+mod search_candidate;
+pub use persist_error::ensure_principal;
+use persist_error::{PersistError, CHANGED};
+pub use reconcile_interrupted_invocations::reconcile_interrupted_invocations;
+use reconcile_interrupted_invocations::{
+    decode_cursor, encode_cursor, title_and_summary, validate_arguments, write_transaction,
+};
 pub use search_candidate::{
-    SearchCandidate, SearchResponse, DescribeResponse, InvokeResponse, ResultPageResponse,
-    TurnOutcome, ToolSelectionService,
+    DescribeResponse, InvokeResponse, ResultPageResponse, SearchCandidate, SearchResponse,
+    ToolSelectionService, TurnOutcome,
 };
 use search_candidate::{
-    SEARCH_CANDIDATE_POOL, BACKEND_TIMEOUT_MS, EMBED_BATCH_SIZE, MAX_SEARCH_ATTEMPTS, Snapshot,
-    RankOutcome,
-};
-use persist_error::{CHANGED, PersistError};
-pub use reconcile_interrupted_invocations::reconcile_interrupted_invocations;
-pub use persist_error::ensure_principal;
-use reconcile_interrupted_invocations::{
-    write_transaction, title_and_summary, validate_arguments, encode_cursor, decode_cursor,
+    RankOutcome, Snapshot, BACKEND_TIMEOUT_MS, EMBED_BATCH_SIZE, MAX_SEARCH_ATTEMPTS,
+    SEARCH_CANDIDATE_POOL,
 };
 // Methods (search, describe, invoke, new, …) live on ToolSelectionService via impls in children.

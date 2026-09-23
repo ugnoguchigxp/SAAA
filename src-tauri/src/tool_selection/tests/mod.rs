@@ -4,7 +4,6 @@
 
 #![allow(clippy::too_many_arguments)]
 
-pub(super) use super::*;
 pub(super) use super::backends::{BackendOutcome, BackendRequest, FixtureBackend, ToolBackend};
 pub(super) use super::catalog::{self, CatalogEntry, UsagePage};
 pub(super) use super::contracts::*;
@@ -15,6 +14,7 @@ use super::inference::{
 };
 pub(super) use super::repository::{self, Epochs};
 pub(super) use super::service::ToolSelectionService;
+pub(super) use super::*;
 pub(super) use crate::persistence::SqliteWriter;
 pub(super) use async_trait::async_trait;
 pub(super) use rusqlite::{Connection, TransactionBehavior};

@@ -12,12 +12,15 @@ use tokio::sync::Mutex;
 use url::{Host, Url};
 #[path = "context_still_search/context_still_search_client.rs"]
 mod context_still_search_client;
-pub use context_still_search_client::{SEARCH_KNOWLEDGE_TOOL_NAME, SEARCH_EPISODES_TOOL_NAME, MAX_CONTEXT_STILL_CALLS_PER_TURN, ContextStillSearchClient, SearchError, is_search_tool, tool_definitions};
-pub(super) use context_still_search_client::{parse_arguments, compact_result};
+#[cfg(test)]
+pub(super) use crate::{RunCancellation, RuntimeEvent, StartTurnInput};
 #[cfg(test)]
 pub(super) use context_still_search_client::SEARCH_CALL_LOG;
-#[cfg(test)]
-pub(super) use crate::{StartTurnInput, RuntimeEvent, RunCancellation};
+pub(super) use context_still_search_client::{compact_result, parse_arguments};
+pub use context_still_search_client::{
+    is_search_tool, tool_definitions, ContextStillSearchClient, SearchError,
+    MAX_CONTEXT_STILL_CALLS_PER_TURN, SEARCH_EPISODES_TOOL_NAME, SEARCH_KNOWLEDGE_TOOL_NAME,
+};
 #[cfg(test)]
 #[path = "context_still_search/tests.rs"]
 mod tests;

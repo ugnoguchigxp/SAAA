@@ -1,6 +1,6 @@
 #![cfg(test)]
-use rusqlite::Connection;
 use super::*;
+use rusqlite::Connection;
 
 #[test]
 fn ipc_receiver_fixture_matches_rust_serialization() {

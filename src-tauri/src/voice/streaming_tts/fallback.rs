@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 pub(super) async fn render(
     receiver: &mut mpsc::Receiver<SpeechWork>,
     context: &RenderSessionContext,

@@ -11,6 +11,9 @@ use crate::{
 };
 pub(crate) use provider_validation::validate_model_providers;
 pub(crate) use settings_defaults::default_settings_documents;
-include!("settings.d/01.rs");
+mod documents;
+pub(crate) use documents::*;
+#[cfg(test)]
+#[path = "settings/document_tests.rs"]
+mod tests;
 include!("settings.d/02.rs");
-include!("settings.d/03.rs");

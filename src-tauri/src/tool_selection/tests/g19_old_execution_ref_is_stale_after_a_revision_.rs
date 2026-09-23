@@ -1,4 +1,3 @@
-use super::*;
 use super::super::backends::{BackendOutcome, BackendRequest, FixtureBackend, ToolBackend};
 use super::super::catalog::{self, CatalogEntry, UsagePage};
 use super::super::contracts::*;
@@ -9,6 +8,7 @@ use super::super::inference::{
 };
 use super::super::repository::{self, Epochs};
 use super::super::service::ToolSelectionService;
+use super::*;
 use crate::persistence::SqliteWriter;
 use async_trait::async_trait;
 use rusqlite::{Connection, TransactionBehavior};
@@ -84,8 +84,10 @@ pub(super) async fn g20_unavailable_reranker_degrades_without_faking_confidence(
     harness.register_pair();
     let message = harness.insert_message();
     let context = harness.context(Some(message), Some("A"));
-    let service =
-        harness.service_with_reranker(Arc::new(super::super::inference::UnavailableReranker), NO_FEEDBACK);
+    let service = harness.service_with_reranker(
+        Arc::new(super::super::inference::UnavailableReranker),
+        NO_FEEDBACK,
+    );
     let response = service
         .search(&context, USER_MESSAGE, 8)
         .await
@@ -124,7 +126,9 @@ pub(super) async fn search_response_contract_is_bounded() {
         .await
         .expect("search");
     for candidate in &response.candidates {
-        assert!(candidate.summary.len() <= super::super::contracts::SEARCH_CANDIDATE_SUMMARY_MAX_BYTES);
+        assert!(
+            candidate.summary.len() <= super::super::contracts::SEARCH_CANDIDATE_SUMMARY_MAX_BYTES
+        );
     }
     assert!(response.candidates.len() <= 8);
 }
@@ -314,8 +318,9 @@ pub(super) async fn provider_extraction_uses_the_configured_conversation_provide
     let (endpoint, task) = mock_json_provider(chat).await;
     harness.configure_mock_provider(&endpoint);
 
-    let extractor =
-        super::super::provider_extraction::ConversationProviderExtractor::new(harness.writer.clone());
+    let extractor = super::super::provider_extraction::ConversationProviderExtractor::new(
+        harness.writer.clone(),
+    );
     let request = super::super::extraction::ExtractionRequest {
         user_message: USER_MESSAGE.to_string(),
         recent_decisions: Vec::new(),
@@ -338,8 +343,9 @@ pub(super) async fn provider_extraction_uses_the_configured_conversation_provide
 pub(super) async fn provider_extraction_absent_provider_degrades() {
     let harness = Harness::new();
     harness.register_pair();
-    let extractor =
-        super::super::provider_extraction::ConversationProviderExtractor::new(harness.writer.clone());
+    let extractor = super::super::provider_extraction::ConversationProviderExtractor::new(
+        harness.writer.clone(),
+    );
     let request = super::super::extraction::ExtractionRequest {
         user_message: USER_MESSAGE.to_string(),
         recent_decisions: Vec::new(),
@@ -358,7 +364,6 @@ impl Harness {
             backend: Arc::new(FixtureBackend::new()),
         }
     }
-
 
     fn register_llang(
         &self,
@@ -479,7 +484,10 @@ pub(super) async fn e01_real_llang_invoke_true_and_false_through_selection() {
             )
             .await
             .expect("invoke");
-        assert_eq!(invoked.status, super::super::backends::TechnicalStatus::Succeeded);
+        assert_eq!(
+            invoked.status,
+            super::super::backends::TechnicalStatus::Succeeded
+        );
         let value = invoked
             .result
             .as_ref()

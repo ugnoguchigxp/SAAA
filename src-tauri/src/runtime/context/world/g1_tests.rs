@@ -9,7 +9,9 @@ pub(super) use super::source::{
     WorldSourceRequest, WORLD_KIND,
 };
 pub(super) use super::turn::{compose_parts, TurnCompose};
-pub(super) use crate::memory::context_window::{ContextHealthReport, ContextWindow, ProjectedContextMessage};
+pub(super) use crate::memory::context_window::{
+    ContextHealthReport, ContextWindow, ProjectedContextMessage,
+};
 pub(super) use crate::memory::personal_state::world::query::WorldSeed;
 pub(super) use crate::memory::personal_state::world::query_v2::IncludeFlags;
 pub(super) use crate::memory::personal_state::world::runtime_frame::GraphRequest;
@@ -27,6 +29,4 @@ mod tech_question;
 #[path = "g1_tests/world_g1_04_graph_only_question_fetches_a_frame_.rs"]
 mod world_g1_04_graph_only_question_fetches_a_frame_;
 
-
 pub(crate) use tech_question::*;
-

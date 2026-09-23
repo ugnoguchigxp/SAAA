@@ -80,19 +80,21 @@ pub fn execute(
             }
             Ok(())
         })?;
-        let implementation = if call.name == "coding_continue" {
-            let job = canonical["jobId"].as_str().ok_or("invalid_arguments")?;
-            state.sqlite_readers.read(|connection| {
-                let saved: String = connection.query_row(
+        let implementation =
+            if call.name == "coding_continue" {
+                let job = canonical["jobId"].as_str().ok_or("invalid_arguments")?;
+                state.sqlite_readers.read(|connection| {
+                    let saved: String = connection.query_row(
                     "SELECT settings_json FROM coding_jobs WHERE id=?1 AND conversation_id=?2",
                     params![job, input.conversation_id],
                     |row| row.get(0),
                 ).map_err(database_error)?;
-                serde_json::from_str::<CodingSettings>(&saved).map_err(|_| "coding_settings_invalid".into())
-            })?
-        } else {
-            settings
-        };
+                    serde_json::from_str::<CodingSettings>(&saved)
+                        .map_err(|_| "coding_settings_invalid".into())
+                })?
+            } else {
+                settings
+            };
         probe_implementation(&implementation, &state.data_directory)?;
     }
     let mut launch = None;

@@ -37,7 +37,7 @@ pub struct CapabilityService {
     pub(super) executions: ExecutionRegistry,
 }
 impl CapabilityService {
-/// A missing or invalid runtime configuration disables the feature without preventing SAAA
+    /// A missing or invalid runtime configuration disables the feature without preventing SAAA
     /// from starting.
     pub(crate) fn build(
         writer: Arc<SqliteWriter>,
@@ -78,27 +78,27 @@ impl CapabilityService {
     }
 }
 impl CapabilityService {
-pub(crate) fn writer(&self) -> &Arc<SqliteWriter> {
+    pub(crate) fn writer(&self) -> &Arc<SqliteWriter> {
         &self.writer
     }
 }
 impl CapabilityService {
-pub fn store(&self) -> &PackageStore {
+    pub fn store(&self) -> &PackageStore {
         &self.store
     }
 }
 impl CapabilityService {
-pub fn is_ready(&self) -> bool {
+    pub fn is_ready(&self) -> bool {
         self.host.is_some()
     }
 }
 impl CapabilityService {
-pub fn is_exposed(&self) -> bool {
+    pub fn is_exposed(&self) -> bool {
         self.exposure_enabled && self.host.is_some()
     }
 }
 impl CapabilityService {
-/// Stops accepting new host work, cancels every owned execution, and waits (bounded) until
+    /// Stops accepting new host work, cancels every owned execution, and waits (bounded) until
     /// the single process slot is released. Returns whether the service drained cleanly: the slot
     /// is free, no execution is still registered, and no record was left non-terminal.
     pub fn shutdown(&self) -> bool {
@@ -116,22 +116,22 @@ impl CapabilityService {
     }
 }
 impl CapabilityService {
-pub(super) fn unsettled_rows(&self) -> i64 {
+    pub(super) fn unsettled_rows(&self) -> i64 {
         lifecycle::read(&self.writer, repository::unsettled_rows).unwrap_or(i64::MAX)
     }
 }
 impl CapabilityService {
-pub fn is_shutting_down(&self) -> bool {
+    pub fn is_shutting_down(&self) -> bool {
         self.shutting_down.load(Ordering::SeqCst)
     }
 }
 impl CapabilityService {
-pub fn unavailable_reason(&self) -> Option<&CapabilityError> {
+    pub fn unavailable_reason(&self) -> Option<&CapabilityError> {
         self.unavailable.as_ref()
     }
 }
 impl CapabilityService {
-pub(crate) fn ensure_accepting(&self) -> CapabilityResult<()> {
+    pub(crate) fn ensure_accepting(&self) -> CapabilityResult<()> {
         if self.is_shutting_down() {
             return error(
                 CapabilityErrorCode::Unavailable,
@@ -142,12 +142,12 @@ pub(crate) fn ensure_accepting(&self) -> CapabilityResult<()> {
     }
 }
 impl CapabilityService {
-pub(super) fn register_execution(&self, id: &str, cancellation: &Cancellation) {
+    pub(super) fn register_execution(&self, id: &str, cancellation: &Cancellation) {
         execution::register(&self.executions, id, cancellation);
     }
 }
 impl CapabilityService {
-pub(crate) fn require_host(&self) -> CapabilityResult<&Arc<WasmHost>> {
+    pub(crate) fn require_host(&self) -> CapabilityResult<&Arc<WasmHost>> {
         match (&self.host, &self.unavailable) {
             (Some(host), _) => Ok(host),
             (None, Some(error)) => Err(error.clone()),
@@ -159,7 +159,7 @@ pub(crate) fn require_host(&self) -> CapabilityResult<&Arc<WasmHost>> {
     }
 }
 impl CapabilityService {
-pub(super) fn require_exposure(&self) -> CapabilityResult<()> {
+    pub(super) fn require_exposure(&self) -> CapabilityResult<()> {
         if self.exposure_enabled {
             Ok(())
         } else {
@@ -171,7 +171,7 @@ pub(super) fn require_exposure(&self) -> CapabilityResult<()> {
     }
 }
 impl CapabilityService {
-pub(crate) fn acquire_process_slot(&self) -> CapabilityResult<OwnedSemaphorePermit> {
+    pub(crate) fn acquire_process_slot(&self) -> CapabilityResult<OwnedSemaphorePermit> {
         self.process.clone().try_acquire_owned().map_err(|_| {
             CapabilityError::new(
                 CapabilityErrorCode::Busy,
@@ -181,7 +181,7 @@ pub(crate) fn acquire_process_slot(&self) -> CapabilityResult<OwnedSemaphorePerm
     }
 }
 impl CapabilityService {
-/// Staging, size/path checks, trusted inspect, publish and catalog insert.
+    /// Staging, size/path checks, trusted inspect, publish and catalog insert.
     pub async fn import_candidate(
         &self,
         candidate: &ImportCandidate,
@@ -190,7 +190,7 @@ impl CapabilityService {
     }
 }
 impl CapabilityService {
-pub(super) async fn import_candidate_with(
+    pub(super) async fn import_candidate_with(
         &self,
         candidate: &ImportCandidate,
         command: Option<process::RuntimeCommand>,
@@ -229,7 +229,7 @@ pub(super) async fn import_candidate_with(
     }
 }
 impl CapabilityService {
-pub(super) async fn import_candidate_inner(
+    pub(super) async fn import_candidate_inner(
         &self,
         host: Arc<WasmHost>,
         candidate: &ImportCandidate,
@@ -360,7 +360,7 @@ pub(super) async fn import_candidate_inner(
     }
 }
 impl CapabilityService {
-pub(super) async fn inspect_candidate(
+    pub(super) async fn inspect_candidate(
         &self,
         host: &Arc<WasmHost>,
         staged: &StagedPackage,
@@ -394,7 +394,7 @@ pub(super) async fn inspect_candidate(
     }
 }
 impl CapabilityService {
-pub(super) fn validate_inspection(
+    pub(super) fn validate_inspection(
         &self,
         staged: &StagedPackage,
         inspection: &contracts::InspectResult,
@@ -437,14 +437,14 @@ pub(super) fn validate_inspection(
     }
 }
 impl CapabilityService {
-pub fn read_revision(&self, revision_id: &str) -> CapabilityResult<repository::RevisionRow> {
+    pub fn read_revision(&self, revision_id: &str) -> CapabilityResult<repository::RevisionRow> {
         lifecycle::read(&self.writer, |connection| {
             repository::revision_by_id(connection, revision_id)
         })
     }
 }
 impl CapabilityService {
-pub fn resolve_active(&self, capability_id: &str) -> CapabilityResult<ResolvedCapability> {
+    pub fn resolve_active(&self, capability_id: &str) -> CapabilityResult<ResolvedCapability> {
         lifecycle::read(&self.writer, |connection| {
             repository::resolve_active(connection, capability_id)?.ok_or_else(|| {
                 CapabilityError::new(
@@ -456,7 +456,7 @@ pub fn resolve_active(&self, capability_id: &str) -> CapabilityResult<ResolvedCa
     }
 }
 impl CapabilityService {
-/// Resolves every allowlisted capability under one catalog read, so a single offer can never
+    /// Resolves every allowlisted capability under one catalog read, so a single offer can never
     /// mix revisions from two catalog states. Unknown or inactive ids are skipped; a storage or
     /// integrity failure fails the whole read. No host is started and no lock is held longer than
     /// the read.
@@ -479,7 +479,7 @@ impl CapabilityService {
     }
 }
 impl CapabilityService {
-/// Runs the fixed L-Lang verification and then the SAAA acceptance cases.
+    /// Runs the fixed L-Lang verification and then the SAAA acceptance cases.
     pub async fn verify_candidate(
         &self,
         revision_id: &str,

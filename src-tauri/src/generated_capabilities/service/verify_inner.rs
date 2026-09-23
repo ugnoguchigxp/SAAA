@@ -1,6 +1,6 @@
 use super::*;
 impl CapabilityService {
-pub(super) async fn verify_inner(
+    pub(super) async fn verify_inner(
         &self,
         host: &Arc<WasmHost>,
         revision_id: &str,
@@ -128,7 +128,7 @@ pub(super) async fn verify_inner(
     }
 }
 impl CapabilityService {
-pub(super) fn save_report(&self, check_id: &str, report: &Value) -> CapabilityResult<String> {
+    pub(super) fn save_report(&self, check_id: &str, report: &Value) -> CapabilityResult<String> {
         let path = self.store.report_path(check_id);
         let bytes = serde_json::to_vec_pretty(report)
             .map_err(|_| storage_error("verification report is not serialisable"))?;
@@ -138,7 +138,7 @@ pub(super) fn save_report(&self, check_id: &str, report: &Value) -> CapabilityRe
     }
 }
 impl CapabilityService {
-/// Runs a short write through the single writer, keeping the capability error code attached.
+    /// Runs a short write through the single writer, keeping the capability error code attached.
     fn write<T>(
         &self,
         action: impl FnOnce(&mut rusqlite::Connection) -> CapabilityResult<T>,
@@ -149,7 +149,7 @@ impl CapabilityService {
     }
 }
 impl CapabilityService {
-/// Records a failed call that never reached the detached host task.
+    /// Records a failed call that never reached the detached host task.
     fn fail_call(
         &self,
         call_id: &str,
@@ -163,7 +163,7 @@ impl CapabilityService {
     }
 }
 impl CapabilityService {
-pub(super) fn finish_check(
+    pub(super) fn finish_check(
         &self,
         check_id: &str,
         status: &str,
@@ -183,7 +183,7 @@ pub(super) fn finish_check(
     }
 }
 impl CapabilityService {
-/// Activation requires a passed check for the *current* runtime and an intact managed copy.
+    /// Activation requires a passed check for the *current* runtime and an intact managed copy.
     /// The comparison happens inside the activation transaction, so a revision verified against
     /// an older runtime or a payload changed after verification cannot be promoted.
     pub fn activate_revision(
@@ -208,7 +208,7 @@ impl CapabilityService {
     }
 }
 impl CapabilityService {
-pub fn suspend_revision(
+    pub fn suspend_revision(
         &self,
         revision_id: &str,
         expected_epoch: i64,
@@ -217,7 +217,7 @@ pub fn suspend_revision(
     }
 }
 impl CapabilityService {
-/// Retires a non-active revision. Package, call history and inspections are retained; an
+    /// Retires a non-active revision. Package, call history and inspections are retained; an
     /// active revision must be suspended first (plan 4, G04).
     pub fn retire_revision(
         &self,
@@ -228,7 +228,7 @@ impl CapabilityService {
     }
 }
 impl CapabilityService {
-pub fn catalog_epoch(&self, capability_id: &str) -> CapabilityResult<i64> {
+    pub fn catalog_epoch(&self, capability_id: &str) -> CapabilityResult<i64> {
         lifecycle::read(&self.writer, |connection| {
             repository::capability_by_id(connection, capability_id)
                 .map(|capability| capability.catalog_epoch)
@@ -236,7 +236,7 @@ pub fn catalog_epoch(&self, capability_id: &str) -> CapabilityResult<i64> {
     }
 }
 impl CapabilityService {
-pub fn package_manifest(
+    pub fn package_manifest(
         &self,
         revision: &repository::RevisionRow,
     ) -> CapabilityResult<PackageManifest> {
@@ -249,7 +249,7 @@ pub fn package_manifest(
     }
 }
 impl CapabilityService {
-/// Accepts a call under a short admission lock, then executes it without holding any lock.
+    /// Accepts a call under a short admission lock, then executes it without holding any lock.
     pub async fn invoke(
         &self,
         request: InvokeRequest,
@@ -388,13 +388,13 @@ impl CapabilityService {
     }
 }
 impl CapabilityService {
-pub(super) fn record_import_staging(&self, import_id: &str) -> CapabilityResult<()> {
+    pub(super) fn record_import_staging(&self, import_id: &str) -> CapabilityResult<()> {
         let now = now_iso();
         self.write(|connection| repository::insert_import(connection, import_id, &now))
     }
 }
 impl CapabilityService {
-pub(super) fn record_import_failure(&self, import_id: &str, error: &CapabilityError) {
+    pub(super) fn record_import_failure(&self, import_id: &str, error: &CapabilityError) {
         let now = now_iso();
         let _ = self.write(|connection| {
             repository::finish_import(
@@ -409,7 +409,7 @@ pub(super) fn record_import_failure(&self, import_id: &str, error: &CapabilityEr
     }
 }
 impl CapabilityService {
-/// Discards staging, records the failure and returns the error, so every import refusal
+    /// Discards staging, records the failure and returns the error, so every import refusal
     /// reports the same way.
     pub(super) fn refuse_import(
         &self,

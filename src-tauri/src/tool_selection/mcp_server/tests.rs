@@ -30,6 +30,8 @@ mod blocking_backend;
 use blocking_backend::*;
 #[path = "tests/rr_11_detached_owner_settles.rs"]
 mod rr_11_detached_owner_settles;
-pub(super) use rr_11_detached_owner_settles::{prepare_execution_ref, spawn_tool_call, wait_for_invocation_status};
+pub(super) use rr_11_detached_owner_settles::{
+    prepare_execution_ref, spawn_tool_call, wait_for_invocation_status,
+};
 #[path = "tests/h08_delete_cancels_the_call_and_closes_the_sessi.rs"]
 mod h08_delete_cancels_the_call_and_closes_the_sessi;

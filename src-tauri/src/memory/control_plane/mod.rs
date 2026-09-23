@@ -14,15 +14,15 @@ use items::*;
 pub use migrate::migrate_v11_to_v12;
 mod source_window;
 pub(super) use source_window::MAX_OBSERVABILITY_EVENTS;
-pub use source_window::{
-    CONTEXT_POLICY_VERSION, ProjectionItem, memory_enabled, ensure_continuity_state,
-    cancel_unhandled_jobs, record_projection_event, load_projection_items,
-};
 #[cfg(test)]
 pub use source_window::{
-    SourceWindow, CapsuleItemInput, WorkingStateInput, record_completed_turn,
-    insert_profile_candidate, confirm_profile_candidate, put_working_state,
-    resolve_working_state, expire_working_state, activate_capsule_revision,
+    activate_capsule_revision, confirm_profile_candidate, expire_working_state,
+    insert_profile_candidate, put_working_state, record_completed_turn, resolve_working_state,
+    CapsuleItemInput, SourceWindow, WorkingStateInput,
+};
+pub use source_window::{
+    cancel_unhandled_jobs, ensure_continuity_state, load_projection_items, memory_enabled,
+    record_projection_event, ProjectionItem, CONTEXT_POLICY_VERSION,
 };
 #[cfg(test)]
 mod tests;

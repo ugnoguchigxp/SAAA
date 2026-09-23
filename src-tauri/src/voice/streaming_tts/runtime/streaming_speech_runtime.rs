@@ -9,7 +9,11 @@ pub(crate) const MAX_READY_AUDIO_MS: u64 = 30_000;
 #[derive(Clone, Default)]
 pub(crate) struct StreamingSpeechRuntime {
     pub(crate) sessions: Arc<Mutex<HashMap<String, SpeechSession>>>,
-    pub(crate) directives: Arc<Mutex<HashMap<String, crate::voice::cloud_tts::speech_directive::SpeechDirectiveProjection>>>,
+    pub(crate) directives: Arc<
+        Mutex<
+            HashMap<String, crate::voice::cloud_tts::speech_directive::SpeechDirectiveProjection>,
+        >,
+    >,
 }
 pub(crate) struct SpeechSession {
     pub(crate) accumulator: SentenceAccumulator,

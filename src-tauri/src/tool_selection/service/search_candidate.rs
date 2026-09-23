@@ -91,7 +91,7 @@ pub struct ToolSelectionService {
     pub(super) discovery_configured: bool,
 }
 impl ToolSelectionService {
-pub fn new(
+    pub fn new(
         writer: Arc<SqliteWriter>,
         embedding: Arc<dyn EmbeddingProvider>,
         reranker: Arc<dyn RerankProvider>,
@@ -114,27 +114,27 @@ pub fn new(
     }
 }
 impl ToolSelectionService {
-pub fn set_mcp_manager(&mut self, manager: Arc<McpManager>) {
+    pub fn set_mcp_manager(&mut self, manager: Arc<McpManager>) {
         self.mcp_manager = Some(manager);
     }
 }
 impl ToolSelectionService {
-pub fn mcp_manager(&self) -> Option<Arc<McpManager>> {
+    pub fn mcp_manager(&self) -> Option<Arc<McpManager>> {
         self.mcp_manager.clone()
     }
 }
 impl ToolSelectionService {
-pub fn set_discovery_configured(&mut self, configured: bool) {
+    pub fn set_discovery_configured(&mut self, configured: bool) {
         self.discovery_configured = configured;
     }
 }
 impl ToolSelectionService {
-pub fn discovery_configured(&self) -> bool {
+    pub fn discovery_configured(&self) -> bool {
         self.discovery_configured
     }
 }
 impl ToolSelectionService {
-pub fn set_scenario(&self, context: &RequestContext, scenario: Scenario) {
+    pub fn set_scenario(&self, context: &RequestContext, scenario: Scenario) {
         if let Ok(mut scenarios) = self.scenarios.lock() {
             // Completed runs are never read again; cap the cache so a long session cannot grow it
             // without bound.
@@ -146,7 +146,7 @@ pub fn set_scenario(&self, context: &RequestContext, scenario: Scenario) {
     }
 }
 impl ToolSelectionService {
-pub(super) fn cached_scenario(&self, context: &RequestContext, intent: &str) -> Scenario {
+    pub(super) fn cached_scenario(&self, context: &RequestContext, intent: &str) -> Scenario {
         self.scenarios
             .lock()
             .ok()
@@ -155,7 +155,7 @@ pub(super) fn cached_scenario(&self, context: &RequestContext, intent: &str) -> 
     }
 }
 impl ToolSelectionService {
-/// Releases the per-run state an MCP session owns: its cached scenario, its opaque references
+    /// Releases the per-run state an MCP session owns: its cached scenario, its opaque references
     /// and any stored continuation result. Decision, invocation and correction audit rows are
     /// deliberately kept.
     pub fn discard_run_scope(&self, run_id: &str) {
@@ -172,7 +172,7 @@ impl ToolSelectionService {
     }
 }
 impl ToolSelectionService {
-pub async fn begin_turn(&self, context: &RequestContext, user_message: &str) -> TurnOutcome {
+    pub async fn begin_turn(&self, context: &RequestContext, user_message: &str) -> TurnOutcome {
         let intent = repository::truncate_utf8(user_message, EXTRACT_USER_MESSAGE_MAX_BYTES);
         let (allowed_decisions, allowed_tools, recent, prompt_tools) =
             self.allowed_for_extraction(context);
@@ -210,7 +210,7 @@ pub async fn begin_turn(&self, context: &RequestContext, user_message: &str) -> 
     }
 }
 impl ToolSelectionService {
-pub fn apply_parsed(
+    pub fn apply_parsed(
         &self,
         context: &RequestContext,
         parsed: &ParsedExtraction,
@@ -227,7 +227,7 @@ pub fn apply_parsed(
     }
 }
 impl ToolSelectionService {
-pub(super) fn allowed_for_extraction(
+    pub(super) fn allowed_for_extraction(
         &self,
         context: &RequestContext,
     ) -> (
@@ -306,7 +306,7 @@ pub(super) fn allowed_for_extraction(
     }
 }
 impl ToolSelectionService {
-pub(super) async fn snapshot(
+    pub(super) async fn snapshot(
         &self,
         context: &RequestContext,
         intent: &str,

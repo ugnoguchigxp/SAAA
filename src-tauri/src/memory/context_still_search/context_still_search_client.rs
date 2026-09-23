@@ -1,6 +1,7 @@
 use super::*;
 #[cfg(test)]
-pub(crate) static SEARCH_CALL_LOG: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub(crate) static SEARCH_CALL_LOG: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
 pub const SEARCH_KNOWLEDGE_TOOL_NAME: &str = "search_knowledge";
 pub const SEARCH_EPISODES_TOOL_NAME: &str = "search_episodes";
 pub const MAX_CONTEXT_STILL_CALLS_PER_TURN: usize = 3;
@@ -71,7 +72,10 @@ impl SearchError {
 }
 impl ContextStillSearchClient {
     pub fn from_environment() -> Self {
-        Self::with_run_dir(resolve_run_dir(), super::super::control_plane::memory_enabled())
+        Self::with_run_dir(
+            resolve_run_dir(),
+            super::super::control_plane::memory_enabled(),
+        )
     }
 
     #[cfg(any(test, feature = "quality-eval-harness"))]
@@ -250,7 +254,10 @@ pub(super) fn input_schema(knowledge: bool) -> Value {
 pub(super) fn text_array_schema() -> Value {
     json!({"type":"array","maxItems":MAX_FILTER_ITEMS,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":MAX_FILTER_CHARS}})
 }
-pub(crate) fn parse_arguments(tool_name: &str, raw: &str) -> Result<Map<String, Value>, SearchError> {
+pub(crate) fn parse_arguments(
+    tool_name: &str,
+    raw: &str,
+) -> Result<Map<String, Value>, SearchError> {
     if !is_search_tool(tool_name) {
         return Err(SearchError::InvalidInput);
     }

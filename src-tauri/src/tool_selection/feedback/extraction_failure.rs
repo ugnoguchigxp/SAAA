@@ -20,10 +20,8 @@ impl ParsedExtraction {
         }
     }
 }
-const SCENARIO_KEYS: [&str;
-5] = ["intent", "operation", "objectType", "phase", "inputKind"];
-const FEEDBACK_KEYS: [&str;
-8] = [
+const SCENARIO_KEYS: [&str; 5] = ["intent", "operation", "objectType", "phase", "inputKind"];
+const FEEDBACK_KEYS: [&str; 8] = [
     "kind",
     "decisionId",
     "rejectedToolId",

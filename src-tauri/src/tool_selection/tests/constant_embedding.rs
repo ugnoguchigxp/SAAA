@@ -1,4 +1,3 @@
-use super::*;
 use super::super::backends::{BackendOutcome, BackendRequest, FixtureBackend, ToolBackend};
 use super::super::catalog::{self, CatalogEntry, UsagePage};
 use super::super::contracts::*;
@@ -9,6 +8,7 @@ use super::super::inference::{
 };
 use super::super::repository::{self, Epochs};
 use super::super::service::ToolSelectionService;
+use super::*;
 use crate::persistence::SqliteWriter;
 use async_trait::async_trait;
 use rusqlite::{Connection, TransactionBehavior};
@@ -126,7 +126,11 @@ pub(crate) struct ToolSpec {
     pub(crate) input_schema: Value,
 }
 impl ToolSpec {
-    pub(crate) fn tool(tool_id: &'static str, vector: Vec<f32>, project: Option<&'static str>) -> Self {
+    pub(crate) fn tool(
+        tool_id: &'static str,
+        vector: Vec<f32>,
+        project: Option<&'static str>,
+    ) -> Self {
         Self {
             tool_id,
             backend_key: tool_id,
@@ -367,7 +371,12 @@ pub(crate) fn order(response: &super::super::service::SearchResponse) -> Vec<Str
         .map(|candidate| candidate.tool_id.clone())
         .collect()
 }
-pub(crate) fn feedback_json(rejected: &str, preferred: &str, scope: &str, duration: &str) -> String {
+pub(crate) fn feedback_json(
+    rejected: &str,
+    preferred: &str,
+    scope: &str,
+    duration: &str,
+) -> String {
     json!({
         "scenario": {
             "intent": "案件の過去の判断を確認",

@@ -467,7 +467,12 @@ pub(super) fn is_japanese_sentence_end(grapheme: &str) -> bool {
 pub(super) fn is_newline(grapheme: &str) -> bool {
     matches!(grapheme, "\n" | "\r")
 }
-pub(super) fn is_ascii_sentence_end(input: &str, cursor: usize, end: usize, input_closed: bool) -> bool {
+pub(super) fn is_ascii_sentence_end(
+    input: &str,
+    cursor: usize,
+    end: usize,
+    input_closed: bool,
+) -> bool {
     let Some(character) = input[cursor..end].chars().next() else {
         return false;
     };

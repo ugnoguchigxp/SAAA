@@ -1,5 +1,5 @@
-use crate::memory::typed_recall::TYPED_RECALL_TOOL_NAMES;
 use super::*;
+use crate::memory::typed_recall::TYPED_RECALL_TOOL_NAMES;
 #[cfg(test)]
 const MAX_TOOL_ARGUMENT_CHARS: usize = 200_000;
 #[cfg(test)]
@@ -303,7 +303,10 @@ where
     }
 }
 #[cfg(test)]
-pub(super) fn merge_tool_name(target: &mut String, incoming: &str) -> Result<(), ToolProtocolError> {
+pub(super) fn merge_tool_name(
+    target: &mut String,
+    incoming: &str,
+) -> Result<(), ToolProtocolError> {
     if incoming.is_empty() {
         return Ok(());
     }

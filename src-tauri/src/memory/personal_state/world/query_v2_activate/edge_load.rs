@@ -225,7 +225,10 @@ pub(super) fn basis_name(basis: saaa_personal_state_core::world::Basis) -> Strin
         saaa_personal_state_core::world::Basis::ModelHypothesis => "model_hypothesis".into(),
     }
 }
-pub(super) fn relation_to_slice(edge: &WorldEdgeV2, observations: &ValidatedObservations) -> SliceRelationV2 {
+pub(super) fn relation_to_slice(
+    edge: &WorldEdgeV2,
+    observations: &ValidatedObservations,
+) -> SliceRelationV2 {
     let evaluation = evaluate_conditions(
         &edge.assertion_id,
         &edge.conditions,

@@ -181,8 +181,7 @@ pub(super) fn validate_actor_host(
                 .as_deref()
                 .ok_or_else(|| "Role-routing provider actor has no provider id".to_string())?;
             if provider_id == crate::DYNAMIC_LAN_PROVIDER_ID
-                && reachability.harness
-                    == crate::providers::reachability::Reachability::Unreachable
+                && reachability.harness == crate::providers::reachability::Reachability::Unreachable
             {
                 return Err("Role-routing LAN provider is unreachable before dispatch".into());
             }

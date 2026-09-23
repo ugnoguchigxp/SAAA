@@ -1,5 +1,8 @@
 use super::*;
-pub(super) fn record_event(connection: &Connection, input: &FrontendAuditEventInput) -> Result<(), String> {
+pub(super) fn record_event(
+    connection: &Connection,
+    input: &FrontendAuditEventInput,
+) -> Result<(), String> {
     validate_event(input)?;
     let attributes_json = serde_json::to_string(&input.attributes)
         .map_err(|error| format!("Could not encode audit attributes: {error}"))?;

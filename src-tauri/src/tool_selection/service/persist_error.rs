@@ -1,6 +1,6 @@
 use super::*;
 impl ToolSelectionService {
-pub fn describe(
+    pub fn describe(
         &self,
         context: &RequestContext,
         candidate_ref: &str,
@@ -88,7 +88,7 @@ pub fn describe(
     }
 }
 impl ToolSelectionService {
-pub(super) fn issue_execution_ref(
+    pub(super) fn issue_execution_ref(
         &self,
         context: &RequestContext,
         candidate: &ReferenceEntry,
@@ -123,7 +123,7 @@ pub(super) fn issue_execution_ref(
     }
 }
 impl ToolSelectionService {
-pub(super) fn current_revision(
+    pub(super) fn current_revision(
         &self,
         reference: &ReferenceEntry,
     ) -> ToolSelectionResult<(repository::ToolRow, repository::RevisionRow)> {
@@ -171,7 +171,7 @@ pub(super) fn current_revision(
     }
 }
 impl ToolSelectionService {
-/// Resolves the trusted effect for an execution reference without opening an invocation.
+    /// Resolves the trusted effect for an execution reference without opening an invocation.
     /// Role routing uses this immediately before its own atomic reservation; the later invoke
     /// repeats all reference/epoch checks before the backend owner is started.
     pub(crate) fn execution_effect(
@@ -203,7 +203,7 @@ impl ToolSelectionService {
     }
 }
 impl ToolSelectionService {
-pub async fn invoke(
+    pub async fn invoke(
         &self,
         context: &RequestContext,
         execution_ref: &str,
@@ -221,7 +221,7 @@ pub async fn invoke(
     }
 }
 impl ToolSelectionService {
-/// Same as [`Self::invoke`] but records the origin that reaches the generated-capability call
+    /// Same as [`Self::invoke`] but records the origin that reaches the generated-capability call
     /// row (`conversation` or `mcp`).
     pub async fn invoke_with_origin(
         &self,
@@ -313,18 +313,19 @@ impl ToolSelectionService {
         // The management task owns the backend call, the cancellation handle, the result storage
         // and the terminal DB write. Dropping this caller future (HTTP disconnect, aborted
         // provider turn) detaches it but does not stop or leak the invocation.
-        let receiver = super::super::invocation::spawn(super::super::invocation::ManagedInvocation {
-            writer: self.writer.clone(),
-            backend: self.backend.clone(),
-            invocation_id: invocation_id.clone(),
-            context: context.clone(),
-            tool_id: tool.id.clone(),
-            revision: revision.clone(),
-            acl_epoch: current_epochs.acl,
-            binding_kind: binding_kind.to_string(),
-            request,
-            cancellation: run_cancellation.clone(),
-        });
+        let receiver =
+            super::super::invocation::spawn(super::super::invocation::ManagedInvocation {
+                writer: self.writer.clone(),
+                backend: self.backend.clone(),
+                invocation_id: invocation_id.clone(),
+                context: context.clone(),
+                tool_id: tool.id.clone(),
+                revision: revision.clone(),
+                acl_epoch: current_epochs.acl,
+                binding_kind: binding_kind.to_string(),
+                request,
+                cancellation: run_cancellation.clone(),
+            });
         match receiver.await {
             Ok(response) => response,
             // The management task panicked before reporting; the row is settled by the
@@ -334,7 +335,7 @@ impl ToolSelectionService {
     }
 }
 impl ToolSelectionService {
-/// Resolves one continuation page of a stored MCP result. Ownership, scope, TTL and the
+    /// Resolves one continuation page of a stored MCP result. Ownership, scope, TTL and the
     /// current ACL are re-checked on every read; a revoked or foreign reference is refused.
     pub fn describe_result(
         &self,
@@ -346,7 +347,7 @@ impl ToolSelectionService {
     }
 }
 impl ToolSelectionService {
-/// Development/management API for importing a fixture catalog. Import is never a grant, but
+    /// Development/management API for importing a fixture catalog. Import is never a grant, but
     /// the evaluation fixture grants each tool to the evaluation principal explicitly.
     pub fn ingest_catalog(
         &self,
@@ -384,7 +385,7 @@ impl ToolSelectionService {
     }
 }
 impl ToolSelectionService {
-/// Computes and stores document embeddings for every authorized revision using the configured
+    /// Computes and stores document embeddings for every authorized revision using the configured
     /// embedding provider.
     pub async fn index_embeddings(
         &self,
@@ -447,7 +448,7 @@ impl ToolSelectionService {
     }
 }
 impl ToolSelectionService {
-/// Full stored candidate ranking for a decision, used by the evaluation CLI. The returned
+    /// Full stored candidate ranking for a decision, used by the evaluation CLI. The returned
     /// order is the persisted final order before the response limit is applied.
     pub fn decision_candidates(
         &self,
@@ -463,7 +464,7 @@ impl ToolSelectionService {
     }
 }
 impl ToolSelectionService {
-pub(super) fn read_epochs(&self) -> ToolSelectionResult<Epochs> {
+    pub(super) fn read_epochs(&self) -> ToolSelectionResult<Epochs> {
         self.writer
             .read_serialized(|connection| {
                 repository::epochs(connection).map_err(|error| error.to_string())

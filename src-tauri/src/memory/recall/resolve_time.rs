@@ -1,3 +1,4 @@
+use super::search::*;
 use super::*;
 use crate::memory::contracts::{
     RecallConversationInput, RecallConversationOutput, RecallError, RecallErrorCode,
@@ -9,7 +10,6 @@ use chrono::{
 };
 use chrono_tz::Tz;
 use rusqlite::{params, Connection, OptionalExtension};
-use super::search::*;
 pub(super) fn resolve_time(
     filter: &RecallTimeFilter,
     now: DateTime<Utc>,

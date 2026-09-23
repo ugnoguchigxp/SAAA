@@ -5,7 +5,9 @@ pub(super) struct Fixture {
     pub(super) built_at: i64,
     pub(super) objective: String,
 }
-pub(super) fn world_entity_rows(c: &rusqlite::Connection) -> Result<Vec<(String, String, String)>, String> {
+pub(super) fn world_entity_rows(
+    c: &rusqlite::Connection,
+) -> Result<Vec<(String, String, String)>, String> {
     let mut statement = c
         .prepare(
             "SELECT assertion_id,entity_id,status FROM personal_world_entities ORDER BY assertion_id",

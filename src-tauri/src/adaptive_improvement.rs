@@ -12,9 +12,17 @@ use std::sync::Arc;
 mod domain;
 #[path = "adaptive_improvement/materialize_dirty.rs"]
 mod materialize_dirty;
-pub(crate) use domain::{Domain, EvaluationGate, PairedInterval, PairedEvaluationSample, EvaluationSummary, evaluate_paired, paired_bootstrap, DecisionObservation, migrate, start_worker, train_candidate_artifacts, record_decision, record_outcome, record_outcome_in_transaction};
-use domain::{now_ms};
-pub(crate) use materialize_dirty::{materialize_dirty, set_override, revoke_override, choose, fingerprint_for, digest, create_artifact, apply_evaluation_gate, approve_shadow, activate, rollback_active_to_rules, invalidate_source};
+use domain::now_ms;
+pub(crate) use domain::{
+    evaluate_paired, migrate, paired_bootstrap, record_decision, record_outcome,
+    record_outcome_in_transaction, start_worker, train_candidate_artifacts, DecisionObservation,
+    Domain, EvaluationGate, EvaluationSummary, PairedEvaluationSample, PairedInterval,
+};
+pub(crate) use materialize_dirty::{
+    activate, apply_evaluation_gate, approve_shadow, choose, create_artifact, digest,
+    fingerprint_for, invalidate_source, materialize_dirty, revoke_override,
+    rollback_active_to_rules, set_override,
+};
 #[cfg(test)]
 #[path = "adaptive_improvement/tests.rs"]
 mod tests;

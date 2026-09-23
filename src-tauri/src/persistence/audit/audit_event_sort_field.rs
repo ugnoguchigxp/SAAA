@@ -206,8 +206,7 @@ pub(super) fn wire_tag<T: Serialize>(value: &T) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 pub(super) fn tag_attributes<const N: usize>(
-    values: [(&str, &str);
-N],
+    values: [(&str, &str); N],
 ) -> BTreeMap<String, AuditAttributeValue> {
     values
         .into_iter()
@@ -414,7 +413,10 @@ pub(crate) fn initialize_schema(connection: &Connection) -> rusqlite::Result<()>
     prune_expired_events(connection, now_ms)?;
     Ok(())
 }
-pub(super) fn prune_expired_events(connection: &Connection, now_ms: i64) -> rusqlite::Result<usize> {
+pub(super) fn prune_expired_events(
+    connection: &Connection,
+    now_ms: i64,
+) -> rusqlite::Result<usize> {
     let cutoff_ms = now_ms.saturating_sub(AUDIT_RETENTION_DAYS * MILLISECONDS_PER_DAY);
     connection.execute(
         "DELETE FROM audit_events WHERE CAST(occurred_at AS INTEGER) < ?1",

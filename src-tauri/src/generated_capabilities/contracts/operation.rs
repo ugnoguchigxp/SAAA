@@ -5,8 +5,7 @@ pub const PACKAGE_VERSION_V2: u8 = 2;
 pub const PROFILE_PREDICATE_I32_V1: &str = "predicate-i32-v1";
 pub const CONTRACT_FORMAT: &str = "1";
 /// Package roles in the fixed order used for inventories and hashing.
-pub const ROLES: [&str;
-5] = ["request", "source", "build", "wasm", "tests"];
+pub const ROLES: [&str; 5] = ["request", "source", "build", "wasm", "tests"];
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {
     Inspect,

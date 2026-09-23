@@ -106,7 +106,10 @@ pub(crate) fn ledger_with_backend(
     ));
     (writer, service)
 }
-pub(crate) async fn serve_with(writer: Arc<SqliteWriter>, service: Arc<ToolSelectionService>) -> D5 {
+pub(crate) async fn serve_with(
+    writer: Arc<SqliteWriter>,
+    service: Arc<ToolSelectionService>,
+) -> D5 {
     let directory = tempfile::tempdir().expect("tempdir");
     let token = token_value();
     let token_path = directory.path().join("token");
@@ -154,7 +157,11 @@ impl D5 {
         request.send().await.expect("request")
     }
 
-    pub(crate) async fn rpc(&self, body: &Value, session: Option<&str>) -> (reqwest::StatusCode, Value) {
+    pub(crate) async fn rpc(
+        &self,
+        body: &Value,
+        session: Option<&str>,
+    ) -> (reqwest::StatusCode, Value) {
         let response = self.post(body, session).await;
         let status = response.status();
         let value = response.json::<Value>().await.unwrap_or(Value::Null);
@@ -258,7 +265,13 @@ impl D5 {
         value
     }
 
-    pub(crate) async fn envelope(&self, id: i64, name: &str, arguments: Value, session: &str) -> Value {
+    pub(crate) async fn envelope(
+        &self,
+        id: i64,
+        name: &str,
+        arguments: Value,
+        session: &str,
+    ) -> Value {
         let value = self.call(id, name, arguments, session).await;
         let text = value
             .pointer("/result/content/0/text")

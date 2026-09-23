@@ -33,7 +33,11 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-mod test_env;
 mod h04_child_environment_is_cleared;
-pub(crate) use test_env::{CANDIDATE_A, CANDIDATE_B, ACCEPTANCE_A, ACCEPTANCE_B, fixture_root, candidate_dir, bun_path, runtime_files, runtime_digest, test_writer, TestEnv, fixture_host, host_request_from, object, wire, parse_wire, script_command, revision_row};
-pub(crate) use h04_child_environment_is_cleared::{copy_tree};
+mod test_env;
+pub(crate) use h04_child_environment_is_cleared::copy_tree;
+pub(crate) use test_env::{
+    bun_path, candidate_dir, fixture_host, fixture_root, host_request_from, object, parse_wire,
+    revision_row, runtime_digest, runtime_files, script_command, test_writer, wire, TestEnv,
+    ACCEPTANCE_A, ACCEPTANCE_B, CANDIDATE_A, CANDIDATE_B,
+};

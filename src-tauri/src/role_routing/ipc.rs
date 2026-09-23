@@ -8,7 +8,14 @@ use ts_rs::{Config, TS};
 pub(crate) mod routing_snapshot_input;
 #[path = "ipc/typescript_bindings.rs"]
 mod typescript_bindings;
-pub(crate) use routing_snapshot_input::{RoutingSnapshotInput, RoutingEventReplayInput, RoutingCancelInput, RoutingProposalDecisionInput, AdaptiveRollbackInput, AdaptiveArtifactSnapshot, RoutingLearningSnapshot, RoutingRootSnapshot, RoutingSnapshot, RoutingProposalSnapshot, RoutingEventRecord, get_routing_snapshot, replay_routing_events, cancel_routing_root, decide_routing_proposal, run_routing_learning_once, get_routing_learning_snapshot, rollback_adaptive_artifact, snapshot, replay};
+pub(crate) use routing_snapshot_input::{
+    cancel_routing_root, decide_routing_proposal, get_routing_learning_snapshot,
+    get_routing_snapshot, replay, replay_routing_events, rollback_adaptive_artifact,
+    run_routing_learning_once, snapshot, AdaptiveArtifactSnapshot, AdaptiveRollbackInput,
+    RoutingCancelInput, RoutingEventRecord, RoutingEventReplayInput, RoutingLearningSnapshot,
+    RoutingProposalDecisionInput, RoutingProposalSnapshot, RoutingRootSnapshot, RoutingSnapshot,
+    RoutingSnapshotInput,
+};
 use routing_snapshot_input::{learning_snapshot, root_snapshot};
-pub(crate) use typescript_bindings::{typescript_bindings};
-use typescript_bindings::{now_ms};
+use typescript_bindings::now_ms;
+pub(crate) use typescript_bindings::typescript_bindings;

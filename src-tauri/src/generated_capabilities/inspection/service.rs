@@ -28,7 +28,10 @@ use std::{
 };
 #[path = "service/inspection_store.rs"]
 mod inspection_store;
-pub use inspection_store::{INSPECTION_DIRECTORY, TYPESCRIPT_FILE, REPORT_FILE, Inspector, InspectionStore, InspectionService};
+pub use inspection_store::{
+    InspectionService, InspectionStore, Inspector, INSPECTION_DIRECTORY, REPORT_FILE,
+    TYPESCRIPT_FILE,
+};
 #[cfg(test)]
 #[path = "service/tests.rs"]
 mod tests;

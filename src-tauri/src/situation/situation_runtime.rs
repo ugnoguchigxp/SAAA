@@ -1,5 +1,5 @@
-use super::*;
-use crate::persistence::{SqliteReaders, SqliteWriter};
+#[cfg(test)]
+use super::classifier::classify;
 use super::classifier::{classify_with_parameters, shadow_policy, Hysteresis};
 use super::contracts::{
     initial_decision, initial_signals, initial_state, AudioSignal, AudioState, CalendarSignal,
@@ -10,6 +10,8 @@ use super::contracts::{
     SituationRuntimeFailure, SituationRuntimeSettings, SituationSnapshot, SituationState,
     TimeBucket,
 };
+use super::*;
+use crate::persistence::{SqliteReaders, SqliteWriter};
 use rusqlite::Connection;
 use std::{
     collections::VecDeque,
@@ -20,8 +22,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Notify;
-#[cfg(test)]
-use super::classifier::classify;
 pub(crate) const MAX_EVENTS: usize = 64;
 pub struct SituationRuntime {
     pub(super) inner: Mutex<RuntimeInner>,

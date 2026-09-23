@@ -129,7 +129,8 @@ fn continue_job(
     if delivery == "unknown"
         && serde_json::from_str::<CodingSettings>(&saved_settings)
             .map_err(|_| "coding_settings_invalid")?
-            .implementation_method == "codex-sdk"
+            .implementation_method
+            == "codex-sdk"
     {
         return Err("coding_outcome_unknown".into());
     }

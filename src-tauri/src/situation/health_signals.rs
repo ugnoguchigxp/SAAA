@@ -1,5 +1,3 @@
-use super::*;
-use crate::persistence::{SqliteReaders, SqliteWriter};
 use super::classifier::{classify_with_parameters, shadow_policy, Hysteresis};
 use super::contracts::{
     initial_decision, initial_signals, initial_state, AudioSignal, AudioState, CalendarSignal,
@@ -10,6 +8,8 @@ use super::contracts::{
     SituationRuntimeFailure, SituationRuntimeSettings, SituationSnapshot, SituationState,
     TimeBucket,
 };
+use super::*;
+use crate::persistence::{SqliteReaders, SqliteWriter};
 use rusqlite::Connection;
 use std::{
     collections::VecDeque,

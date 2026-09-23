@@ -1,4 +1,3 @@
-use super::*;
 use super::super::backends::{BackendOutcome, BackendRequest, FixtureBackend, ToolBackend};
 use super::super::catalog::{self, CatalogEntry, UsagePage};
 use super::super::contracts::*;
@@ -9,6 +8,7 @@ use super::super::inference::{
 };
 use super::super::repository::{self, Epochs};
 use super::super::service::ToolSelectionService;
+use super::*;
 use crate::persistence::SqliteWriter;
 use async_trait::async_trait;
 use rusqlite::{Connection, TransactionBehavior};
@@ -192,7 +192,10 @@ pub(super) async fn g09_successful_invocation_does_not_create_positive_feedback(
         )
         .await
         .expect("invoke");
-    assert_ne!(invoked.status, super::super::backends::TechnicalStatus::Cancelled);
+    assert_ne!(
+        invoked.status,
+        super::super::backends::TechnicalStatus::Cancelled
+    );
     let satisfaction: String = harness
         .writer
         .read_serialized(|connection| {

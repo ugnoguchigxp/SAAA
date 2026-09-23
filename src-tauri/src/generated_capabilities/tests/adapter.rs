@@ -23,7 +23,11 @@ pub(super) fn call(snapshot: &GeneratedToolSnapshot, id: &str, arguments: Value)
     }
 }
 
-pub(super) async fn run(env: &TestEnv, snapshot: &GeneratedToolSnapshot, call: &AgentToolCall) -> String {
+pub(super) async fn run(
+    env: &TestEnv,
+    snapshot: &GeneratedToolSnapshot,
+    call: &AgentToolCall,
+) -> String {
     tools::execute_with_actor(
         Some(env.service.as_ref()),
         snapshot,

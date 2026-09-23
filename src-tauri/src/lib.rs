@@ -57,11 +57,11 @@ mod voice_text;
 #[cfg(test)]
 mod wasm_host_poc;
 mod window_size;
-use ipc_contract::{ConversationMessage, ConversationMessagePage};
 pub(crate) use ipc_contract::RuntimeEvent;
+use ipc_contract::{ConversationMessage, ConversationMessagePage};
 pub(crate) use models::*;
-use persistence::{list_message_page_from_connection, SqliteReaders, SqliteWriter};
 pub(crate) use persistence::schema::initialize_database;
+use persistence::{list_message_page_from_connection, SqliteReaders, SqliteWriter};
 pub(crate) use providers::session_store::{
     begin_provider_session, finish_dynamic_lan_provider_session, finish_provider_session,
     persist_conversation_success, persist_conversation_success_with_state,
@@ -95,8 +95,8 @@ mod tests;
 pub(crate) mod window_shutdown_grace;
 use window_shutdown_grace::*;
 pub(crate) use window_shutdown_grace::{
-    PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE, DYNAMIC_LAN_PROVIDER_ID,
-    DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_AGENT_NAME, DEFAULT_USER_NAME,
+    DEFAULT_AGENT_NAME, DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_USER_NAME, DYNAMIC_LAN_PROVIDER_ID,
+    PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

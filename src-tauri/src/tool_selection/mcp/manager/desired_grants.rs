@@ -1,6 +1,6 @@
 use super::*;
 impl McpManager {
-/// Applies the config-derived grants for one source in its own transaction. Unknown tool
+    /// Applies the config-derived grants for one source in its own transaction. Unknown tool
     /// names stay pending until a later sync publishes them.
     pub(super) async fn apply_config_grants(&self, source_id: &str, generation: i64) {
         let Some(spec) = self.source_spec(source_id).await else {
@@ -93,7 +93,7 @@ impl McpManager {
     }
 }
 impl McpManager {
-pub(super) async fn desired_grants(
+    pub(super) async fn desired_grants(
         &self,
         source_id: &str,
         grants: &[super::super::config::McpGrantSpec],
@@ -156,7 +156,7 @@ pub(super) async fn desired_grants(
     }
 }
 impl McpManager {
-pub(super) fn project_exists(&self, project_id: &str) -> bool {
+    pub(super) fn project_exists(&self, project_id: &str) -> bool {
         let project_id = project_id.to_string();
         self.writer
             .read_serialized(move |connection| {
@@ -173,7 +173,7 @@ pub(super) fn project_exists(&self, project_id: &str) -> bool {
     }
 }
 impl McpManager {
-/// Embeds only revisions that do not yet have a vector for the configured model. Old revision
+    /// Embeds only revisions that do not yet have a vector for the configured model. Old revision
     /// vectors are never moved to a new revision.
     pub(super) async fn index_missing_embeddings(&self) -> Result<usize, ()> {
         let Some(embedder) = self.embedder.clone() else {
@@ -251,7 +251,7 @@ impl McpManager {
     }
 }
 impl McpManager {
-/// Pre-flight check used by `invoke` before an invocation row is opened. It performs exactly
+    /// Pre-flight check used by `invoke` before an invocation row is opened. It performs exactly
     /// the same source gate as `invoke` minus the send.
     pub async fn preflight(&self, source_id: &str, endpoint_hash: &str) -> Result<(), CallError> {
         if self.shutting_down.load(Ordering::SeqCst) {
@@ -265,7 +265,7 @@ impl McpManager {
     }
 }
 impl McpManager {
-pub(super) async fn check_locked(
+    pub(super) async fn check_locked(
         &self,
         source_id: &str,
         endpoint_hash: &str,
@@ -300,7 +300,7 @@ pub(super) async fn check_locked(
     }
 }
 impl McpManager {
-/// Checks whether a call may be sent for this binding. Config stop always wins if it happened
+    /// Checks whether a call may be sent for this binding. Config stop always wins if it happened
     /// first; already-sent requests are never claimed to be reversible.
     #[allow(clippy::too_many_arguments)]
     pub async fn invoke(
@@ -331,7 +331,7 @@ impl McpManager {
     }
 }
 impl McpManager {
-/// Refresh freshness for search eligibility without holding the writer lock during inference.
+    /// Refresh freshness for search eligibility without holding the writer lock during inference.
     pub fn source_fresh(&self, source_id: &str) -> bool {
         let source_id = source_id.to_string();
         self.writer
@@ -343,7 +343,7 @@ impl McpManager {
     }
 }
 impl McpManager {
-/// Diagnostics for management callers. Never contains a token, URL, session id or raw body.
+    /// Diagnostics for management callers. Never contains a token, URL, session id or raw body.
     pub async fn status(&self) -> Value {
         let sources = self.config.read().await.clone();
         let ready = self.ready.read().await.clone();
@@ -405,7 +405,7 @@ impl McpManager {
     }
 }
 impl McpManager {
-/// Stops new dispatch, marks every in-flight call indeterminate, and closes sessions.
+    /// Stops new dispatch, marks every in-flight call indeterminate, and closes sessions.
     pub async fn shutdown(&self) {
         if self.shutting_down.swap(true, Ordering::SeqCst) {
             return;
@@ -432,12 +432,12 @@ impl McpManager {
     }
 }
 impl McpManager {
-pub fn is_shutting_down(&self) -> bool {
+    pub fn is_shutting_down(&self) -> bool {
         self.shutting_down.load(Ordering::SeqCst)
     }
 }
 impl McpManager {
-/// Session state for diagnostics; the manager owns the pool.
+    /// Session state for diagnostics; the manager owns the pool.
     pub async fn session_state(&self, source_id: &str) -> Option<SessionState> {
         let spec = self.source_spec(source_id).await?;
         let session = self

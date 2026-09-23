@@ -214,8 +214,7 @@ pub(crate) async fn render_http_session(
         match &context.route {
             TtsRoute::Cloud(provider) => {
                 let provider = crate::voice::cloud_tts::speech_directive::apply_expression(
-                    provider,
-                    expression,
+                    provider, expression,
                 );
                 crate::voice::http_audio::play_with_situation(
                     &provider,
@@ -312,8 +311,7 @@ pub(crate) fn render_future(
             }
             TtsRoute::Cloud(provider) => {
                 let provider = crate::voice::cloud_tts::speech_directive::apply_expression(
-                    &provider,
-                    expression,
+                    &provider, expression,
                 );
                 crate::voice::cloud_tts::render_to_artifact(
                     &provider,

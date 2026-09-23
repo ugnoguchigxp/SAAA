@@ -4,11 +4,11 @@
 //! socket, not against a mocked trait. No external network service is used.
 
 pub(super) use super::config::{McpGrantScope, McpGrantSpec, McpSourceSpec, McpSources};
-pub(super) use super::{MCP_PROTOCOL_VERSION, MCP_SOURCE_STALE_AFTER_MILLIS, MCP_RESULT_MAX_BYTES};
-pub(super) use super::repository as mcp_repo;
 pub(super) use super::descriptors;
 pub(super) use super::manager::McpManager;
+pub(super) use super::repository as mcp_repo;
 pub(super) use super::results;
+pub(super) use super::{MCP_PROTOCOL_VERSION, MCP_RESULT_MAX_BYTES, MCP_SOURCE_STALE_AFTER_MILLIS};
 pub(super) use crate::persistence::SqliteWriter;
 pub(super) use crate::tool_selection::backends::mcp::McpBackend;
 pub(super) use crate::tool_selection::backends::router::BackendRouter;
@@ -34,15 +34,17 @@ mod server_state;
 use server_state::*;
 #[path = "tests/user_grant.rs"]
 mod user_grant;
-use user_grant::{user_grant, scenario};
 pub(super) use user_grant::describe_and_invoke;
-#[path = "tests/t07_cancel_before_send_makes_zero_calls.rs"]
-mod t07_cancel_before_send_makes_zero_calls;
-#[path = "tests/t02_v23_sources_are_rebuilt_without_losing_data.rs"]
-mod t02_v23_sources_are_rebuilt_without_losing_data;
+use user_grant::{scenario, user_grant};
 #[path = "tests/review_after_send_cancel_is_unknown_and_releases.rs"]
 mod review_after_send_cancel_is_unknown_and_releases;
-use review_after_send_cancel_is_unknown_and_releases::{d5_config, d5_token, d5_open_session, d5_envelope, d5_tool, d5_post};
+#[path = "tests/t02_v23_sources_are_rebuilt_without_losing_data.rs"]
+mod t02_v23_sources_are_rebuilt_without_losing_data;
+#[path = "tests/t07_cancel_before_send_makes_zero_calls.rs"]
+mod t07_cancel_before_send_makes_zero_calls;
+use review_after_send_cancel_is_unknown_and_releases::{
+    d5_config, d5_envelope, d5_open_session, d5_post, d5_token, d5_tool,
+};
 #[path = "tests/h10_large_mcp_result_pages_over_the_published_wi.rs"]
 mod h10_large_mcp_result_pages_over_the_published_wi;
 #[path = "tests/h12_mcp_correction_applies_to_the_matching_conve.rs"]

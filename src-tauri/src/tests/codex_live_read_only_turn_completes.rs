@@ -87,7 +87,11 @@ pub(super) fn world_body_history(conversation_id: &str) -> Vec<ConversationMessa
         },
     ]
 }
-pub(super) async fn run_world_body_case(valid: bool, run_id: &str, session_provider_id: &str) -> (Value, i64) {
+pub(super) async fn run_world_body_case(
+    valid: bool,
+    run_id: &str,
+    session_provider_id: &str,
+) -> (Value, i64) {
     let (endpoint, captures, server) =
         spawn_llm_http_fixture(vec![LlmHttpStep::Delta("ok"), LlmHttpStep::Complete]).await;
     let connection = Connection::open_in_memory().expect("database opens");

@@ -1,5 +1,8 @@
+use super::selection_mode::{
+    FeedbackKind, InputKind, ObjectType, Operation, Phase, ToolSelectionError,
+    ToolSelectionErrorCode, ToolSelectionResult, RULE_CORRECTION_CLAMP, RULE_STRENGTH,
+};
 use super::*;
-use super::selection_mode::{ObjectType, Phase, InputKind, Operation, FeedbackKind, ToolSelectionError, ToolSelectionErrorCode, ToolSelectionResult, RULE_STRENGTH, RULE_CORRECTION_CLAMP};
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeKind {

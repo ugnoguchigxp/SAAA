@@ -153,7 +153,10 @@ pub(crate) fn load_named_secret(
     service: &str,
     account: &str,
 ) -> Result<Option<Zeroizing<String>>, String> {
-    database()?.read_serialized(|connection| {
+    let Some(database) = CREDENTIAL_DATABASE.get().cloned() else {
+        return Ok(None);
+    };
+    database.read_serialized(|connection| {
         match connection.query_row(
             "SELECT secret FROM credential_secrets WHERE service = ?1 AND account = ?2",
             params![service, account],

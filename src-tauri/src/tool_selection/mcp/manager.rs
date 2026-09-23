@@ -21,10 +21,10 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, Notify, RwLock};
-#[path = "manager/mcp_manager.rs"]
-mod mcp_manager;
 #[path = "manager/desired_grants.rs"]
 mod desired_grants;
-pub use mcp_manager::McpManager;
+#[path = "manager/mcp_manager.rs"]
+mod mcp_manager;
 pub(super) use desired_grants::normalize_loopback;
+pub use mcp_manager::McpManager;
 // Methods live on McpManager via impls in child modules.

@@ -61,7 +61,11 @@ pub(super) fn omission_label(outcome: &WorldSourceOutcome) -> Option<WorldOmissi
         WorldSourceOutcome::Ready(_) => None,
     }
 }
-pub(super) fn prepare_outcome(fixture: &Fixture, request: GraphRequest, explicit: bool) -> WorldSourceOutcome {
+pub(super) fn prepare_outcome(
+    fixture: &Fixture,
+    request: GraphRequest,
+    explicit: bool,
+) -> WorldSourceOutcome {
     let access = fixture.access();
     let frame = fixture.request(access, Vec::new(), Some(request));
     if explicit {
@@ -344,7 +348,9 @@ pub(super) fn g1_fixture_input(question: Option<&str>) -> Fixture {
     fixture.set_now(crate::memory::personal_state::now());
     fixture
 }
-pub(super) fn world_candidate(composed: &TurnCompose) -> Option<&crate::runtime::context::source::Candidate> {
+pub(super) fn world_candidate(
+    composed: &TurnCompose,
+) -> Option<&crate::runtime::context::source::Candidate> {
     composed
         .envelope
         .selected

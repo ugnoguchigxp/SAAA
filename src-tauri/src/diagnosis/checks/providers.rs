@@ -62,9 +62,7 @@ pub(in crate::diagnosis) async fn providers(state: &AppState) -> Vec<DiagnosisIt
 fn probe_tasks<'a>(
     state: &'a AppState,
     enabled: &'a [ModelProviderSettings],
-) -> Vec<
-    std::pin::Pin<Box<dyn std::future::Future<Output = Option<DiagnosisItem>> + 'a>>,
-> {
+) -> Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Option<DiagnosisItem>> + 'a>>> {
     let mut pending = enabled
         .iter()
         .map(|provider| {

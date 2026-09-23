@@ -12,14 +12,18 @@ use super::contracts::{compact_text, SearchInput, WebFetchCancel, WebFetchFailur
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use std::{collections::HashSet, time::Duration};
-#[path = "search/raw_hit.rs"]
-mod raw_hit;
 #[path = "search/match_bracket.rs"]
 mod match_bracket;
-pub use raw_hit::{RawHit, SearchHit, SearchOutcome, SearchProvider, RustSearchProvider};
-use raw_hit::{MAX_RESPONSE_BYTES, MAX_CANDIDATES};
+#[path = "search/raw_hit.rs"]
+mod raw_hit;
+use match_bracket::{
+    assert_not_challenge, attr_value, filter_and_project, find, match_bracket,
+    normalize_result_url, parse_brave_json, parse_ddg_html, parse_ddg_lite, snippet_after,
+    strip_tags, urlencoding_decode,
+};
 pub use match_bracket::{is_allowed_result_url, render_compact};
-use match_bracket::{match_bracket, normalize_result_url, assert_not_challenge, find, attr_value, urlencoding_decode, strip_tags, snippet_after, parse_ddg_html, parse_ddg_lite, parse_brave_json, filter_and_project};
+pub use raw_hit::{RawHit, RustSearchProvider, SearchHit, SearchOutcome, SearchProvider};
+use raw_hit::{MAX_CANDIDATES, MAX_RESPONSE_BYTES};
 #[cfg(test)]
 #[path = "search/tests.rs"]
 mod tests;

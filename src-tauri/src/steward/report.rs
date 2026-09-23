@@ -4,8 +4,8 @@ use crate::{database_error, new_id, AppState};
 use rusqlite::{params, Connection};
 #[path = "report/publish.rs"]
 mod publish;
-pub(crate) use publish::{publish, queue_terminals, flush_held_reports, flush_all_held_reports};
-use publish::{start_pending_speech, speech_event_state, flush_unflushed};
+pub(crate) use publish::{flush_all_held_reports, flush_held_reports, publish, queue_terminals};
+use publish::{flush_unflushed, speech_event_state, start_pending_speech};
 #[cfg(test)]
 #[path = "report/tests.rs"]
 mod tests;

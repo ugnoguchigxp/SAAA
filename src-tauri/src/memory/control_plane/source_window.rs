@@ -1,11 +1,11 @@
+use super::items::*;
 use super::*;
 use rusqlite::OptionalExtension;
+#[cfg(test)]
+use rusqlite::Transaction;
 use rusqlite::{params, Connection};
 use serde_json::Value;
 use std::{collections::HashSet, env};
-use super::items::*;
-#[cfg(test)]
-use rusqlite::Transaction;
 // Version 2 adds the trusted World-model reading policy to the conversation system template
 // (G1/C6). The policy text is static; no data is ever promoted into it.
 pub const CONTEXT_POLICY_VERSION: i64 = 2;

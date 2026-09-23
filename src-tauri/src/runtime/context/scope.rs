@@ -4,7 +4,9 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 #[path = "scope/resolved_scope.rs"]
 mod resolved_scope;
-pub(crate) use resolved_scope::{ResolvedScope, ScopeSnapshot, resolve, load, attach_output, register, link, revoke};
+pub(crate) use resolved_scope::{
+    attach_output, link, load, register, resolve, revoke, ResolvedScope, ScopeSnapshot,
+};
 #[cfg(test)]
 #[path = "scope/tests.rs"]
 mod tests;

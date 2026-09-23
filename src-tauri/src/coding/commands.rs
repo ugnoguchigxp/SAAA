@@ -38,7 +38,9 @@ pub async fn probe_coding(state: tauri::State<'_, AppState>) -> Result<Value, St
         let mut child = crate::runtime::codex_cli::spawn_codex_app_server()?;
         child.kill().map_err(|_| "codex_probe_failed")?;
         child.wait().map_err(|_| "codex_probe_failed")?;
-        return Ok(json!({"available":true,"method":"codex-sdk","model":settings.codex_model,"authentication":"existing Codex login; live request not tested"}));
+        return Ok(
+            json!({"available":true,"method":"codex-sdk","model":settings.codex_model,"authentication":"existing Codex login; live request not tested"}),
+        );
     }
     let directory = state.data_directory.clone();
     tauri::async_runtime::spawn_blocking(move||{

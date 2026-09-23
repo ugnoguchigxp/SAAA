@@ -15,8 +15,11 @@ use crate::{
 mod execute_turn;
 #[path = "turns/prepare_runtime_run.rs"]
 mod prepare_runtime_run;
-pub(crate) use execute_turn::{execute_turn, expire_stale_input_barrier, send_runtime_terminal_event, finish_supervised_runtime_run};
-use execute_turn::{public_failure_code};
-pub(crate) use prepare_runtime_run::prepare_runtime_run;
+use execute_turn::public_failure_code;
+pub(crate) use execute_turn::{
+    execute_turn, expire_stale_input_barrier, finish_supervised_runtime_run,
+    send_runtime_terminal_event,
+};
 #[cfg(test)]
 pub(crate) use prepare_runtime_run::finish_runtime_run;
+pub(crate) use prepare_runtime_run::prepare_runtime_run;

@@ -5,8 +5,7 @@ pub const RECALL_RULE_TOOL_NAME: &str = "recall_rule";
 pub const RECALL_SKILL_TOOL_NAME: &str = "recall_skill";
 #[cfg(test)]
 pub const MAX_TYPED_RECALL_CALLS_PER_TURN: usize = 3;
-pub const TYPED_RECALL_TOOL_NAMES: [&str;
-3] = [
+pub const TYPED_RECALL_TOOL_NAMES: [&str; 3] = [
     RECALL_EXPERIENCE_TOOL_NAME,
     RECALL_RULE_TOOL_NAME,
     RECALL_SKILL_TOOL_NAME,
@@ -220,7 +219,11 @@ pub fn typed_recall_tool_definitions() -> Vec<Value> {
 pub fn typed_recall_input_schema(tool_name: &str) -> Option<Value> {
     TypedMemoryType::from_tool_name(tool_name).map(input_schema)
 }
-pub(super) fn tool_definition(name: &str, description: &str, memory_type: TypedMemoryType) -> Value {
+pub(super) fn tool_definition(
+    name: &str,
+    description: &str,
+    memory_type: TypedMemoryType,
+) -> Value {
     let parameters = input_schema(memory_type);
     json!({
         "type": "function",
@@ -363,7 +366,9 @@ struct ExperienceItem {
     pub(super) lesson: String,
     pub(super) outcome_kind: OutcomeKind,
 }
-pub(super) fn deserialize_present_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+pub(super) fn deserialize_present_optional_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

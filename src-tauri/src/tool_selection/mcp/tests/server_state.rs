@@ -155,7 +155,10 @@ pub(crate) async fn write_response(
     socket.write_all(body).await?;
     socket.flush().await
 }
-pub(crate) async fn write_sse(socket: &mut tokio::net::TcpStream, message: &Value) -> std::io::Result<()> {
+pub(crate) async fn write_sse(
+    socket: &mut tokio::net::TcpStream,
+    message: &Value,
+) -> std::io::Result<()> {
     write_sse_messages(socket, std::slice::from_ref(message)).await
 }
 pub(crate) async fn write_sse_messages(

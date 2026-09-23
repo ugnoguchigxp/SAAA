@@ -252,7 +252,10 @@ pub(super) fn parse_ddg_html(html: &str) -> Result<Vec<RawHit>, WebFetchFailure>
 pub(super) fn parse_ddg_lite(html: &str) -> Result<Vec<RawHit>, WebFetchFailure> {
     parse_ddg_anchors(html, "duckduckgo")
 }
-pub(super) fn parse_ddg_anchors(html: &str, provider: &'static str) -> Result<Vec<RawHit>, WebFetchFailure> {
+pub(super) fn parse_ddg_anchors(
+    html: &str,
+    provider: &'static str,
+) -> Result<Vec<RawHit>, WebFetchFailure> {
     if html.len() > MAX_RESPONSE_BYTES {
         return Err(WebFetchFailure::new(
             "RESPONSE_TOO_LARGE",

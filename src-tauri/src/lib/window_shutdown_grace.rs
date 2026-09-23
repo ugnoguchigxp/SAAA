@@ -1,21 +1,28 @@
 use super::{
-    AppSnapshot, ListMessagesInput, LocalArtifactResult, ProviderTestResult,
-    SaveSettingsDocumentsInput, SetVoiceListeningEnabledInput, SettingsDocument,
-    TestProviderInput, database_error, now_iso, validate_identifier, spawn_situation_monitor,
+    database_error, now_iso, spawn_situation_monitor, validate_identifier, AppSnapshot,
+    ListMessagesInput, LocalArtifactResult, ProviderTestResult, SaveSettingsDocumentsInput,
+    SetVoiceListeningEnabledInput, SettingsDocument, TestProviderInput,
 };
 use crate::app_state::{AppState, ProviderProbeStatus, RunCancellation};
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    time::Duration,
-};
-use tauri::Manager;
+#[cfg(test)]
+use crate::ipc_contract::ConversationMessage;
 use crate::ipc_contract::ConversationMessagePage;
+#[cfg(test)]
+use crate::ipc_contract::RuntimeEvent;
+#[cfg(test)]
+use crate::persistence::conversations::list_messages_from_connection;
+#[cfg(test)]
+use crate::persistence::schema::initialize_database;
 use crate::persistence::{list_message_page_from_connection, SqliteReaders, SqliteWriter};
+#[cfg(test)]
+pub(crate) use crate::runtime::codex_turn::{
+    persist_codex_thread, receive_supervised_codex_result, run_codex_turn_process,
+    run_codex_turn_process_with_policy,
+};
+#[cfg(test)]
+pub(crate) use crate::runtime::turns::finish_runtime_run;
+#[cfg(test)]
+pub(crate) use crate::runtime::turns::prepare_runtime_run;
 use crate::voice::streaming_asr::{
     append_voice_asr_audio, commit_voice_asr_utterance, start_voice_asr_session,
     stop_voice_asr_session, AsrSessionManager,
@@ -33,23 +40,16 @@ use crate::voice_commands::{
 use rusqlite::Connection;
 #[cfg(test)]
 use std::fs;
-#[cfg(test)]
-use crate::persistence::conversations::list_messages_from_connection;
-#[cfg(test)]
-use crate::persistence::schema::initialize_database;
-#[cfg(test)]
-pub(crate) use crate::runtime::codex_turn::{
-    persist_codex_thread, receive_supervised_codex_result, run_codex_turn_process,
-    run_codex_turn_process_with_policy,
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
 };
-#[cfg(test)]
-pub(crate) use crate::runtime::turns::finish_runtime_run;
-#[cfg(test)]
-pub(crate) use crate::runtime::turns::prepare_runtime_run;
-#[cfg(test)]
-use crate::ipc_contract::ConversationMessage;
-#[cfg(test)]
-use crate::ipc_contract::RuntimeEvent;
+use tauri::Manager;
 pub(crate) const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 pub(crate) const DYNAMIC_LAN_PROVIDER_ID: &str = "lan-llm-dynamic";
 pub(crate) const QWEN_DIRECT_PROVIDER_ID: &str = "lan-qwen-direct";
@@ -58,7 +58,8 @@ pub(crate) const DEFAULT_AGENT_NAME: &str = "SAAA";
 pub(crate) const DEFAULT_USER_NAME: &str = "";
 pub(crate) const PRIMARY_CONVERSATION_ID: &str = "conversation_primary";
 pub(crate) const PRIMARY_CONVERSATION_TITLE: &str = "SAAAとの会話";
-pub(crate) const CODEX_READ_ONLY_SYSTEM_CONTEXT: &str = include_str!("../../../.s11tnext/codex-read-only.txt");
+pub(crate) const CODEX_READ_ONLY_SYSTEM_CONTEXT: &str =
+    include_str!("../../../.s11tnext/codex-read-only.txt");
 #[tauri::command]
 pub(super) fn frontend_ready(state: tauri::State<'_, AppState>) -> Result<(), String> {
     crate::app_paths::frontend_ready(&state)
@@ -142,8 +143,9 @@ pub(super) async fn run_situation_calibration(
     let readers = state.sqlite_readers.clone();
     let writer = state.sqlite_writer.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let profile = readers
-            .read(|connection| crate::situation::calibration::profile_by_id(connection, &profile_id))?;
+        let profile = readers.read(|connection| {
+            crate::situation::calibration::profile_by_id(connection, &profile_id)
+        })?;
         if profile.status != "candidate" {
             return Err("Only candidate profiles can be replayed".to_string());
         }
@@ -177,7 +179,9 @@ pub(super) fn decide_situation_calibration(
     get_situation_review_snapshot(state)
 }
 #[tauri::command]
-pub(super) fn export_diagnostics(state: tauri::State<'_, AppState>) -> Result<LocalArtifactResult, String> {
+pub(super) fn export_diagnostics(
+    state: tauri::State<'_, AppState>,
+) -> Result<LocalArtifactResult, String> {
     crate::diagnostics::export_diagnostics(&state)
 }
 #[tauri::command]

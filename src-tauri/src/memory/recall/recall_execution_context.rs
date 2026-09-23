@@ -1,3 +1,4 @@
+use super::search::*;
 use super::*;
 use crate::memory::contracts::{
     RecallConversationInput, RecallConversationOutput, RecallError, RecallErrorCode,
@@ -9,7 +10,6 @@ use chrono::{
 };
 use chrono_tz::Tz;
 use rusqlite::{params, Connection, OptionalExtension};
-use super::search::*;
 const MAX_QUERY_CHARS: usize = 256;
 pub(super) const MAX_QUERY_TERMS: usize = 8;
 pub(super) const MAX_ABSOLUTE_RANGE_DAYS: i64 = 366;
