@@ -81,6 +81,9 @@ pub(super) async fn typed_memory_tools_are_routed_only_from_a_valid_typed_manife
             "recall_skill",
             "web_search",
             "fetch_content",
+            "continue_work",
+            "read_record",
+            "recall_activity",
             "update_conversation_voice_behavior"
         ]
     );

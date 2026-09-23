@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "license": "MIT",
   "description": "Situation-Aware Ambient Agent Runtime",
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.2",
   "type": "module",
   "scripts": {
     "start": "tauri dev --no-watch",
@@ -27,7 +27,8 @@
     "personal-state:eval": "bun scripts/personal-state-eval.ts",
     "personal-state:performance": "bun scripts/personal-state-performance.ts",
     "check:personal-state": "cargo fmt --check --manifest-path crates/personal-state-core/Cargo.toml && cargo clippy --locked --manifest-path crates/personal-state-core/Cargo.toml --all-targets -- -D warnings && cargo test --locked --manifest-path crates/personal-state-core/Cargo.toml",
-    "check": "bun run freeze:check && bun run check:personal-state && bun run size:check && bun run build:frontend && bun run quality:check && bun run ipc:check && bun run typecheck && cargo fmt --check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && bun run test",
+    "check": "bun run freeze:check && bun run check:personal-state && bun run size:check && bun run build:frontend && bun run quality:check && bun run ipc:check && bun run typecheck && cargo fmt --check --manifest-path src-tauri/Cargo.toml && bun run clippy:check && bun run test",
+    "clippy:check": "bun scripts/clippy-ratchet.ts",
     "ipc:generate": "cargo run --manifest-path src-tauri/Cargo.toml --example export_ipc_bindings && cargo run --manifest-path src-tauri/Cargo.toml --example export_voice_asr_bindings",
     "ipc:check": "cargo test --manifest-path src-tauri/Cargo.toml --test ipc_contract_bindings --test voice_asr_contract_bindings",
     "s11tnext:lint": "s11tnext lint --release-profile development",

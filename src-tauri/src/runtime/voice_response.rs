@@ -59,6 +59,14 @@ pub(crate) async fn complete(
 }
 
 impl RuntimeEventSender for TurnEventHub {
+    fn wait_message_presented<'a>(
+        &'a self,
+        state: &'a AppState,
+        message_id: &'a str,
+        cancellation: Arc<RunCancellation>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(self.wait_presented(state, message_id, cancellation))
+    }
     fn voice_response_enabled(&self) -> bool {
         self.voice_response.enabled()
     }

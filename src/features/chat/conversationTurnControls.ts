@@ -7,7 +7,7 @@ import {
   type ConversationRuntimeActivity,
 } from "../../lib/conversationActivity";
 import type { AppSnapshot, ConversationMessage, RuntimeEvent } from "../../lib/contracts";
-import { cancelRun, stopTts } from "../../lib/runtime";
+import { acknowledgeConversationMessage, cancelRun, stopTts } from "../../lib/runtime";
 import {
   transitionConversationSession,
   type ConversationSession,
@@ -18,6 +18,7 @@ import {
   clearReasoningCancellation,
   reasoningCancellationRequested,
 } from "../../lib/reasoningRun";
+import { presentCompletedAnswer } from "./artifacts/answerPresentation";
 import { recordRuntimeLifecycleAudit } from "./conversationAudit";
 import { ConversationIssueCoordinator } from "./conversationIssueCoordinator";
 import {
@@ -195,7 +196,34 @@ export function createConversationTurnControls(input: {
           appendConversationActivity(current, { type: "providerFailed" }),
         );
         break;
+      case "messageCommitted":
+        setMessages((current) =>
+          history.isBrowsingOlder()
+            ? current
+            : [
+                ...current.filter(
+                  (message) =>
+                    !message.id.startsWith("streaming_") && message.id !== event.message.id,
+                ),
+                event.message,
+              ],
+        );
+        resetStreamingText();
+        if (!document.hidden && typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            const rendered = [...document.querySelectorAll<HTMLElement>("[data-message-id]")]
+              .some((element) => element.dataset.messageId === event.message.id);
+            if (rendered) {
+              void acknowledgeConversationMessage(conversationId, event.runId, event.message.id)
+                .catch(() => undefined);
+            }
+          }));
+        }
+        break;
+      case "runInputAccepted":
+        break;
       case "messageCompleted":
+        presentCompletedAnswer(event.message);
         incompleteRunIdsRef.current.delete(event.runId);
         recordResponseCompleted(event.runId, event.message.id);
         setRetryAction(null);

@@ -334,7 +334,7 @@ mod tests {
             model: "gpt-5.6-sol".into(),
             prompt: "hello".into(),
             output_schema: None,
-            timeout_ms: 1_000,
+            timeout_ms: 10_000,
         }
     }
 

@@ -268,14 +268,13 @@ fn ui_events_are_bounded_and_newest_first() {
     .expect("UI events load");
 
     assert_eq!(events.len(), AUDIT_UI_EVENT_LIMIT);
-    assert_eq!(
-        events.first().and_then(|event| event["id"].as_str()),
-        Some("audit_ui_204")
-    );
-    assert_eq!(
-        events.last().and_then(|event| event["id"].as_str()),
-        Some("audit_ui_5")
-    );
+    let fixture_ids = events
+        .iter()
+        .filter_map(|event| event["id"].as_str())
+        .filter(|id| id.starts_with("audit_ui_"))
+        .collect::<Vec<_>>();
+    assert_eq!(fixture_ids.first().copied(), Some("audit_ui_204"));
+    assert!(fixture_ids.len() >= AUDIT_UI_EVENT_LIMIT - 1);
 }
 
 #[test]

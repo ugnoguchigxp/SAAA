@@ -25,7 +25,8 @@ import { uiMessage } from "../../i18n/presentation";
 import { updateConversationTimestamp } from "../../lib/conversationRouting";
 import { type ConversationRuntimeActivity } from "../../lib/conversationActivity";
 import type { AppSnapshot, ConversationMessage, VoiceSettings } from "../../lib/contracts";
-import { cancelRun, startTurn, stopTts } from "../../lib/runtime";
+import { appendRunningInput, cancelRun, claimTurnImage, conversationEventHead, firstUnconsumedConversationInput, releaseTurnImage, startTurn, stopTts } from "../../lib/runtime";
+import { IMAGE_ONLY_PROMPT, notifyImageClaimed, peekTurnImage, takeTurnImage } from "./composerImage";
 import { codingApi } from "../coding/api";
 import {
   transitionConversationSession,
@@ -110,6 +111,31 @@ export function useConversationTurn({
   }, [conversationSessionRef]);
   const resetHistory = useCommittedCallback(history.reset);
   const loadMessagesCommitted = useCommittedCallback(loadMessages);
+  const isBrowsingOlderCommitted = useCommittedCallback(history.isBrowsingOlder);
+  useEffect(() => {
+    if (!selectedConversationId) return;
+    let closed = false;
+    let busy = false;
+    let seenSeq = -1;
+    const check = async () => {
+      if (closed || busy || isBrowsingOlderCommitted()) return;
+      busy = true;
+      try {
+        const head = await conversationEventHead(selectedConversationId);
+        if (!closed && head > seenSeq) {
+          seenSeq = head;
+          await loadMessagesCommitted(selectedConversationId, issueCoordinatorRef.current.begin());
+        }
+      } catch {
+        // A later poll can restore the conversation after a transient IPC failure.
+      } finally {
+        busy = false;
+      }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 2_000);
+    return () => { closed = true; window.clearInterval(timer); };
+  }, [selectedConversationId, loadMessagesCommitted, isBrowsingOlderCommitted]);
   useEffect(() => {
     resetHistory(selectedConversationId);
     incompleteRunIdsRef.current.clear();
@@ -191,7 +217,8 @@ export function useConversationTurn({
   }, [loadMessagesCommitted]);
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await submitPrompt(composer);
+    const prompt = composer.trim() || (peekTurnImage() ? IMAGE_ONLY_PROMPT : "");
+    await submitPrompt(prompt);
   }
   async function submitPrompt(prompt: string, options: SubmitPromptOptions = {}) {
     const {
@@ -238,16 +265,39 @@ export function useConversationTurn({
       }
       return;
     }
-    if (
-      disposedRef.current ||
-      !selectedConversationId ||
-      !prompt.trim() ||
-      conversationSessionRef.current.runId
-    )
+    if (disposedRef.current || !selectedConversationId || !prompt.trim()) return;
+    if (conversationSessionRef.current.runId) {
+      const conversationId = selectedConversationId;
+      const runId = conversationSessionRef.current.runId;
+      const content = prompt.trim();
+      const issueScope = issueCoordinatorRef.current.begin();
+      try {
+        const receipt = await appendRunningInput({ conversationId, runId, content });
+        setComposer("");
+        if (!history.isBrowsingOlder()) {
+          setMessages((current) => [
+            ...current.filter((message) => message.id !== receipt.messageId),
+            {
+              id: receipt.messageId,
+              conversationId,
+              role: "user",
+              content,
+              createdAt: String(Date.now()),
+            },
+          ]);
+        }
+        if (receipt.transferred && conversationSessionRef.current.runId !== runId) {
+          await submitPrompt(content, { retryInputMessageId: receipt.messageId });
+        }
+      } catch (cause) {
+        publishIssue(issueScope, toMessage(cause));
+      }
       return;
+    }
     const conversationId = selectedConversationId;
     const content = prompt.trim();
     const runId = `run_${crypto.randomUUID()}`;
+    const imageId = inputOrigin === "text" && !retryInputMessageId ? takeTurnImage() : null;
     beginRunPerformance(runId);
     const issueScope = issueCoordinatorRef.current.begin();
     const shouldStreamSpeech = Boolean(voiceSettings?.autoSpeak);
@@ -327,6 +377,10 @@ export function useConversationTurn({
             ];
           })
           .catch(() => undefined));
+      if (imageId) {
+        await claimTurnImage(imageId, runId);
+        notifyImageClaimed();
+      }
       await startTurn(
         {
           runId,
@@ -351,6 +405,7 @@ export function useConversationTurn({
         publishIssue(issueScope, toMessage(cause));
       }
     } finally {
+      if (imageId) await releaseTurnImage(runId).catch(() => undefined);
       endReasoningRun(runId);
       if (conversationSessionRef.current.runId === runId) {
         conversationSessionRef.current = transitionConversationSession(
@@ -382,6 +437,27 @@ export function useConversationTurn({
         }
       }
       settleDelivery(delivered || handedToRetry);
+      if (!disposedRef.current && selectedConversationIdRef.current === conversationId) {
+        try {
+          const unconsumed = await firstUnconsumedConversationInput(conversationId);
+          if (unconsumed) {
+            if (delivered && unconsumed.priorStatus === "completed") {
+              await submitPrompt(unconsumed.content, {
+                retryInputMessageId: unconsumed.messageId,
+              });
+              return;
+            }
+            setRetryAction({
+              kind: "response",
+              prompt: unconsumed.content,
+              inputMessageId: unconsumed.messageId,
+              inputOrigin: "text",
+            });
+          }
+        } catch (cause) {
+          publishIssue(issueCoordinatorRef.current.begin(), toMessage(cause));
+        }
+      }
       const nextVoicePrompt = disposedRef.current
         ? undefined
         : pendingVoicePromptsRef.current.shift();

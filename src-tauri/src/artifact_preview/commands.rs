@@ -30,6 +30,40 @@ pub(crate) fn open_source_website_in_browser(
 }
 
 #[tauri::command]
+pub(crate) fn scroll_source_website(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    super::source_web::scroll(&app, &label)
+}
+
+#[tauri::command]
+pub(crate) fn report_artifact_webview_session(
+    conversation_id: String,
+    generation: u64,
+    labels: Vec<String>,
+    selected: Option<usize>,
+    scrollable: bool,
+    mounted: bool,
+) {
+    super::webview_ops::report_session(super::webview_ops::WebviewSession {
+        conversation_id,
+        generation,
+        labels,
+        selected,
+        scrollable,
+        mounted,
+    });
+}
+
+#[tauri::command]
+pub(crate) fn poll_artifact_webview_request() -> Option<super::webview_ops::WebviewRequest> {
+    super::webview_ops::poll_request()
+}
+
+#[tauri::command]
+pub(crate) fn complete_artifact_webview_request(request_id: String, applied: bool) {
+    super::webview_ops::complete_request(&request_id, applied);
+}
+
+#[tauri::command]
 pub(crate) fn prepare_artifact_preview(
     state: tauri::State<'_, AppState>,
     input: PrepareArtifactPreviewInput,

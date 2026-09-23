@@ -1,3 +1,17 @@
+.composer.image-drag {
+  outline: 2px solid #476f70;
+}
+.composer-image {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.composer-image img {
+  width: 72px;
+  height: 48px;
+  object-fit: contain;
+  background: #101418;
+}
 .composer:focus-within {
   border-color: #476f70;
 }

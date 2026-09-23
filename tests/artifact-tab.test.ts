@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { UiInstance } from "../src/lib/generated/generativeUi";
 import {
   artifactTabId,
+  reduceArtifactSessions,
   reduceArtifactWorkspace,
   type ArtifactTab,
 } from "../src/features/chat/artifacts/artifactTab";
@@ -53,5 +54,48 @@ describe("artifact tab reducer", () => {
     const last = artifactTabId(state.tabs[state.tabs.length - 1]);
     state = reduceArtifactWorkspace(state, { type: "close", tabId: last });
     expect(state.activeTabId).toBe(artifactTabId(state.tabs[state.tabs.length - 1]));
+  });
+
+  test("keeps every website tab from an answer", () => {
+    let state = { tabs: [] as ArtifactTab[], activeTabId: null as string | null };
+    const sources = Array.from({ length: 9 }, (_, index) => ({
+      kind: "source" as const,
+      conversationId: "c1",
+      url: `https://example.com/${index}`,
+      title: `site-${index}`,
+    }));
+    state = reduceArtifactWorkspace(state, {
+      type: "present-sources",
+      conversationId: "c1",
+      sources,
+    });
+    expect(state.tabs).toHaveLength(9);
+    expect(state.activeTabId).toBe("source:c1:https://example.com/0");
+    state = reduceArtifactWorkspace(state, {
+      type: "present-sources",
+      conversationId: "c1",
+      sources: [],
+    });
+    expect(state.activeTabId).toBe("source:c1:https://example.com/0");
+    state = reduceArtifactWorkspace(state, { type: "close-source-tabs", conversationId: "c1" });
+    expect(state.tabs).toHaveLength(0);
+  });
+
+  test("keeps website tabs on the conversation that produced them", () => {
+    let store = reduceArtifactSessions(
+      { conversationId: "c1", sessions: {} },
+      {
+        type: "present-sources",
+        conversationId: "c2",
+        sources: [
+          { kind: "source", conversationId: "c2", url: "https://example.com/a", title: "A" },
+        ],
+      },
+    );
+    expect(store.sessions.c1).toBeUndefined();
+    expect(store.sessions.c2?.tabs).toHaveLength(1);
+    store = reduceArtifactSessions(store, { type: "focus", conversationId: "c2" });
+    expect(store.conversationId).toBe("c2");
+    expect(store.sessions.c2?.activeTabId).toBe("source:c2:https://example.com/a");
   });
 });

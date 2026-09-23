@@ -172,7 +172,7 @@ spec/                       Concept、契約、計画、証跡
 
 ## 必要なもの
 
-- [Bun](https://bun.sh/) 1.3.14（`package.json`で固定）
+- [Bun](https://bun.sh/) 1.4.2（`package.json`で固定）
 - Rust 1.92.0（`rust-toolchain.toml`で指定。rustfmt・Clippyを含む）
 - 対象 OS 用の Tauri 2 ビルド環境（macOSでは`xcode-select --install`でXcode Command Line Toolsを導入）
 - ローカル会話経路を使う場合は、プライベートネットワークから接続できるローカル LLM サーバー。`LARM_API_TOKEN`は、サーバーがLAN内の匿名接続を許可する場合は任意、Bearer認証を要求する場合は必須です。

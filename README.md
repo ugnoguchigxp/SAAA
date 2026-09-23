@@ -172,7 +172,7 @@ spec/                       Concepts, contracts, plans and evidence
 
 ## Requirements
 
-- [Bun](https://bun.sh/) 1.3.14, pinned in `package.json`
+- [Bun](https://bun.sh/) 1.4.2, pinned in `package.json`
 - Rust 1.92.0 with rustfmt and Clippy, selected by `rust-toolchain.toml`
 - The Tauri 2 build prerequisites for the target OS (on macOS, install Xcode Command Line Tools with `xcode-select --install`)
 - To use the local conversation route, a local LLM server reachable over the private network. `LARM_API_TOKEN` is optional when that server permits anonymous LAN access and required when it enforces Bearer authentication.

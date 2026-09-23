@@ -12,6 +12,19 @@ use super::attempt::*;
 pub(crate) use super::recall_dispatch::execute_recall_tool;
 pub(crate) use crate::generated_capabilities::tools::AgentToolOffer;
 
+pub(crate) const CONTINUE_WORK_TOOL_NAME: &str = "continue_work";
+
+fn continue_work_definition() -> Value {
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": CONTINUE_WORK_TOOL_NAME,
+            "description": "Give a meaningful interim update and continue this same request. Put the update in the assistant message content before calling this tool. Use only when more reasoning or tool work is needed; answer normally when done.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
+        }
+    })
+}
+
 pub(crate) fn available_agent_tools(
     output_persistence: Option<ProviderOutputPersistence<'_>>,
     input: &StartTurnInput,
@@ -37,7 +50,30 @@ pub(crate) fn available_agent_tools(
             .is_some_and(|persistence| persistence.state.context_still_recall.is_configured());
     let mut definitions =
         agent_tools::agent_tool_definitions(include_conversation, include_typed_memory, false);
+    if crate::runtime::butler_loop::continuation_enabled()
+        && output_persistence.is_some()
+        && calls_this_attempt < 24
+    {
+        definitions.push(continue_work_definition());
+    }
     definitions.extend(crate::records::tools::definitions());
+    if calls_this_attempt < 12
+        && crate::artifact_preview::webview_ops::is_active_for(&input.conversation_id)
+    {
+        if let Some(persistence) = output_persistence {
+            if let Ok(principal) =
+                crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer)
+            {
+                if let Ok(Some(definition)) = persistence.state.sqlite_readers.read(|connection| {
+                    crate::artifact_preview::webview_catalog::offered_definition(
+                        connection, &principal,
+                    )
+                }) {
+                    definitions.push(definition);
+                }
+            }
+        }
+    }
     if context_still_within_budget
         && output_persistence
             .is_some_and(|persistence| persistence.state.context_still_search.is_configured())
@@ -107,6 +143,9 @@ pub(crate) async fn execute_agent_tool(
     generated: &GeneratedToolSnapshot,
     run_cancellation: &RunCancellation,
 ) -> String {
+    if call.name == CONTINUE_WORK_TOOL_NAME {
+        return serde_json::json!({"continued": true}).to_string();
+    }
     // A `gc_` name is only ever executed from the snapshot that offered it; it never falls
     // through to recall or another tool.
     if call.name.starts_with(TOOL_PREFIX) {
@@ -142,6 +181,33 @@ pub(crate) async fn execute_agent_tool(
             run_cancellation,
         )
         .await;
+    }
+    if call.name == "artifact_webview" {
+        if !crate::artifact_preview::webview_ops::is_active_for(&input.conversation_id) {
+            return serde_json::json!({"ok": false, "reason": "webview-not-operable"}).to_string();
+        }
+        let arguments: Value = match serde_json::from_str(&call.arguments) {
+            Ok(value) => value,
+            Err(_) => {
+                return serde_json::json!({"ok": false, "reason": "invalid-input"}).to_string()
+            }
+        };
+        let operation = arguments
+            .get("operation")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let index = arguments
+            .get("index")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize);
+        let conversation_id = input.conversation_id.clone();
+        return tokio::task::spawn_blocking(move || {
+            crate::artifact_preview::webview_ops::execute(&operation, index, &conversation_id)
+        })
+        .await
+        .unwrap_or_else(|_| serde_json::json!({"ok": false, "reason": "webview-unavailable"}))
+        .to_string();
     }
     if crate::coding::contracts::NAMES.contains(&call.name.as_str()) {
         return crate::coding::tools::execute(output_persistence.map(|p| p.state), input, call);

@@ -169,14 +169,24 @@ pub(crate) enum ProviderAttemptError {
     Failed {
         kind: ProviderFailureKind,
         output_started: bool,
+        detail: Option<&'static str>,
     },
 }
 
 impl ProviderAttemptError {
     pub(crate) fn failed(kind: ProviderFailureKind, output_started: bool) -> Self {
+        Self::failed_with_detail(kind, output_started, None)
+    }
+
+    pub(crate) fn failed_with_detail(
+        kind: ProviderFailureKind,
+        output_started: bool,
+        detail: Option<&'static str>,
+    ) -> Self {
         Self::Failed {
             kind,
             output_started,
+            detail,
         }
     }
 }
@@ -231,6 +241,31 @@ impl ProviderOutputPersistence<'_> {
                 envelope_payload,
                 current_instruction_count,
             },
+        )
+        .map_err(|_| ProviderFailureKind::Internal)
+    }
+
+    pub(crate) fn begin_context_generation_for_input(
+        self,
+        run_id: &str,
+        purpose: &str,
+        request_payload: &[u8],
+        envelope_payload: &[u8],
+        current_instruction_count: usize,
+        message_id: &str,
+    ) -> Result<crate::runtime::context::generation::GenerationHandle, ProviderFailureKind> {
+        crate::runtime::context::generation::begin_with_current_instruction(
+            self.state,
+            crate::runtime::context::generation::BeginGeneration {
+                run_id,
+                provider_session_id: Some(self.session_id),
+                provider_id: None,
+                purpose,
+                request_payload,
+                envelope_payload,
+                current_instruction_count,
+            },
+            message_id,
         )
         .map_err(|_| ProviderFailureKind::Internal)
     }

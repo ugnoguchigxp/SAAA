@@ -101,6 +101,8 @@ export function recordRuntimeLifecycleAudit(event: RuntimeEvent, conversationId:
       });
       break;
     case "delta":
+    case "messageCommitted":
+    case "runInputAccepted":
       break;
   }
 }

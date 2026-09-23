@@ -3,6 +3,7 @@
 
 #![allow(private_interfaces)]
 
+pub mod artifact_webview;
 pub mod llang;
 pub mod mcp;
 pub mod router;

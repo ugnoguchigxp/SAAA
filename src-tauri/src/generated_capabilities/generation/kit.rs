@@ -354,7 +354,7 @@ mod tests {
             "formatVersion": 1,
             "entrypoint": "llang-cli.js",
             "commands": { "package": "package", "inspect": "inspect" },
-            "bunVersion": "1.3.14",
+            "bunVersion": "1.4.2",
             "llangVersion": "abc",
             "llangDirty": false,
             "files": files,

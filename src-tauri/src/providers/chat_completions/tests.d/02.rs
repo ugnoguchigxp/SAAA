@@ -69,7 +69,10 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
     .await
     .unwrap();
     assert_eq!(result, "表示しました。");
-    assert_eq!(sink.0.lock().unwrap().join(""), "表示を準備します。表示しました。");
+    assert_eq!(
+        sink.0.lock().unwrap().join(""),
+        "表示を準備します。表示しました。"
+    );
     let requests = server.await.unwrap();
     assert!(requests[0]["tools"]
         .as_array()
@@ -97,11 +100,182 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
                 None,
                 30,
             )?;
-            assert_eq!(page.messages.len(), 2);
+            assert_eq!(page.messages.len(), 3);
             assert!(page.messages.iter().any(|message| message.parts.is_some()));
+            assert!(page.messages.iter().any(|message| {
+                message.role == "assistant" && message.content == "表示を準備します。"
+            }));
+            let kinds = c
+                .prepare(
+                    "SELECT kind FROM conversation_events WHERE conversation_id=?1 ORDER BY seq",
+                )
+                .map_err(crate::database_error)?
+                .query_map([crate::PRIMARY_CONVERSATION_ID], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(crate::database_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(crate::database_error)?;
+            assert_eq!(
+                kinds,
+                vec!["message_committed", "tool_dispatched", "tool_result"]
+            );
             Ok(())
         })
         .unwrap();
+}
+
+#[tokio::test]
+async fn user_input_arriving_during_a_final_answer_gets_another_model_round() {
+    let (state, session) = usage_state().await;
+    let answer = |text| {
+        format!(
+            "{}{}data: [DONE]\r\n\r\n",
+            chunk(json!({"content": text}), Value::Null),
+            chunk(json!({}), json!("stop"))
+        )
+    };
+    let (endpoint, server) = fixture(vec![
+        (200, answer("最初の回答"), 1),
+        (200, answer("変更後の回答"), 0),
+    ])
+    .await;
+    let mut input = input();
+    input.conversation_id = crate::PRIMARY_CONVERSATION_ID.into();
+    let history = [ConversationMessage {
+        parts: None,
+        id: "http-source".into(),
+        conversation_id: input.conversation_id.clone(),
+        role: "user".into(),
+        content: input.content.clone(),
+        created_at: "1".into(),
+    }];
+    let sink = Sink::default();
+    let inject = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        state
+            .sqlite_writer
+            .write(|connection| {
+                let tx = connection.transaction().map_err(crate::database_error)?;
+                crate::runtime::butler_loop::commit_visible_message(
+                    &tx,
+                    &input.conversation_id,
+                    "late-user",
+                    "user",
+                    "対象を変更して",
+                    "2",
+                    None,
+                    "user_message",
+                )
+                .map_err(crate::database_error)?;
+                crate::runtime::butler_loop::accept_run_input(
+                    &tx,
+                    &input.conversation_id,
+                    &input.run_id,
+                    "late-user",
+                )
+                .map_err(crate::database_error)?;
+                tx.commit().map_err(crate::database_error)
+            })
+            .unwrap();
+    };
+    let (result, ()) = tokio::join!(
+        run(
+            &endpoint,
+            None,
+            "fixture",
+            &history,
+            10_000,
+            usage_context(&state, &session, &input, &sink),
+        ),
+        inject
+    );
+    assert_eq!(result.unwrap(), "変更後の回答");
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["role"] == "user" && message["content"] == "対象を変更して"));
+    state.sqlite_readers.read(|connection| {
+        let intermediate: String = connection.query_row(
+            "SELECT content FROM conversation_messages WHERE role='assistant' ORDER BY rowid DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).map_err(crate::database_error)?;
+        assert_eq!(intermediate, "最初の回答");
+        Ok(())
+    }).unwrap();
+}
+
+#[tokio::test]
+async fn model_can_report_intermediate_progress_and_continue_without_an_external_tool() {
+    let (state, session) = usage_state().await;
+    let first = format!(
+        "{}{}data: [DONE]\r\n\r\n",
+        chunk(
+            json!({"content":"確認できた範囲を共有します。","tool_calls":[{"index":0,"id":"progress-1","type":"function","function":{"name":"continue_work","arguments":"{}"}}]}),
+            Value::Null
+        ),
+        chunk(json!({}), json!("tool_calls"))
+    );
+    let second = format!(
+        "{}{}data: [DONE]\r\n\r\n",
+        chunk(json!({"content":"最終結果です。"}), Value::Null),
+        chunk(json!({}), json!("stop"))
+    );
+    let (endpoint, server) = fixture(vec![(200, first, 0), (200, second, 0)]).await;
+    let mut input = input();
+    input.conversation_id = crate::PRIMARY_CONVERSATION_ID.into();
+    let history = [ConversationMessage {
+        parts: None,
+        id: "http-source".into(),
+        conversation_id: input.conversation_id.clone(),
+        role: "user".into(),
+        content: input.content.clone(),
+        created_at: "1".into(),
+    }];
+    let sink = Sink::default();
+    let result = run(
+        &endpoint,
+        None,
+        "fixture",
+        &history,
+        10_000,
+        usage_context(&state, &session, &input, &sink),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, "最終結果です。");
+    let requests = server.await.unwrap();
+    assert!(requests[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["function"]["name"] == "continue_work"));
+    assert!(requests[1]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| {
+            message["role"] == "tool"
+                && message["tool_call_id"] == "progress-1"
+                && message["content"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("continued")
+        }));
+    let progress: String = state.sqlite_readers.read(|connection| {
+        connection
+            .query_row(
+                "SELECT content FROM conversation_messages WHERE conversation_id=?1 AND role='assistant' ORDER BY rowid DESC LIMIT 1",
+                [crate::PRIMARY_CONVERSATION_ID],
+                |row| row.get(0),
+            )
+            .map_err(crate::database_error)
+    }).unwrap();
+    assert_eq!(progress, "確認できた範囲を共有します。");
 }
 #[tokio::test]
 async fn accepts_server_resolved_model_alias_without_fabricating_a_mapping() {
@@ -238,17 +412,18 @@ async fn cw_13_usage_missing_on_disconnect() {
     )
     .await
     .unwrap_err();
-    assert!(format!("{error:?}").to_lowercase().contains("interrupt") || format!("{error:?}").contains("Response"));
+    assert!(
+        format!("{error:?}").to_lowercase().contains("interrupt")
+            || format!("{error:?}").contains("Response")
+    );
     let _ = server.await;
     state
         .sqlite_readers
         .read(|connection| {
             let source: String = connection
-                .query_row(
-                    "SELECT usage_source FROM generation_usage",
-                    [],
-                    |row| row.get(0),
-                )
+                .query_row("SELECT usage_source FROM generation_usage", [], |row| {
+                    row.get(0)
+                })
                 .map_err(|error| error.to_string())?;
             assert_eq!(source, "disconnected");
             Ok(())

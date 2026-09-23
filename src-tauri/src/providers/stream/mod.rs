@@ -12,6 +12,7 @@ mod dispatch;
 mod dynamic_lan;
 mod larm_voice;
 mod recall_dispatch;
+pub(crate) use agent_dispatch::CONTINUE_WORK_TOOL_NAME;
 pub(crate) use attempt::*;
 pub(crate) use dispatch::*;
 pub(crate) use dynamic_lan::*;
@@ -77,9 +78,12 @@ fn provider_attempt_outcome(
         Err(ProviderAttemptError::Failed {
             kind,
             output_started,
+            detail,
         }) => ProviderAttemptOutcome::Failed {
             kind,
-            public_message: kind.public_message(),
+            public_message: detail
+                .map(BoundedProviderMessage::from_static_diagnostic)
+                .unwrap_or_else(|| kind.public_message()),
             output_started,
             cleanup,
         },

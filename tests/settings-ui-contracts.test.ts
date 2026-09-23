@@ -8,7 +8,7 @@ const connections = () =>
 describe("settings provider UI contracts", () => {
   test("lets users select the conversation reasoning effort", () => {
     const settings = connections();
-    const english = source("src/i18n/locales/en.ts");
+    const english = source("src/i18n/locales/enSettings.ts");
     expect(containsSource(settings, 'Field label={t("settings.connection.reasoningEffort")}')).toBe(
       true,
     );
@@ -21,7 +21,7 @@ describe("settings provider UI contracts", () => {
 
   test("lets users configure the LLM timeout in seconds", () => {
     const settings = connections();
-    const japanese = source("src/i18n/locales/ja.ts");
+    const japanese = source("src/i18n/locales/jaSettings.ts");
     expect(containsSource(settings, "<ConversationTimeoutField")).toBe(true);
     expect(containsSource(settings, "conversationTimeoutMsFromSecondsInput(next)")).toBe(true);
     expect(containsSource(settings, "aria-invalid={fieldInvalid}")).toBe(true);
@@ -33,7 +33,7 @@ describe("settings provider UI contracts", () => {
 
   test("configures Agent Connection and limits LAN discovery to compatible addresses", () => {
     const settings = connections();
-    const japanese = source("src/i18n/locales/ja.ts");
+    const japanese = source("src/i18n/locales/jaSettings.ts");
     const runtime = [
       source("src/lib/providerRuntime.ts"),
       source("src/lib/localProviderAddress.ts"),
@@ -42,6 +42,8 @@ describe("settings provider UI contracts", () => {
       source("src-tauri/src/providers/dynamic_lan/mod.rs"),
       source("src-tauri/src/providers/dynamic_lan/http.rs"),
       source("src-tauri/src/providers/dynamic_lan/credential.rs"),
+      source("src-tauri/src/providers/dynamic_lan/probe.rs"),
+      source("src-tauri/src/providers/dynamic_lan/mod.d/02.rs"),
       source("src-tauri/src/providers/dynamic_lan/urls.rs"),
       source("src-tauri/src/providers/dynamic_lan/validate.rs"),
     ].join("\n");

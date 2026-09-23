@@ -76,6 +76,7 @@ pub(crate) fn prepare_runtime_run(
             crate::larm_voice::frontdesk_repository::claim_reasoning_request(&transaction, input)?
         } else { None };
         let new_message = input.retry_input_message_id.is_none() && reasoning_request_message.is_none();
+        let mut transferred_input_id: Option<String> = None;
         let input_message_id = if let Some(message_id) = reasoning_request_message {
             message_id
         } else if let Some(message_id) = input.retry_input_message_id.as_deref() {
@@ -96,7 +97,25 @@ pub(crate) fn prepare_runtime_run(
                 )
                 .map_err(database_error)?;
             if !retryable {
-                return Err("Only a failed conversation response can be retried".to_string());
+                let transferable: bool = transaction
+                    .query_row(
+                        "SELECT EXISTS(
+                           SELECT 1 FROM conversation_run_inputs i
+                           JOIN runtime_runs prior ON prior.id=i.run_id
+                           JOIN conversation_messages m ON m.id=i.message_id
+                           WHERE i.message_id=?1 AND i.conversation_id=?2
+                             AND i.state IN ('pending','transferred')
+                             AND prior.status IN ('completed','failed','cancelled','interrupted')
+                             AND m.role='user' AND m.content=?3
+                         )",
+                        params![message_id, input.conversation_id, input.content.trim()],
+                        |row| row.get(0),
+                    )
+                    .map_err(database_error)?;
+                if task_mode != "conversation" || !transferable {
+                    return Err("Only a failed response or an unhandled follow-up can be resumed".to_string());
+                }
+                transferred_input_id = Some(message_id.to_string());
             }
             message_id.to_string()
         } else {
@@ -108,6 +127,18 @@ pub(crate) fn prepare_runtime_run(
                     params![message_id, input.conversation_id, input.content.trim(), now],
                 )
                 .map_err(database_error)?;
+            if task_mode == "conversation" {
+                crate::runtime::butler_loop::append_event(
+                    &transaction,
+                    &input.conversation_id,
+                    Some(&input.run_id),
+                    "user_message",
+                    Some(&message_id),
+                    None,
+                    &now,
+                )
+                .map_err(database_error)?;
+            }
             message_id
         };
         if task_mode == "conversation" && new_message {
@@ -184,6 +215,29 @@ pub(crate) fn prepare_runtime_run(
                 ],
             )
             .map_err(database_error)?;
+        if let Some(message_id) = transferred_input_id.as_deref() {
+            let claimed = transaction
+                .execute(
+                    "UPDATE conversation_run_inputs SET state='consumed'
+                     WHERE message_id=?1 AND conversation_id=?2
+                       AND state IN ('pending','transferred')",
+                    params![message_id, input.conversation_id],
+                )
+                .map_err(database_error)?;
+            if claimed != 1 {
+                return Err("Follow-up input was already claimed".into());
+            }
+        }
+        if task_mode == "conversation" {
+            crate::runtime::butler_loop::begin_work(
+                &transaction,
+                &input.conversation_id,
+                &input.run_id,
+                input.content.trim(),
+                transferred_input_id.as_deref(),
+            )
+            .map_err(database_error)?;
+        }
         crate::runtime::context::scope::resolve(
             &transaction,
             input,

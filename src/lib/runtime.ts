@@ -28,6 +28,32 @@ export {
   stopVoiceAsrSession,
 } from "./voiceAsrRuntime";
 
+export async function appendRunningInput(input: {
+  conversationId: string;
+  runId: string;
+  content: string;
+}): Promise<{ messageId: string; transferred: boolean }> {
+  return invoke("append_running_input", { input });
+}
+
+export async function acknowledgeConversationMessage(
+  conversationId: string,
+  runId: string,
+  messageId: string,
+): Promise<void> {
+  return invoke<void>("acknowledge_conversation_message", { conversationId, runId, messageId });
+}
+
+export async function firstUnconsumedConversationInput(
+  conversationId: string,
+): Promise<{ messageId: string; content: string; priorStatus: string } | null> {
+  return invoke("first_unconsumed_conversation_input", { conversationId });
+}
+
+export async function conversationEventHead(conversationId: string): Promise<number> {
+  return invoke<number>("conversation_event_head", { conversationId });
+}
+
 export async function startTurn(
   input: {
     runId: string;
@@ -178,6 +204,28 @@ export async function listMessages(
       input: { conversationId, cursor },
     },
   );
+}
+
+export async function prepareComposerImage(png: Uint8Array): Promise<{
+  id: string;
+  width: number;
+  height: number;
+  byteLength: number;
+  preview: number[];
+}> {
+  return invoke("prepare_composer_image", png);
+}
+
+export async function discardComposerImage(imageId: string): Promise<void> {
+  return invoke("discard_composer_image", { imageId });
+}
+
+export async function claimTurnImage(imageId: string, runId: string): Promise<void> {
+  return invoke("claim_turn_image", { imageId, runId });
+}
+
+export async function releaseTurnImage(runId: string): Promise<void> {
+  return invoke("release_turn_image", { runId });
 }
 
 export async function reportOwnedSignal(input: {

@@ -337,19 +337,18 @@ pub(super) async fn openai_provider_executes_the_single_recall_tool_before_final
     let captures = captures.lock().expect("capture lock");
     assert_eq!(captures.len(), 2);
     let first: Value = serde_json::from_str(&captures[0]).expect("run.start JSON");
-    assert_eq!(first["tools"].as_array().expect("tools array").len(), 4);
+    let offered = first["tools"].as_array().expect("tools array");
+    assert!(offered.len() >= 4);
     assert_eq!(
         first
             .pointer("/tools/0/function/name")
             .and_then(Value::as_str),
         Some("recall_conversation")
     );
-    assert_eq!(
-        first
-            .pointer("/tools/3/function/name")
-            .and_then(Value::as_str),
-        Some("update_conversation_voice_behavior")
-    );
+    assert!(offered.iter().any(|tool| {
+        tool.pointer("/function/name").and_then(Value::as_str)
+            == Some("update_conversation_voice_behavior")
+    }));
     let continuation: Value = serde_json::from_str(&captures[1]).expect("continuation JSON");
     let tool_result = continuation["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(tool_result["role"], "tool");

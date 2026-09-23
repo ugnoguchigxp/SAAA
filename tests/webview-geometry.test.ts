@@ -36,6 +36,15 @@ describe("webview geometry", () => {
         { viewportWidth: 800, viewportHeight: 600, hidden: true },
       ).visible,
     ).toBe(false);
+    const clipped = logicalRectFromDom(
+      { x: 0, y: 0, width: 400, height: 800 },
+      {
+        viewportWidth: 1200,
+        viewportHeight: 800,
+        clip: { x: 100, y: 80, width: 200, height: 300 },
+      },
+    );
+    expect(clipped).toEqual({ x: 100, y: 80, width: 200, height: 300, visible: true });
   });
 
   test("treats older resize generations as stale", () => {

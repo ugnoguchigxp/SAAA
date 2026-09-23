@@ -36,6 +36,17 @@ impl Drop for UiQueue {
 
 pub(crate) trait RuntimeEventSender: Send + Sync {
     fn send(&self, event: RuntimeEvent) -> tauri::Result<()>;
+    fn wait_message_presented<'a>(
+        &'a self,
+        _state: &'a crate::AppState,
+        _message_id: &'a str,
+        _cancellation: Arc<crate::RunCancellation>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async {})
+    }
+    fn allows_intermediate_messages(&self) -> bool {
+        true
+    }
     fn send_received(&self, event: RuntimeEvent, _received_at: Instant) -> tauri::Result<()> {
         self.send(event)
     }
@@ -86,6 +97,35 @@ pub(crate) struct TurnEventHub {
 }
 
 impl TurnEventHub {
+    pub(super) async fn wait_presented(
+        &self,
+        state: &crate::AppState,
+        message_id: &str,
+        cancellation: Arc<crate::RunCancellation>,
+    ) {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(750);
+        loop {
+            if cancellation.is_cancelled() || self.ui_queue.failed.load(Ordering::Acquire) {
+                break;
+            }
+            let presented = state.sqlite_writer.read_serialized(|connection| {
+                crate::runtime::butler_loop::message_was_presented(connection, message_id)
+                    .map_err(crate::database_error)
+            });
+            if matches!(presented, Ok(true)) {
+                return;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(16)).await;
+        }
+        let _ = state.sqlite_writer.write(|connection| {
+            crate::runtime::butler_loop::mark_presentation_unconfirmed(connection, message_id)
+                .map_err(crate::database_error)
+        });
+    }
+
     pub(crate) fn new(
         ui: tauri::ipc::Channel<RuntimeEvent>,
         speech: StreamingSpeechRuntime,

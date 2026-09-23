@@ -9,7 +9,7 @@ LLANG_ROOT=<L-Lang checkout> bun src-tauri/tests/fixtures/llang-capability-v2/to
 ```
 
 - L-Lang: `7fb1a7bb639b18d29055fe032b7ffc5dc6f5ee15` (dirty: true)
-- Bun: `1.3.14`
+- Bun: `1.4.2`
 - candidate-a packageHash: `bd4696ec301a6559f4a494d3bbfbd1e7dba57275e246af62256feb997d791a00`
 - candidate-b packageHash: `cbefe84aac5053ae0373cd62febdc409d5b31e68922e381b6ae8714b172506af`
 - requestRevision: `b24390d8696820b9b3c11ca8a1742f45233556fa26786d506df0acecdd901316`

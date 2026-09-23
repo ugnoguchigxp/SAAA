@@ -90,11 +90,11 @@ async fn json_completion_executes_offered_tools_and_returns_their_result() {
         .read(|connection| {
             let mut statement = connection
                 .prepare(
-                    "SELECT event_name,json_extract(attributes_json,'$.toolName'),
+                    "SELECT phase,json_extract(attributes_json,'$.toolName'),
                             json_extract(attributes_json,'$.durationMs')
                      FROM audit_events
                      WHERE runtime_run_id='http_fixture'
-                       AND event_name IN ('tool-execution-started','tool-execution-finished')
+                       AND event_name='tool-execution'
                      ORDER BY sequence",
                 )
                 .map_err(crate::database_error)?;
@@ -113,9 +113,9 @@ async fn json_completion_executes_offered_tools_and_returns_their_result() {
         })
         .unwrap();
     assert_eq!(tool_audit.len(), 2);
-    assert_eq!(tool_audit[0].0, "tool-execution-started");
+    assert_eq!(tool_audit[0].0, "start");
     assert_eq!(tool_audit[0].1, "coding_inspect");
-    assert_eq!(tool_audit[1].0, "tool-execution-finished");
+    assert_eq!(tool_audit[1].0, "terminal");
     assert_eq!(tool_audit[1].1, "coding_inspect");
     assert!(tool_audit[1].2.is_some());
 }

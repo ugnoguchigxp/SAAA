@@ -89,7 +89,12 @@ pub fn register_revision(
     revision_id: &str,
     created_at: i64,
 ) -> ToolSelectionResult<()> {
-    let source_kind = "llang";
+    let source_kind =
+        if entry.backend_binding.get("kind").and_then(Value::as_str) == Some("artifact_webview") {
+            "artifact_webview"
+        } else {
+            "llang"
+        };
     repository::upsert_source(connection, source_id, source_kind, principal_id, true)
         .map_err(|_| ToolSelectionError::storage())?;
     repository::upsert_tool(

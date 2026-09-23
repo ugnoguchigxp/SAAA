@@ -33,11 +33,11 @@
       }
     },
     "initial-response": {
-      "acceptedAt": "2026-09-23T10:51:24.726Z",
-      "reason": "検索前の確認文を最終回答に重ねず、短い事実回答と保存済み出典表示を徹底。quality:check 成功、ツール往復回帰テスト成功、デスクトップsmokeを受理後に実行",
+      "acceptedAt": "2026-09-23T15:40:17.932Z",
+      "reason": "Refresh Chat Completions regression expectations for committed tool audit phases and interrupted partial output; quality check passed, desktop smoke was blocked by the stale freeze baseline",
       "files": {
         "src-tauri/src/persistence/app_commands.rs": "0e93155944cafd837e0eecffc129b327e74093e0876b63db00b305c6c946bdfd",
-        "src-tauri/src/persistence/schema.rs": "9f5ac28257ef0b5fa08c39b819c6809228461c38bf24b3d6f44080bca8d99ebb",
+        "src-tauri/src/persistence/schema.rs": "591633043388875e2ed97008ce1c4a243b93aa22272f4a4d558f6d0a6e3e2a6b",
         "src-tauri/src/persistence/settings.d/02.rs": "d74611a07cd42077a3aeecab215959b84a58bf1a0be410ff579ab14129a6d4f1",
         "src-tauri/src/providers/agent_session/creation.rs": "dde7b29fc4b5284f1bff49b7820cea77392d5074c9b374963e6e7e3b7de03d82",
         "src-tauri/src/providers/agent_session/sse.d/01.rs": "bdcbcbf1e4a422426f6c988596a3f71b17e33516725e44cb9fed576897f302a4",
@@ -59,16 +59,16 @@
         "src-tauri/src/providers/chat_completions/coding_tests.rs": "044ca63da27af28ae3e74c26989562e6cd3fc36b5a5c44c31d00ae3c0aedbfda",
         "src-tauri/src/providers/chat_completions/generated_tools_flags_tests.rs": "b8907bbf8b11e68a46122f92b9e75172646fbc097db0541182ee0ac958f49eaa",
         "src-tauri/src/providers/chat_completions/generated_tools_tests.rs": "d6ae66c85fe21c19e3cbb1c4bc336f943efbac28af4f999f2e0929c45122442c",
-        "src-tauri/src/providers/chat_completions/generation.rs": "591f9a1176b9dca27d42a524bf7f5f702d0881364daf9cface0369fcd5dfccde",
-        "src-tauri/src/providers/chat_completions/json_tool_tests.rs": "3c38a41fdaa286ed848ac2808aa3f2fb219386a1e14ec10097dc53cee14991b0",
-        "src-tauri/src/providers/chat_completions/mod.rs": "bb70228eab93352610f9d0ba277ffa01604f6132c35c93ad7b46a71efed18b95",
+        "src-tauri/src/providers/chat_completions/generation.rs": "a240f31744f5ec15efd79f6312946e64d8f47b845fcbaa26bb4beec07ec48bf0",
+        "src-tauri/src/providers/chat_completions/json_tool_tests.rs": "dbe417fb4059104ce9142ea1dfa2af35d4f91e35b536b64209a3edaef6867f21",
+        "src-tauri/src/providers/chat_completions/mod.rs": "d88d398c70dc2956e45775e522a35d503fb1e7d3abf82c02cee97e0822268a66",
         "src-tauri/src/providers/chat_completions/response_helpers.rs": "90b9283fe42a78196a0c7a60bf3355372c681399e73f8a05f75aa7ee8d8488b1",
         "src-tauri/src/providers/chat_completions/sse.rs": "dcbc0d07cda04bb5873f7f1c39e05f0d8dfb34f6d2591b2912331ea460106ca2",
         "src-tauri/src/providers/chat_completions/test_helpers.rs": "cca64e78b04423c79e65b7cf54840b7e38c34def3676333ae5b0e75d00f2b154",
-        "src-tauri/src/providers/chat_completions/tests.d/01.rs": "4babb35485a1afc408c2c8bce71da5b93e946b65b27c2daa2d77e8e011c532f9",
-        "src-tauri/src/providers/chat_completions/tests.d/02.rs": "e364dc5ed7f8dd7a080ddf537b136ae4b753b2b27a319ee2a8f5f6256b4c276a",
+        "src-tauri/src/providers/chat_completions/tests.d/01.rs": "3e18d15f3910931c8e9e73ba09d2c8b6b32d0c68ebddfa3aee2e3044d12b8d48",
+        "src-tauri/src/providers/chat_completions/tests.d/02.rs": "794c1c78e60461a720bcc69cba0a296f83216847bb0afdaf873edff22bf73ae6",
         "src-tauri/src/providers/chat_completions/tests.rs": "817561df6163d303801dce55b4dd80df4f1f8e3d142f70b51853c81b63bb6abc",
-        "src-tauri/src/providers/chat_completions/voice_progress.rs": "fbac1b87549b861677f971626e35ce825809024997f28bc3faf2722085bddf61",
+        "src-tauri/src/providers/chat_completions/voice_progress.rs": "412ebaeb36ce60416d8f69aa7a00391bff72bf38d7a8b7cb624c4dc3ef7c0cb3",
         "src-tauri/src/providers/chat_completions/world_body.rs": "38e712005642a646d1b69a61654b8873e0f2abdeab59c0685cc3bb2877de4b66",
         "src-tauri/src/providers/chat_completions/world_claim_tests.rs": "6610ddc7493b21aef0f70239f1cb13817255c2191c05da520dbb0ad4125fe2ea",
         "src-tauri/src/providers/chat_completions/world_eval_fixture.rs": "7c21d44d419df38d5071b131c2b48ee66dfde3a107e608d2794cbb1006da9525",
@@ -101,7 +101,7 @@
         "src-tauri/src/runtime/conversation_provider_route.rs": "82f2d7eef01f7363d479be8d745940f6de4cd28f20d6dc4a31dbcb9f96d5d065",
         "src-tauri/src/runtime/conversation_turn.rs": "7168e56d5c7c6336e91893f469dfa01f89114b0867558ded2d979b28685a45c0",
         "src/App.tsx": "441d23cb068c9df69b27068b4e7162061fa18539880db8839003e1d6bc67ec9a",
-        "src/lib/ipcValidation.ts": "ee4b9e35fa29050107b5bc4336ed63ed4f264540505b56d601b99834c4c61a80"
+        "src/lib/ipcValidation.ts": "5d0fb7595ec2e9925a8fd3e9008bf4c219090b5d19f32f9b21478cde4d1c6ee1"
       }
     }
   }

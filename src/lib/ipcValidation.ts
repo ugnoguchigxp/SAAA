@@ -134,6 +134,8 @@ export const runtimeEventSchema = z.discriminatedUnion("type", [
     }),
     voicePolicy: policy.nullable(),
   }),
+  z.object({ type: z.literal("messageCommitted"), runId: id, message }),
+  z.object({ type: z.literal("runInputAccepted"), runId: id, messageId: id }),
   z.object({ type: z.literal("speechStarted"), runId: id }),
   z.object({ type: z.literal("speechEnded"), runId: id }),
   z.object({ type: z.literal("speechFailed"), runId: id, message: text, recovery: text }),

@@ -1,14 +1,12 @@
 //! Explicit operator-only enablement through the same validation and snapshot path as Settings.
 pub fn enable(database: &str) -> Result<String, String> {
-    let mut connection = rusqlite::Connection::open_with_flags(
-        database,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
-    )
-    .map_err(crate::database_error)?;
-    connection
-        .busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(crate::database_error)?;
-    let mut documents = crate::persistence::list_settings_documents(&connection)?
+    let path = std::path::Path::new(database);
+    if !path.is_file() {
+        return Err("Operator database does not exist".into());
+    }
+    let writer = crate::persistence::SqliteWriter::open(path).map_err(|error| error.to_string())?;
+    writer.write(|connection| {
+    let mut documents = crate::persistence::list_settings_documents(connection)?
         .into_iter()
         .map(|d| crate::SaveSettingsDocumentInput {
             namespace: d.namespace,
@@ -17,7 +15,7 @@ pub fn enable(database: &str) -> Result<String, String> {
             value_json: d.value_json,
         })
         .collect::<Vec<_>>();
-    let providers = crate::persistence::load_model_providers(&connection)?.providers;
+    let providers = crate::persistence::load_model_providers(connection)?.providers;
     let frontend_provider = providers
         .iter()
         .find(|provider| provider.id() == crate::DYNAMIC_LAN_PROVIDER_ID && provider.enabled())
@@ -61,8 +59,8 @@ pub fn enable(database: &str) -> Result<String, String> {
     // false configuration failure while preserving a finite, operator-visible deadline.
     value["limits"]["frontendTimeoutMs"] = serde_json::json!(8_000);
     value["enabled"] = serde_json::json!(true);
-    crate::persistence::save_settings_documents_to_connection(&mut connection, &documents)?;
-    let policy = crate::persistence::load_role_routing_settings(&connection)?;
+    crate::persistence::save_settings_documents_to_connection(connection, &documents)?;
+    let policy = crate::persistence::load_role_routing_settings(connection)?;
     Ok(format!(
         "enabled={}; actors={}; reasoner={}; frontend={}",
         policy.enabled,
@@ -70,4 +68,20 @@ pub fn enable(database: &str) -> Result<String, String> {
         policy.roles.reasoner.as_deref().unwrap_or("unconfigured"),
         policy.roles.frontend.as_deref().unwrap_or("unconfigured")
     ))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn operator_enable_does_not_create_a_database() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("operator.sqlite3");
+        let target = path.to_str().unwrap();
+        assert_eq!(
+            super::enable(target).unwrap_err(),
+            "Operator database does not exist"
+        );
+        assert!(!path.exists());
+    }
 }

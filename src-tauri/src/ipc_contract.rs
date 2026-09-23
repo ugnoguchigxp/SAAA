@@ -86,6 +86,16 @@ pub(crate) enum RuntimeEvent {
         presentation: VoicePresentationDecision,
         voice_policy: Option<Box<ConversationVoicePolicySnapshot>>,
     },
+    /// A visible assistant message committed before the run's final answer.
+    MessageCommitted {
+        run_id: String,
+        message: ConversationMessage,
+    },
+    /// A user message accepted into an already running turn.
+    RunInputAccepted {
+        run_id: String,
+        message_id: String,
+    },
     SpeechStarted {
         run_id: String,
     },

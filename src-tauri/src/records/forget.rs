@@ -86,7 +86,7 @@ pub(crate) fn forget_by_conversation_messages(
             let mapped = statement
                 .query_map(params![id], |row| row.get::<_, String>(0))
                 .map_err(|error| error.to_string())?;
-            
+
             mapped
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|error| error.to_string())?

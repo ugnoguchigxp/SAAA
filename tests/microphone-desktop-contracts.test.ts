@@ -157,7 +157,8 @@ describe("macOS microphone bundle configuration", () => {
     expect(containsSource(app, 'voiceState === "preparing"')).toBe(true);
     expect(containsSource(app, "disabled={meetingActive}")).toBe(false);
     expect(containsSource(app, "aria-pressed={listeningEnabled}")).toBe(true);
-    expect(containsSource(app, "disabled={!composer.trim() || !selectedConversation}")).toBe(true);
+    expect(containsSource(app, '(!composer.trim() && imagePhase !== "ready")')).toBe(true);
+    expect(containsSource(app, "!selectedConversation")).toBe(true);
   });
 
   test("requests first-use permission from the user action and persists pause/resume immediately", () => {

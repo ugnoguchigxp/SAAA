@@ -94,7 +94,7 @@ pub fn backfill_rule_source_bindings(connection: &Connection) -> rusqlite::Resul
     )
 }
 
-/// Widens `tool_selection_sources.kind` to accept `mcp_http`. `CREATE TABLE IF NOT EXISTS`
+/// Widens `tool_selection_sources.kind` to accept the current local and remote backends. `CREATE TABLE IF NOT EXISTS`
 /// cannot change an existing CHECK constraint, so a database created before version 24 is
 /// rebuilt. The rebuild swaps a parent table referenced by the catalog, which is only legal with
 /// foreign keys disabled; the caller therefore invokes this before the main schema transaction
@@ -125,14 +125,14 @@ fn migrate_sources_kind_inner(connection: &Connection) -> rusqlite::Result<()> {
     let Some(sql) = sql else {
         return Ok(());
     };
-    if sql.contains("mcp_http") {
+    if sql.contains("artifact_webview") {
         return Ok(());
     }
     let transaction = connection.unchecked_transaction()?;
     transaction.execute_batch(
         "CREATE TABLE tool_selection_sources_new (
            id TEXT PRIMARY KEY,
-           kind TEXT NOT NULL CHECK(kind IN ('llang', 'mcp_http')),
+           kind TEXT NOT NULL CHECK(kind IN ('llang', 'mcp_http', 'artifact_webview')),
            owner_principal TEXT NOT NULL CHECK(length(owner_principal) BETWEEN 1 AND 160),
            enabled INTEGER NOT NULL CHECK(enabled IN (0, 1))
          );

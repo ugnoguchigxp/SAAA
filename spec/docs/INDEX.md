@@ -38,6 +38,7 @@
 
 | ファイル名 | 分類 | 一行要約 | 最終更新日 | 備考 |
 | --- | --- | --- | --- | --- |
+| `butler-conversation-runtime-implementation-plan.md` | 進行中 | 複数発言・実行中入力・柔軟なツール利用を持つ会話ランタイム改修計画 | 2026-09-23 | 実装前の計画 |
 | `project-health-improvement-plan.md` | 進行中 | リポジトリ健全性改善の現行タスク計画 | 2026-09-23 | アクティブな計画のため未移動（タスク6対象外） |
 | `personal-state-architecture-roadmap.md` | 進行中 | Personal State 全体ロードマップ | 2026-09-17 | 実装中・実機受入待ちの記載あり |
 | `personal-state-phase-1-plan.md` | 進行中 | Personal State P1 接続計画 | 2026-09-16 | 基盤はあるが P1 完了判定は未確定 |

@@ -1,5 +1,6 @@
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { Webview } from "@tauri-apps/api/webview";
+import { invoke } from "@tauri-apps/api/core";
 
 export type PreviewWebviewHandle = {
   label: string;
@@ -8,6 +9,7 @@ export type PreviewWebviewHandle = {
   show: () => Promise<void>;
   hide: () => Promise<void>;
   close: () => Promise<void>;
+  scroll: () => Promise<void>;
 };
 
 export async function closePreviewWebview(label: string): Promise<void> {
@@ -32,5 +34,16 @@ export async function attachPreviewWebview(label: string): Promise<PreviewWebvie
     show: () => webview.show(),
     hide: () => webview.hide(),
     close: () => webview.close(),
+    scroll: () => invoke<void>("scroll_source_website", { label }),
   };
+}
+
+let activeSource: PreviewWebviewHandle | null = null;
+
+export function setActiveSourceWebview(handle: PreviewWebviewHandle | null) {
+  activeSource = handle;
+}
+
+export function scrollActiveSourceWebview() {
+  return activeSource?.scroll() ?? Promise.reject(new Error("webview-not-scrollable"));
 }

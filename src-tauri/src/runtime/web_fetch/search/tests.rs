@@ -1,5 +1,5 @@
-use super::*;
 use super::raw_hit::parse_ddg_web;
+use super::*;
 const HTML_FIXTURE: &str = r#"<!doctype html><html><body>
 <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage&amp;rut=x">Example <b>Page</b></a>
 <div class="result__snippet">A snippet here.</div>
@@ -92,7 +92,10 @@ fn ddg_ad_redirect_does_not_consume_an_organic_result_slot() {
     let candidates = parse_ddg_web(body, 1).unwrap();
     let outcome = filter_and_project(
         candidates,
-        &SearchInput { query: "weather".into(), limit: 1 },
+        &SearchInput {
+            query: "weather".into(),
+            limit: 1,
+        },
     );
     assert_eq!(outcome.hits.len(), 1);
     assert_eq!(outcome.hits[0].url, "https://weather.example/forecast");

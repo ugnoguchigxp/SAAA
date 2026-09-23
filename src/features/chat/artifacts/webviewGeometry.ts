@@ -12,23 +12,30 @@ export function logicalRectFromDom(
     viewportWidth: number;
     viewportHeight: number;
     hidden?: boolean;
+    clip?: { x: number; y: number; width: number; height: number };
   },
 ): LogicalRect {
+  let x = rect.x;
+  let y = rect.y;
+  let width = rect.width;
+  let height = rect.height;
+  if (options.clip) {
+    const right = Math.min(x + width, options.clip.x + options.clip.width);
+    const bottom = Math.min(y + height, options.clip.y + options.clip.height);
+    x = Math.max(x, options.clip.x);
+    y = Math.max(y, options.clip.y);
+    width = right - x;
+    height = bottom - y;
+  }
   const visible =
     !options.hidden &&
-    rect.width > 0 &&
-    rect.height > 0 &&
-    rect.x < options.viewportWidth &&
-    rect.y < options.viewportHeight &&
-    rect.x + rect.width > 0 &&
-    rect.y + rect.height > 0;
-  return {
-    x: rect.x,
-    y: rect.y,
-    width: rect.width,
-    height: rect.height,
-    visible,
-  };
+    width > 0 &&
+    height > 0 &&
+    x < options.viewportWidth &&
+    y < options.viewportHeight &&
+    x + width > 0 &&
+    y + height > 0;
+  return { x, y, width, height, visible };
 }
 
 export function nextGeometryGeneration(current: number): number {

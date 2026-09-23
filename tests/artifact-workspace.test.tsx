@@ -15,8 +15,11 @@ mock.module("../src/features/chat/artifacts/artifactWebviewHost.ts", () => ({
     show: async () => undefined,
     hide: async () => undefined,
     close: async () => undefined,
+    scroll: async () => undefined,
   }),
   closePreviewWebview: async () => undefined,
+  setActiveSourceWebview: () => undefined,
+  scrollActiveSourceWebview: async () => undefined,
 }));
 
 await import("../src/i18n");
@@ -334,8 +337,12 @@ describe("artifact workspace", () => {
     );
     await act(async () => {
       document.querySelector<HTMLButtonElement>(".open-source")!.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    for (let step = 0; step < 8; step += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
     expect(invokeCalls).toContainEqual(expect.objectContaining({
       command: "mount_source_website",
       args: expect.objectContaining({ url: "https://example.com/weather" }),

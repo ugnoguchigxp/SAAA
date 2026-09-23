@@ -11,6 +11,13 @@ use tauri::Runtime;
 
 use super::contracts::{FetchContentInput, WebFetchCancel, WebFetchFailure};
 
+#[path = "content/projection.rs"]
+mod projection;
+use projection::project_document;
+pub use projection::render_compact;
+#[cfg(test)]
+use projection::{guard_decision_label, truncate_to_model_max};
+
 /// Compact model-facing result of `fetch_content`.
 #[derive(Debug, Clone)]
 pub struct FetchContentResult {
@@ -22,6 +29,8 @@ pub struct FetchContentResult {
     /// `allow` / `allow_with_warning` / `require_approval` / `deny`.
     pub decision: &'static str,
     pub warning_categories: Vec<String>,
+    pub retrieval_status: &'static str,
+    pub retrieval_method: &'static str,
 }
 
 #[async_trait]
@@ -60,6 +69,31 @@ impl<R: Runtime> ContentFetcher for TauriWebViewContentFetcher<R> {
     ) -> Result<FetchContentResult, WebFetchFailure> {
         if cancellation.is_cancelled() {
             return Err(WebFetchFailure::cancelled());
+        }
+        // Prefer one bounded document request. A browser is needed only for
+        // pages whose static HTML has too little readable content.
+        let started = std::time::Instant::now();
+        let static_budget = html_probe_budget(deadline);
+        if !static_budget.is_zero() {
+            let static_result = tokio::select! {
+                result = tokio::time::timeout(
+                    static_budget,
+                    super::static_content::fetch(&request, static_budget)
+                ) => result.unwrap_or_else(|_| Err(WebFetchFailure::timeout())),
+                _ = cancellation.cancelled() => return Err(WebFetchFailure::cancelled()),
+            };
+            match static_result {
+                Ok(Some(result)) => return Ok(result),
+                Err(error) if error.code == "UNSAFE_URL" => return Err(error),
+                _ => {}
+            }
+        }
+        if cancellation.is_cancelled() {
+            return Err(WebFetchFailure::cancelled());
+        }
+        let deadline = deadline.saturating_sub(started.elapsed());
+        if deadline.is_zero() {
+            return Err(WebFetchFailure::timeout());
         }
         // Reserve a cleanup budget inside the provider deadline so
         // `manager.cancel()` + worker teardown never overruns the tool call.
@@ -111,12 +145,20 @@ impl<R: Runtime> ContentFetcher for TauriWebViewContentFetcher<R> {
             }
             result = &mut fetch => {
                 match result {
-                    Ok(Ok(document)) => Ok(project_document(&document, request.max_characters)),
+                    Ok(Ok(document)) => Ok(project_document(&document, request.max_characters, request.query.as_deref())),
                     Ok(Err(error)) => Err(map_plugin_error(&error)),
                     Err(_) => Err(WebFetchFailure::unavailable()),
                 }
             }
         }
+    }
+}
+
+fn html_probe_budget(deadline: Duration) -> Duration {
+    if deadline <= Duration::from_secs(5) {
+        Duration::ZERO
+    } else {
+        (deadline / 5).min(Duration::from_secs(2))
     }
 }
 
@@ -149,81 +191,6 @@ fn map_plugin_error(error: &tauri_plugin_llm_fetch::ErrorResponse) -> WebFetchFa
     }
 }
 
-fn project_document(
-    document: &tauri_plugin_llm_fetch::RetrievedDocument,
-    model_max_characters: usize,
-) -> FetchContentResult {
-    let decision = guard_decision_label(document.security.decision.clone());
-    let mut warning_categories: Vec<String> = document
-        .security
-        .findings
-        .iter()
-        .filter(|finding| {
-            !matches!(
-                finding.category,
-                tauri_plugin_llm_fetch::SecurityFindingCategory::BenignMention
-            )
-        })
-        .map(|finding| {
-            serde_json::to_value(&finding.category)
-                .and_then(serde_json::from_value::<String>)
-                .unwrap_or_else(|_| "unknown".to_string())
-        })
-        .collect();
-    warning_categories.sort();
-    warning_categories.dedup();
-    FetchContentResult {
-        final_url: document.final_url.clone(),
-        text: truncate_to_model_max(&document.text, model_max_characters),
-        fetched_at: document.fetched_at.clone(),
-        truncated: document.truncated || document.text.chars().count() > model_max_characters,
-        decision,
-        warning_categories,
-    }
-}
-
-fn guard_decision_label(decision: tauri_plugin_llm_fetch::GuardDecision) -> &'static str {
-    use tauri_plugin_llm_fetch::GuardDecision as Decision;
-    match decision {
-        Decision::Allow => "allow",
-        Decision::AllowWithWarning => "allow_with_warning",
-        Decision::RequireApproval => "require_approval",
-        Decision::Deny => "deny",
-    }
-}
-
-/// Trim the extracted text down to the model's `maxCharacters` ask without
-/// splitting UTF-8. The plugin floor is 1_000 chars; smaller asks are served
-/// from the same extraction and marked truncated.
-fn truncate_to_model_max(text: &str, model_max: usize) -> String {
-    if text.chars().count() <= model_max {
-        return text.to_string();
-    }
-    text.chars().take(model_max).collect()
-}
-
-/// Render the compact `fetch_content_result` JSON. Plugin-internal fields
-/// (session ID, worker label, proxy URL, stages, raw exceptions) are never
-/// included.
-pub fn render_compact(result: &FetchContentResult) -> String {
-    serde_json::json!({
-        "type": "fetch_content_result",
-        "security": {
-            "trust": "untrusted",
-            "tainted": true,
-            "decision": result.decision,
-            "warningCategories": result.warning_categories,
-        },
-        "document": {
-            "url": result.final_url,
-            "text": result.text,
-            "fetchedAt": result.fetched_at,
-            "truncated": result.truncated,
-        }
-    })
-    .to_string()
-}
-
 #[cfg(test)]
 pub struct FakeContentFetcher {
     pub result: Result<FetchContentResult, WebFetchFailure>,
@@ -241,6 +208,8 @@ impl FakeContentFetcher {
                 truncated: false,
                 decision: "allow",
                 warning_categories: Vec::new(),
+                retrieval_status: "relevant",
+                retrieval_method: "webview",
             }),
             seen: std::sync::Mutex::new(Vec::new()),
         }
@@ -283,6 +252,8 @@ mod tests {
             truncated: false,
             decision: "allow_with_warning",
             warning_categories: vec!["tool_invocation".to_string()],
+            retrieval_status: "relevant",
+            retrieval_method: "webview",
         };
         let rendered: serde_json::Value = serde_json::from_str(&render_compact(&result)).unwrap();
         assert_eq!(
@@ -302,6 +273,31 @@ mod tests {
         assert!(rendered.get("sessionId").is_none());
         assert!(rendered.pointer("/document/title").is_none());
         assert!(rendered.pointer("/document/text").is_some());
+        assert_eq!(
+            rendered
+                .pointer("/document/retrievalMethod")
+                .and_then(|v| v.as_str()),
+            Some("webview")
+        );
+        assert_eq!(
+            rendered
+                .pointer("/document/retrievalStatus")
+                .and_then(|v| v.as_str()),
+            Some("relevant")
+        );
+    }
+
+    #[test]
+    fn html_probe_preserves_time_for_browser_fallback() {
+        assert_eq!(
+            html_probe_budget(Duration::from_secs(30)),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            html_probe_budget(Duration::from_secs(10)),
+            Duration::from_secs(2)
+        );
+        assert_eq!(html_probe_budget(Duration::from_secs(5)), Duration::ZERO);
     }
 
     #[test]

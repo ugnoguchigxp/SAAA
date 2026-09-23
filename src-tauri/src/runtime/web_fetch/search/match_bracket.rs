@@ -1,4 +1,7 @@
-use super::{HashSet, MAX_CANDIDATES, MAX_RESPONSE_BYTES, RawHit, SearchHit, SearchInput, SearchOutcome, WebFetchFailure, compact_text};
+use super::{
+    compact_text, HashSet, RawHit, SearchHit, SearchInput, SearchOutcome, WebFetchFailure,
+    MAX_CANDIDATES, MAX_RESPONSE_BYTES,
+};
 /// String-aware bracket matcher: returns the index of the `]` closing the
 /// `[` at `open`. Bounded by construction (body <= 2 MiB).
 pub(super) fn match_bracket(body: &str, open: usize) -> Option<usize> {

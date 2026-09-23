@@ -449,7 +449,8 @@ pub(crate) fn finish_supervised_runtime_run(
     error: Option<&str>,
 ) -> Result<(), String> {
     state.sqlite_writer.write(|connection| {
-        let changed = connection
+        let transaction = connection.transaction().map_err(database_error)?;
+        let changed = transaction
             .execute(
                 "UPDATE runtime_runs
                  SET status=?1, error_message=?2, completed_at=?3, failure_code=?4,
@@ -469,6 +470,9 @@ pub(crate) fn finish_supervised_runtime_run(
         if changed != 1 {
             return Err("Runtime run was already finalized".to_string());
         }
+        crate::runtime::butler_loop::finish_work(&transaction, run_id, status)
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
         Ok(())
     })
 }

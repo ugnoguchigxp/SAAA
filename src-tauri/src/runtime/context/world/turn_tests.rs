@@ -431,7 +431,7 @@ fn m3b_05_agent_session_records_world_only_for_a_revalidated_initial_turn() {
         .nth(1)
         .expect("record call");
     assert!(call.contains("include_world"));
-    let session = include_str!("../../../providers/agent_session/sse.rs");
+    let session = include_str!("../../../providers/agent_session/sse.d/01.rs");
     assert!(session.contains("world.provider_history(history)"));
     assert!(session.contains("world.without_world_history(history)"));
     assert!(session.contains("initial_world && round == 0"));

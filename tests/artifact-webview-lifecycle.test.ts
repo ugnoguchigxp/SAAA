@@ -21,11 +21,14 @@ mock.module("../src/features/chat/artifacts/artifactWebviewHost.ts", () => ({
       close: async () => {
         closed.push(label);
       },
+      scroll: async () => undefined,
     };
   },
   closePreviewWebview: async (label: string) => {
     closed.push(label);
   },
+  setActiveSourceWebview: () => undefined,
+  scrollActiveSourceWebview: async () => undefined,
 }));
 
 const { useArtifactWebview } = await import("../src/features/chat/artifacts/useArtifactWebview");

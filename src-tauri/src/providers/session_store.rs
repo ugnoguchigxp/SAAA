@@ -86,27 +86,6 @@ fn tool_result_outcome(result: &str, outcome: &'static str) -> &'static str {
     }
 }
 
-#[cfg(test)]
-mod tool_result_outcome_tests {
-    use super::tool_result_outcome;
-
-    #[test]
-    fn structured_fetch_error_is_not_a_successful_tool_execution() {
-        assert_eq!(
-            tool_result_outcome(r#"{"error":{"code":"UNSAFE_URL"}}"#, "success"),
-            "failure"
-        );
-        assert_eq!(
-            tool_result_outcome(r#"{"type":"fetch_content_result"}"#, "success"),
-            "success"
-        );
-        assert_eq!(
-            tool_result_outcome("interrupted", "interrupted"),
-            "interrupted"
-        );
-    }
-}
-
 impl Drop for ToolExecutionAudit<'_> {
     fn drop(&mut self) {
         if !self.terminal_recorded {
@@ -321,6 +300,22 @@ pub(crate) fn persist_conversation_success_with_state(
                 ],
             )
             .map_err(database_error)?;
+        crate::runtime::butler_loop::append_event(
+            &transaction,
+            &input.conversation_id,
+            Some(&input.run_id),
+            "message_completed",
+            Some(&message.id),
+            None,
+            &message.created_at,
+        )
+        .map_err(database_error)?;
+        crate::runtime::butler_loop::record_work_reference(
+            &transaction,
+            &input.run_id,
+            &format!("message:{}", message.id),
+        )
+        .map_err(database_error)?;
         crate::runtime::context::scope::attach_output(
             &transaction,
             &input.run_id,
@@ -345,7 +340,30 @@ pub(crate) fn persist_conversation_success_with_state(
         if changed != 1 {
             return Err("Runtime run was already finalized".to_string());
         }
+        crate::runtime::butler_loop::finish_work(&transaction, &input.run_id, "completed")
+            .map_err(database_error)?;
         transaction.commit().map_err(database_error)?;
         Ok(message)
     })
+}
+
+#[cfg(test)]
+mod tool_result_outcome_tests {
+    use super::tool_result_outcome;
+
+    #[test]
+    fn structured_fetch_error_is_not_a_successful_tool_execution() {
+        assert_eq!(
+            tool_result_outcome(r#"{"error":{"code":"UNSAFE_URL"}}"#, "success"),
+            "failure"
+        );
+        assert_eq!(
+            tool_result_outcome(r#"{"type":"fetch_content_result"}"#, "success"),
+            "success"
+        );
+        assert_eq!(
+            tool_result_outcome("interrupted", "interrupted"),
+            "interrupted"
+        );
+    }
 }

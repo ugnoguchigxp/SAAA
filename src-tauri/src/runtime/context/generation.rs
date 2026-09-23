@@ -15,8 +15,9 @@ pub(crate) use final_wire_size::assert_two_round_tool_manifest;
 #[cfg(test)]
 pub(crate) use final_wire_size::begin_direct_dispatched;
 pub(crate) use final_wire_size::{
-    begin, begin_with_writer, final_wire_size, finish_result, record_red, BeginGeneration,
-    FinalWireSize, GenerationHandle, MAX_PROVIDER_CONTEXT_WIRE_BYTES, MAX_PROVIDER_REQUEST_BYTES,
+    begin, begin_with_current_instruction, begin_with_writer, final_wire_size, finish_result,
+    record_red, BeginGeneration, FinalWireSize, GenerationHandle, MAX_PROVIDER_CONTEXT_WIRE_BYTES,
+    MAX_PROVIDER_REQUEST_BYTES,
 };
 #[cfg(test)]
 #[path = "generation/tests/mod.rs"]

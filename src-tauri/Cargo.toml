@@ -41,6 +41,8 @@ axum = "0.8"
 saaa-reasoning-contract = { path = "../crates/reasoning-contract" }
 async-trait = "0.1"
 base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+webp = "0.3"
 tauri = { version = "2", features = ["unstable"] }
 # Reproducible WebView worker and bounded plain-text guard implementation.
 tauri-plugin-llm-fetch = { git = "https://github.com/ugnoguchigxp/LLM-fetch.git", rev = "64afbce5e99d24475fd25fceb9bd187a9777599b" }
@@ -58,7 +60,10 @@ jsonschema = { version = "0.56", default-features = false }
 libloading = "0.8"
 libc = "0.2"
 open = "5.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream", "gzip", "brotli", "deflate"] }
+scraper = "0.25"
+ipnet = "2"
+encoding_rs = "0.8"
 rodio = { version = "0.20.1", default-features = false }
 regex = "1"
 sha2 = "0.10"

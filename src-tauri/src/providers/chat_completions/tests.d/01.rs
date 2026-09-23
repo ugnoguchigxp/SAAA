@@ -160,7 +160,7 @@ async fn rejects_eof_bad_json_model_mismatch_and_length() {
     for (body, kind, started) in [
         (
             chunk(json!({"content":"partial"}), Value::Null),
-            Failure::Network,
+            Failure::ResponseInterrupted,
             true,
         ),
         ("data: {broken}\n\n".into(), Failure::Protocol, false),

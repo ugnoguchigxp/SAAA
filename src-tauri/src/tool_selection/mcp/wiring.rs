@@ -40,8 +40,10 @@ pub fn assemble(
         )),
     };
     if let Ok(principal) = crate::tool_selection::service::ensure_principal(&writer) {
-        let _ = writer
-            .write(|connection| crate::records::catalog::ensure_registered(connection, &principal));
+        let _ = writer.write(|connection| {
+            crate::records::catalog::ensure_registered(connection, &principal)?;
+            crate::artifact_preview::webview_catalog::ensure_registered(connection, &principal)
+        });
     }
     (backend, manager)
 }

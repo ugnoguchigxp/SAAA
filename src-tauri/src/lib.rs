@@ -60,8 +60,9 @@ mod window_size;
 pub(crate) use ipc_contract::RuntimeEvent;
 use ipc_contract::{ConversationMessage, ConversationMessagePage};
 pub(crate) use models::*;
+use persistence::list_message_page_from_connection;
 pub(crate) use persistence::schema::initialize_database;
-use persistence::{list_message_page_from_connection, SqliteReaders, SqliteWriter};
+use persistence::{SqliteReaders, SqliteWriter};
 pub(crate) use providers::session_store::{
     begin_provider_session, finish_dynamic_lan_provider_session, finish_provider_session,
     persist_conversation_success, persist_conversation_success_with_state,
@@ -374,6 +375,7 @@ pub fn run() {
                 app.state::<AppState>().sqlite_writer.clone(),
                 app.state::<AppState>().data_directory.clone(),
             );
+            runtime::image_input::sweep(&app.state::<AppState>().data_directory);
             schedule::hydrate(&app.state::<AppState>());
             schedule::start_loop(app.handle().clone());
             Ok(())

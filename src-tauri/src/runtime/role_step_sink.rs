@@ -41,6 +41,10 @@ impl BufferedRoleStepSink {
 }
 
 impl RuntimeEventSender for BufferedRoleStepSink {
+    fn allows_intermediate_messages(&self) -> bool {
+        false
+    }
+
     fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {
         match event {
             RuntimeEvent::Delta { run_id, text } => {
@@ -67,7 +71,8 @@ impl RuntimeEventSender for BufferedRoleStepSink {
                     summary: "A role-routing step is running.".into(),
                 })
             }
-            RuntimeEvent::MessageCompleted { .. }
+            RuntimeEvent::MessageCommitted { .. }
+            | RuntimeEvent::MessageCompleted { .. }
             | RuntimeEvent::SpeechStarted { .. }
             | RuntimeEvent::SpeechEnded { .. }
             | RuntimeEvent::SpeechFailed { .. }
@@ -136,6 +141,27 @@ mod tests {
             RuntimeEvent::Activity { summary, .. }
                 if summary == "A role-routing step is running."
         ));
+    }
+
+    #[test]
+    fn role_step_cannot_commit_intermediate_assistant_text() {
+        let capture = Capture::default();
+        let sink = BufferedRoleStepSink::new("run".into(), Box::new(capture.clone()));
+        assert!(!sink.allows_intermediate_messages());
+        assert!(sink
+            .send(RuntimeEvent::MessageCommitted {
+                run_id: "run".into(),
+                message: crate::ipc_contract::ConversationMessage {
+                    parts: None,
+                    id: "draft".into(),
+                    conversation_id: "conversation".into(),
+                    role: "assistant".into(),
+                    content: "unreviewed draft".into(),
+                    created_at: "1".into(),
+                },
+            })
+            .is_err());
+        assert!(capture.0.lock().unwrap().is_empty());
     }
 
     #[test]

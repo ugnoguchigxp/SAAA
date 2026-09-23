@@ -3,7 +3,7 @@
   "entrypoint": "capability-host-cli.ts",
   "requestSchema": "request.schema.json",
   "responseSchema": "response.schema.json",
-  "bunVersion": "1.3.14",
+  "bunVersion": "1.4.2",
   "llangVersion": "7fb1a7bb639b18d29055fe032b7ffc5dc6f5ee15",
   "llangDirty": true,
   "files": {

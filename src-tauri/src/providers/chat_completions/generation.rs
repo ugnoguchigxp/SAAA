@@ -11,6 +11,7 @@ impl RequestGeneration {
         body: &Value,
         calls: usize,
         include_world: bool,
+        current_instruction: Option<(&str, &str)>,
     ) -> Result<Self, Failure> {
         crate::runtime::context::generation_inputs::verify_required_wire(
             body,
@@ -18,21 +19,43 @@ impl RequestGeneration {
         )
         .map_err(|_| Failure::Internal)?;
         let request_payload = serde_json::to_vec(body).map_err(|_| Failure::Internal)?;
-        let wire_size = crate::runtime::context::generation::final_wire_size(
-            request_payload.len(),
-            context.context_sources.iter().any(|candidate| {
-                candidate.requirement == crate::runtime::context::source::Requirement::Must
-            }),
-        );
+        let has_image = crate::runtime::image_input::body_has_image(body);
+        let stored_payload = if has_image {
+            crate::runtime::image_input::redact_provider_body(&request_payload)
+        } else {
+            request_payload.clone()
+        };
+        let has_required_context = context.context_sources.iter().any(|candidate| {
+            candidate.requirement == crate::runtime::context::source::Requirement::Must
+        });
+        let wire_size = if has_image {
+            if request_payload.len() > crate::runtime::image_input::MAX_IMAGE_REQUEST_BYTES {
+                crate::runtime::context::generation::FinalWireSize::RequestTooLarge
+            } else {
+                crate::runtime::context::generation::final_wire_size(
+                    stored_payload.len(),
+                    has_required_context,
+                )
+            }
+        } else {
+            crate::runtime::context::generation::final_wire_size(
+                request_payload.len(),
+                has_required_context,
+            )
+        };
         // Earlier user messages are history. The final user message owns this instruction.
         let current_instruction_count = usize::from(
             body["messages"]
                 .as_array()
                 .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user"))
                 .is_some_and(|m| {
-                    m["content"]
-                        .as_str()
-                        .is_some_and(|text| text.trim() == context.input.content.trim())
+                    message_instruction(&m["content"]).is_some_and(|text| {
+                        text.trim()
+                            == current_instruction
+                                .map(|(_, content)| content)
+                                .unwrap_or(&context.input.content)
+                                .trim()
+                    })
                 }),
         );
         match wire_size {
@@ -47,17 +70,32 @@ impl RequestGeneration {
         let generation = context
             .output_persistence
             .map(|persistence| {
-                persistence.begin_context_generation(
-                    &context.input.run_id,
-                    if calls == 0 {
-                        "reasoning"
-                    } else {
-                        "tool-followup"
-                    },
-                    &request_payload,
-                    &request_payload,
-                    current_instruction_count,
-                )
+                let begin = |current_message_id: Option<&str>| match current_message_id {
+                    Some(message_id) => persistence.begin_context_generation_for_input(
+                        &context.input.run_id,
+                        if calls == 0 {
+                            "reasoning"
+                        } else {
+                            "tool-followup"
+                        },
+                        &stored_payload,
+                        &stored_payload,
+                        current_instruction_count,
+                        message_id,
+                    ),
+                    None => persistence.begin_context_generation(
+                        &context.input.run_id,
+                        if calls == 0 {
+                            "reasoning"
+                        } else {
+                            "tool-followup"
+                        },
+                        &stored_payload,
+                        &stored_payload,
+                        current_instruction_count,
+                    ),
+                };
+                begin(current_instruction.map(|(message_id, _)| message_id))
             })
             .transpose()
             .map_err(|_| Failure::Internal)?;
@@ -146,6 +184,19 @@ impl RequestGeneration {
             self.fail(error.as_str());
         }
     }
+}
+
+fn message_instruction(content: &Value) -> Option<&str> {
+    if let Some(text) = content.as_str() {
+        return Some(text);
+    }
+    content.as_array().and_then(|parts| {
+        parts.iter().find_map(|part| {
+            (part["type"] == "text")
+                .then(|| part["text"].as_str())
+                .flatten()
+        })
+    })
 }
 
 fn context_dependency_failure(error: String) -> Failure {

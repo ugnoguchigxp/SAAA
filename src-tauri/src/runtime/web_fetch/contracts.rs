@@ -133,6 +133,7 @@ impl WebFetchCancel {
 pub struct FetchContentInput {
     pub url: String,
     pub max_characters: usize,
+    pub query: Option<String>,
 }
 
 impl FetchContentInput {
@@ -141,7 +142,7 @@ impl FetchContentInput {
             .as_object()
             .ok_or_else(|| "Tool arguments do not match the WebFetch schema.".to_string())?;
         for key in object.keys() {
-            if key != "url" && key != "maxCharacters" {
+            if key != "url" && key != "maxCharacters" && key != "query" {
                 return Err("Tool arguments do not match the WebFetch schema.".to_string());
             }
         }
@@ -151,7 +152,7 @@ impl FetchContentInput {
             .filter(|url| !url.is_empty() && url.len() <= 2048)
             .ok_or_else(|| "Tool arguments do not match the WebFetch schema.".to_string())?;
         let max_characters = match object.get("maxCharacters") {
-            None | Some(serde_json::Value::Null) => 5_000,
+            None | Some(serde_json::Value::Null) => 2_500,
             Some(serde_json::Value::Number(number)) => {
                 let value = number.as_u64().ok_or_else(|| {
                     "Tool arguments do not match the WebFetch schema.".to_string()
@@ -165,9 +166,19 @@ impl FetchContentInput {
                 return Err("Tool arguments do not match the WebFetch schema.".to_string());
             }
         };
+        let query = match object.get("query") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(value))
+                if !value.is_empty() && value.chars().count() <= 400 =>
+            {
+                Some(value.clone())
+            }
+            _ => return Err("Tool arguments do not match the WebFetch schema.".to_string()),
+        };
         Ok(Self {
             url: url.to_string(),
             max_characters,
+            query,
         })
     }
 }
@@ -286,6 +297,15 @@ mod tests {
     #[test]
     fn fetch_input_rejects_unknown_fields_and_out_of_range_values() {
         assert!(FetchContentInput::parse(&json!({"url": "https://example.com/"})).is_ok());
+        let targeted = FetchContentInput::parse(&json!({
+            "url": "https://example.com/", "query": "Nvidia revenue", "maxCharacters": null
+        }))
+        .unwrap();
+        assert_eq!(targeted.query.as_deref(), Some("Nvidia revenue"));
+        assert_eq!(targeted.max_characters, 2_500);
+        assert!(
+            FetchContentInput::parse(&json!({"url": "https://example.com/", "query": ""})).is_err()
+        );
         assert!(FetchContentInput::parse(
             &json!({"url": "https://example.com/", "unexpected": true})
         )

@@ -1,5 +1,5 @@
 import { SetupChecklist } from "./SetupChecklist";
-import { useEffect, useRef, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type FormEvent } from "react";
 import { useLatestMessageScroll } from "./useLatestMessageScroll";
 import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../components/AppIcon";
@@ -12,6 +12,13 @@ import { StreamingPlainText } from "./ChatMessages";
 import { RoutingProposal } from "./RoutingProposal";
 import type { ChatPageProps } from "./chatPageTypes";
 import { useArtifactWorkspace } from "./artifacts/ArtifactDrawer";
+import {
+    armTurnImage,
+    droppedImageFile,
+    imageDragActive,
+    subscribeImageClaimed,
+  } from "./composerImage";
+import { discardComposerImage, prepareComposerImage } from "../../lib/runtime";
 
 const VOICE_BAR_WEIGHTS = [0.18, 0.32, 0.54, 0.78, 1, 0.7, 0.48, 0.72, 0.46, 0.28, 0.16];
 
@@ -61,18 +68,102 @@ export function ChatPage({
   onDecideRoutingProposal,
 }: ChatPageProps) {
   const { t } = useTranslation();
-  const artifacts = useArtifactWorkspace();
-  const openedSourceRunRef = useRef<string | null>(null);
+  const [imageDrag, setImageDrag] = useState(false);
+  const [imagePhase, setImagePhase] = useState<"idle" | "processing" | "ready" | "submitting" | "failed">("idle");
+  const [imageNote, setImageNote] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<{
+    id: string;
+    url: string;
+    width: number;
+    height: number;
+    byteLength: number;
+  } | null>(null);
+  const imagePreviewRef = useRef(imagePreview);
+  imagePreviewRef.current = imagePreview;
+  const preparationRef = useRef(0);
+  async function clearImage() {
+    const current = imagePreviewRef.current;
+    preparationRef.current += 1;
+    if (current) {
+      URL.revokeObjectURL(current.url);
+      await discardComposerImage(current.id).catch(() => undefined);
+    }
+    armTurnImage(null);
+    setImagePreview(null);
+    setImagePhase("idle");
+    setImageNote(null);
+  }
   useEffect(() => {
-    if (!activeRunId || !selectedConversation || !artifacts) return;
-    if (openedSourceRunRef.current === activeRunId) return;
-    const source = runtimeActivity.find(
-      (activity) => activity.type === "sourceAvailable" && activity.runId === activeRunId,
-    );
-    if (!source || source.type !== "sourceAvailable") return;
-    openedSourceRunRef.current = activeRunId;
-    artifacts.openSource({ conversationId: selectedConversation.id, url: source.url, title: source.title });
-  }, [activeRunId, selectedConversation, runtimeActivity, artifacts]);
+    return subscribeImageClaimed(() => {
+      const current = imagePreviewRef.current;
+      if (!current) return;
+      URL.revokeObjectURL(current.url);
+      armTurnImage(null);
+      setImagePreview(null);
+      setImagePhase("idle");
+      setImageNote(null);
+    });
+  }, []);
+  useEffect(() => {
+    setImagePreview(null);
+    setImagePhase("idle");
+    setImageNote(null);
+    return () => {
+      preparationRef.current += 1;
+      const current = imagePreviewRef.current;
+      armTurnImage(null);
+      setImagePreview(null);
+      setImagePhase("idle");
+      setImageNote(null);
+      if (current) {
+        URL.revokeObjectURL(current.url);
+        void discardComposerImage(current.id);
+      }
+    };
+  }, [selectedConversation?.id]);
+  async function acceptImage(file: File) {
+    const ticket = preparationRef.current + 1;
+    preparationRef.current = ticket;
+    const previous = imagePreviewRef.current;
+    armTurnImage(null);
+    if (previous) {
+      URL.revokeObjectURL(previous.url);
+      void discardComposerImage(previous.id);
+      setImagePreview(null);
+    }
+    setImagePhase("processing");
+    setImageNote(null);
+    try {
+      if (file.size > 12_000_000) throw new Error(t("chat.imageTooLarge"));
+      const prepared = await prepareComposerImage(new Uint8Array(await file.arrayBuffer()));
+      if (preparationRef.current !== ticket) {
+        await discardComposerImage(prepared.id);
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([new Uint8Array(prepared.preview)], { type: "image/webp" }));
+      setImagePreview({
+        id: prepared.id,
+        url,
+        width: prepared.width,
+        height: prepared.height,
+        byteLength: prepared.byteLength,
+      });
+      setImagePhase("ready");
+    } catch (cause) {
+      if (preparationRef.current !== ticket) return;
+      setImagePhase("failed");
+      setImageNote(cause instanceof Error ? cause.message : t("chat.imageFailed"));
+    }
+  }
+  function onComposerDragOver(event: DragEvent<HTMLFormElement>) {
+    if (!imageDragActive([...event.dataTransfer.types])) return;
+    event.preventDefault();
+    setImageDrag(true);
+  }
+  const artifacts = useArtifactWorkspace();
+  useEffect(() => {
+    if (selectedConversation) artifacts?.focusConversation(selectedConversation.id);
+  }, [selectedConversation, artifacts]);
   const {
     messageAreaRef,
     messageContentRef,
@@ -121,7 +212,38 @@ export function ChatPage({
   function submitFromLatest(event: FormEvent<HTMLFormElement>) {
     followLatestRef.current = true;
     setShowLatestButton(false);
+    if (imagePhase === "processing" || imagePhase === "submitting" || (activeRunId && imagePreview)) {
+      event.preventDefault();
+      if (activeRunId && imagePreview) setImageNote(t("chat.imageWait"));
+      return;
+    }
+    if (imagePreview && imagePhase === "ready") {
+      armTurnImage(imagePreview.id);
+      setImagePhase("submitting");
+      const restore = () => {
+        if (imagePreviewRef.current?.id === imagePreview.id) setImagePhase("ready");
+      };
+      void Promise.resolve(onSubmit(event)).then(restore, restore);
+      return;
+    }
     onSubmit(event);
+  }
+  function onComposerDrop(event: DragEvent<HTMLFormElement>) {
+    setImageDrag(false);
+    if (imagePhase === "submitting") {
+      event.preventDefault();
+      return;
+    }
+    const dropped = droppedImageFile(event.dataTransfer.files);
+    if (!dropped && event.dataTransfer.files.length === 0) return;
+    event.preventDefault();
+    if (dropped === "multiple") {
+      if (!imagePreview) setImagePhase("failed");
+      setImageNote(t("chat.imageMultiple"));
+      return;
+    }
+    if (!dropped) return;
+    void acceptImage(dropped);
   }
   return (
     <section className="chat-panel">
@@ -222,7 +344,13 @@ export function ChatPage({
           <AppIcon name="down" />
         </button>
       ) : null}
-      <form className="composer" onSubmit={submitFromLatest}>
+      <form
+        className={imageDrag ? "composer image-drag" : "composer"}
+        onSubmit={submitFromLatest}
+        onDragOver={onComposerDragOver}
+        onDragLeave={() => setImageDrag(false)}
+        onDrop={onComposerDrop}
+      >
         <div className="composer-row">
           <button
             className={voiceState === "listening" ? "voice-button recording" : "voice-button"}
@@ -282,7 +410,6 @@ export function ChatPage({
             }}
             placeholder={t("chat.placeholder")}
             value={composer}
-            disabled={Boolean(activeRunId)}
           />
           <div className="composer-end">
             {voicePolicy && (
@@ -301,19 +428,42 @@ export function ChatPage({
                 <AppIcon name="stop" />
                 <span>{t("chat.stop")}</span>
               </button>
-            ) : (
-              <button
-                className="send-button"
-                type="submit"
-                aria-label={t("chat.send")}
-                disabled={!composer.trim() || !selectedConversation}
-              >
-                <AppIcon name="send" />
-              </button>
-            )}
+            ) : null}
+            <button
+              className="send-button"
+              type="submit"
+              aria-label={t("chat.send")}
+              disabled={
+                imagePhase === "processing" ||
+                imagePhase === "submitting" ||
+                (Boolean(activeRunId) && imagePhase === "ready") ||
+                (!composer.trim() && imagePhase !== "ready") ||
+                !selectedConversation
+              }
+            >
+              <AppIcon name="send" />
+            </button>
           </div>
         </div>
         <div className="composer-meta" aria-live="polite">
+          {imagePhase === "processing" && (
+            <span className="composer-hint">{t("chat.imageProcessing")}</span>
+          )}
+          {imagePreview && (imagePhase === "ready" || imagePhase === "submitting") && (
+            <span className="composer-image">
+              <img src={imagePreview.url} alt={t("chat.imagePreview")} />
+              <span>
+                {imagePreview.width}×{imagePreview.height} · {imagePreview.byteLength} B
+              </span>
+              <button className="text-button" type="button" disabled={imagePhase === "submitting"} onClick={() => void clearImage()}>
+                {t("chat.imageRemove")}
+              </button>
+              <span className="composer-hint">{t("chat.imageNotKept")}</span>
+            </span>
+          )}
+          {imageNote && (
+            <span className="composer-hint">{imageNote}</span>
+          )}
           {!modelProviderStatus.ready && (
             <button
               className="text-button provider-recovery"

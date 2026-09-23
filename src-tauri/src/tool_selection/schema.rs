@@ -17,7 +17,7 @@ pub fn migrate(connection: &Connection) -> rusqlite::Result<()> {
            VALUES (1, 0, 0, 0);
          CREATE TABLE IF NOT EXISTS tool_selection_sources (
            id TEXT PRIMARY KEY,
-           kind TEXT NOT NULL CHECK(kind IN ('llang', 'mcp_http')),
+           kind TEXT NOT NULL CHECK(kind IN ('llang', 'mcp_http', 'artifact_webview')),
            owner_principal TEXT NOT NULL CHECK(length(owner_principal) BETWEEN 1 AND 160),
            enabled INTEGER NOT NULL CHECK(enabled IN (0, 1))
          );

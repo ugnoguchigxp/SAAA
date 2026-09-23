@@ -60,6 +60,8 @@ export const uiEnglish = {
   sourceWebsiteLoading: "Opening the website…",
   sourceWebsiteFailed: "The website could not be opened here.",
   sourceOpenBrowser: "Open in browser",
+  sourceTabReload: "Choosing this site tab loads the page again.",
+  sourceUrl: "Address",
 };
 export const uiJapanese: typeof uiEnglish = {
   compatibility:
@@ -122,4 +124,6 @@ export const uiJapanese: typeof uiEnglish = {
   sourceWebsiteLoading: "Webサイトを開いています…",
   sourceWebsiteFailed: "この画面ではWebサイトを開けませんでした。",
   sourceOpenBrowser: "ブラウザで開く",
+  sourceTabReload: "このサイトのタブを選び直すと、ページを読み直します。",
+  sourceUrl: "アドレス",
 };

@@ -16,9 +16,9 @@ use std::{
 };
 
 const PACKAGE_HASH: &str = "1d31a73c93cb0136ef9b8521112a2c8efd42d79041d5008585b8874ffe3beb68";
-const KIT_JSON_HASH: &str = "c3272ba0ff6331179b5e4a92d1b4f077d96c3bfabee7dadaab86fcd2d0f47575";
+const KIT_JSON_HASH: &str = "f377e9cac604ea837b4a649d2dbfa4fa9c48138344e39f284f02ab109488d135";
 const LLANG_COMMIT: &str = "0124d704f8228cb0c34d6379cf0302641199d82e";
-const BUN_VERSION: &str = "1.3.14";
+const BUN_VERSION: &str = "1.4.2";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_kit_inspect_verify_and_vectors_run_without_credentials() {
@@ -393,7 +393,7 @@ fn bun_path() -> PathBuf {
         .map(|directory| directory.join(if cfg!(windows) { "bun.exe" } else { "bun" }))
         .find(|path| path.is_file())
         .and_then(|path| path.canonicalize().ok())
-        .expect("Bun 1.3.14 must be available on PATH")
+        .expect("Bun must be available on PATH")
 }
 
 fn object(value: Value) -> Map<String, Value> {

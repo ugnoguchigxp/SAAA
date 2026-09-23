@@ -45,6 +45,29 @@ pub(crate) async fn run_with_options(
     let mut started = false;
     let mut provider_progressed = false;
     let mut messages = world_body::build_messages(history, &context);
+    if let Some(persistence) = context.output_persistence {
+        if let Err(error) = crate::runtime::image_input::attach(
+            &persistence.state.data_directory,
+            &mut messages,
+            &context.input.run_id,
+            &context.input.content,
+            endpoint,
+            model,
+        ) {
+            let (kind, reason) = match error {
+                crate::runtime::image_input::ImageError::Rejected(reason)
+                    if reason.contains("too large") =>
+                {
+                    (Failure::RequestTooLarge, reason)
+                }
+                crate::runtime::image_input::ImageError::Rejected(reason)
+                | crate::runtime::image_input::ImageError::Failed(reason) => {
+                    (Failure::Contract, reason)
+                }
+            };
+            return Err(Error::failed_with_detail(kind, false, Some(reason)));
+        }
+    }
     let result = tokio::time::timeout(Duration::from_millis(timeout_ms), async {
         let url = super::openai_compatible::provider_operation_url(endpoint, "chat/completions")
             .map_err(|_| Failure::Contract)?;
@@ -58,6 +81,7 @@ pub(crate) async fn run_with_options(
         let mut context_still_calls = 0;
         let mut context_still_call_keys = std::collections::HashSet::new();
         let mut spoken_tool_progress = 0;
+        let mut current_instruction: Option<(String, String)> = None;
         loop {
             crate::runtime::context::world::dispatch::refresh_json(
                 &mut messages,
@@ -80,9 +104,42 @@ pub(crate) async fn run_with_options(
                 AgentToolOffer::empty()
             };
             let tools = &offer.definitions;
+            let pending_inputs = if crate::runtime::butler_loop::continuation_enabled() {
+                match context.output_persistence {
+                    Some(persistence) => persistence
+                        .state
+                        .sqlite_readers
+                        .read(|connection| {
+                            crate::runtime::butler_loop::peek_pending_user_texts(
+                                connection,
+                                &context.input.conversation_id,
+                                &context.input.run_id,
+                            )
+                            .map_err(|error| error.to_string())
+                        })
+                        .map_err(|_| Failure::Internal)?,
+                    None => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+            if let Some(input) = pending_inputs.last() {
+                current_instruction = Some(input.clone());
+            }
+            for (_, text) in &pending_inputs {
+                messages.push(json!({"role": "user", "content": text}));
+            }
             let (body, generation) = {
                 let mut recompose_attempts = 0;
                 loop {
+                    for (_, text) in &pending_inputs {
+                        let present = messages.iter().any(|message| {
+                            message["role"] == "user" && message["content"].as_str() == Some(text)
+                        });
+                        if !present {
+                            messages.push(json!({"role": "user", "content": text}));
+                        }
+                    }
                     let world = context
                         .output_persistence
                         .and_then(|persistence| persistence.world);
@@ -104,6 +161,9 @@ pub(crate) async fn run_with_options(
                         &body,
                         calls,
                         include_world,
+                        current_instruction
+                            .as_ref()
+                            .map(|(id, content)| (id.as_str(), content.as_str())),
                     ) {
                         Ok(generation) => break (body, generation),
                         Err(Failure::RequiredContextOverflow)
@@ -342,11 +402,76 @@ pub(crate) async fn run_with_options(
                 ),
             );
             if tool_calls.is_empty() {
+                generation.complete()?;
+                let late_input = if crate::runtime::butler_loop::continuation_enabled() {
+                    match context.output_persistence {
+                        Some(persistence) => {
+                            let ids: Vec<String> =
+                                pending_inputs.iter().map(|(id, _)| id.clone()).collect();
+                            persistence
+                                .state
+                                .sqlite_writer
+                                .write(|connection| {
+                                    crate::runtime::butler_loop::finish_input_round(
+                                        connection,
+                                        &context.input.conversation_id,
+                                        &context.input.run_id,
+                                        &ids,
+                                    )
+                                    .map_err(|error| error.to_string())
+                                })
+                                .map_err(|_| Failure::Internal)?
+                        }
+                        None => false,
+                    }
+                } else {
+                    false
+                };
+                if late_input {
+                    if !completion.content.trim().is_empty() {
+                        if context.on_event.allows_intermediate_messages() {
+                            if let Some(persistence) = context.output_persistence {
+                                if let Some(message) = persistence
+                                    .state
+                                    .sqlite_writer
+                                    .write(|connection| {
+                                        crate::runtime::butler_loop::commit_preface(
+                                            connection,
+                                            &context.input.conversation_id,
+                                            &context.input.run_id,
+                                            &completion.content,
+                                        )
+                                        .map_err(|error| error.to_string())
+                                    })
+                                    .map_err(|_| Failure::Internal)?
+                                {
+                                    let message_id = message.id.clone();
+                                    context
+                                        .on_event
+                                        .send(RuntimeEvent::MessageCommitted {
+                                            run_id: context.input.run_id.clone(),
+                                            message,
+                                        })
+                                        .map_err(|_| Failure::ClientDisconnected)?;
+                                    context
+                                        .on_event
+                                        .wait_message_presented(
+                                            persistence.state,
+                                            &message_id,
+                                            context.cancellation.clone(),
+                                        )
+                                        .await;
+                                }
+                            }
+                        }
+                        messages.push(json!({"role": "assistant", "content": completion.content}));
+                    }
+                    continue;
+                }
                 output.push_str(&completion.content);
                 if output.len() > 1_048_576 {
                     return Err(Failure::RequestTooLarge);
                 }
-                generation.complete()?;
                 return Ok(output);
             }
             if calls + tool_calls.len() > 32 {
@@ -360,7 +485,94 @@ pub(crate) async fn run_with_options(
                 generation.fail("protocol");
                 return Err(Failure::Protocol);
             }
+            if tool_calls
+                .iter()
+                .any(|call| call.name == crate::providers::stream::CONTINUE_WORK_TOOL_NAME)
+                && (tool_calls.len() != 1 || completion.content.trim().is_empty())
+            {
+                generation.fail("continuation-requires-visible-update");
+                return Err(Failure::Protocol);
+            }
             generation.complete()?;
+            if !pending_inputs.is_empty() {
+                if let Some(persistence) = context.output_persistence {
+                    let ids: Vec<String> =
+                        pending_inputs.iter().map(|(id, _)| id.clone()).collect();
+                    persistence
+                        .state
+                        .sqlite_writer
+                        .write(|connection| {
+                            crate::runtime::butler_loop::mark_inputs_consumed(
+                                connection,
+                                &context.input.conversation_id,
+                                &context.input.run_id,
+                                &ids,
+                            )
+                            .map_err(|error| error.to_string())
+                        })
+                        .map_err(|_| Failure::Internal)?;
+                }
+            }
+            if crate::runtime::butler_loop::continuation_enabled()
+                && context.on_event.allows_intermediate_messages()
+            {
+                let actions = crate::runtime::butler_loop::from_provider_turn(
+                    crate::runtime::butler_loop::ProviderTurn {
+                        content: Some(completion.content.clone()),
+                        tool_calls: tool_calls
+                            .iter()
+                            .map(|call| crate::runtime::butler_loop::ToolCall {
+                                id: call.id.clone(),
+                                name: call.name.clone(),
+                                arguments_json: call.arguments.clone(),
+                            })
+                            .collect(),
+                        finish: crate::runtime::butler_loop::ProviderFinish::ToolCalls,
+                    },
+                );
+                let preface = actions.iter().find_map(|action| match action {
+                    crate::runtime::butler_loop::AgentAction::UseTool {
+                        preface: Some(text),
+                        ..
+                    } => Some(text.clone()),
+                    _ => None,
+                });
+                if let Some(preface) = preface {
+                    if let Some(persistence) = context.output_persistence {
+                        if let Some(message) = persistence
+                            .state
+                            .sqlite_writer
+                            .write(|connection| {
+                                crate::runtime::butler_loop::commit_preface(
+                                    connection,
+                                    &context.input.conversation_id,
+                                    &context.input.run_id,
+                                    &preface,
+                                )
+                                .map_err(|error| error.to_string())
+                            })
+                            .map_err(|_| Failure::Internal)?
+                        {
+                            let message_id = message.id.clone();
+                            context
+                                .on_event
+                                .send(RuntimeEvent::MessageCommitted {
+                                    run_id: context.input.run_id.clone(),
+                                    message,
+                                })
+                                .map_err(|_| Failure::ClientDisconnected)?;
+                            context
+                                .on_event
+                                .wait_message_presented(
+                                    persistence.state,
+                                    &message_id,
+                                    context.cancellation.clone(),
+                                )
+                                .await;
+                        }
+                    }
+                }
+            }
             messages.push(json!({"role": "assistant", "content": completion.content,
                 "tool_calls": tool_calls.iter().map(|call| json!({"id": call.id, "type": "function",
                     "function": {"name": call.name, "arguments": call.arguments}})).collect::<Vec<_>>()}));
@@ -387,6 +599,25 @@ pub(crate) async fn run_with_options(
                 let report_progress = context.on_event.voice_response_enabled()
                     && spoken_tool_progress < 4
                     && voice_progress::supports(&call.name);
+                if !duplicate_context_still_call {
+                    if let Some(persistence) = context.output_persistence {
+                        persistence
+                            .state
+                            .sqlite_writer
+                            .write(|connection| {
+                                crate::runtime::butler_loop::record_tool_event(
+                                    connection,
+                                    &context.input.conversation_id,
+                                    &context.input.run_id,
+                                    &call.id,
+                                    "tool_dispatched",
+                                )
+                                .map(|_| ())
+                                .map_err(|error| error.to_string())
+                            })
+                            .map_err(|_| Failure::Internal)?;
+                    }
+                }
                 // The tool budget is the turn's actual remaining time, never a fixed constant.
                 let (result, progress_spoken) = if duplicate_context_still_call {
                     (
@@ -411,6 +642,25 @@ pub(crate) async fn run_with_options(
                 }
                 if result.len() > 262_144 {
                     return Err(Failure::RequestTooLarge);
+                }
+                if !duplicate_context_still_call {
+                    if let Some(persistence) = context.output_persistence {
+                        persistence
+                            .state
+                            .sqlite_writer
+                            .write(|connection| {
+                                crate::runtime::butler_loop::record_tool_event(
+                                    connection,
+                                    &context.input.conversation_id,
+                                    &context.input.run_id,
+                                    &call.id,
+                                    "tool_result",
+                                )
+                                .map(|_| ())
+                                .map_err(|error| error.to_string())
+                            })
+                            .map_err(|_| Failure::Internal)?;
+                    }
                 }
                 if crate::generative_ui::tools::NAMES.contains(&call.name.as_str())
                     && serde_json::from_str::<Value>(&result)

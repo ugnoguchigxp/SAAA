@@ -10,7 +10,10 @@ function source(path: string): string {
 describe("audit log UI", () => {
   test("keeps a bounded read-only audit command and page", () => {
     const backend = source("src-tauri/src/runtime/command_registry.rs");
-    const audit = source("src-tauri/src/persistence/audit.rs");
+    const audit = [
+      source("src-tauri/src/persistence/audit/record_event.rs"),
+      source("src-tauri/src/persistence/audit/audit_event_sort_field.rs"),
+    ].join("\n");
     const app = source("src/App.tsx");
     const settings = source("src/features/settings/SettingsPage.tsx");
     const page = source("src/features/audit/AuditLogPage.tsx");
@@ -19,7 +22,7 @@ describe("audit log UI", () => {
     const runtime = source("src/lib/runtime.ts");
 
     expect(containsSource(audit, "fn list_audit_events")).toBe(true);
-    expect(containsSource(backend, "persistence::audit::list_audit_events,")).toBe(true);
+    expect(containsSource(backend, "persistence::audit::record_event::list_audit_events,")).toBe(true);
     expect(containsSource(audit, "const AUDIT_UI_EVENT_LIMIT: usize = 200;")).toBe(true);
     expect(containsSource(app, "AuditLogPage")).toBe(true);
     expect(containsSource(app, 'route === "audit"')).toBe(true);

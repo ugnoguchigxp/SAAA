@@ -24,12 +24,24 @@ fn main_database_open_and_connection_ownership_are_centralized() {
     rust_sources(&source_root, &mut sources);
 
     for path in sources {
-        if path.file_name().is_some_and(|name| name == "tests.rs") {
+        if path
+            .file_name()
+            .is_some_and(|name| name == "tests.rs" || name == "acceptance_core.rs")
+        {
             continue;
         }
         let relative = path
             .strip_prefix(&source_root)
             .expect("source path is relative");
+        if relative
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+            || relative
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with("_tests.rs"))
+        {
+            continue;
+        }
         let source = fs::read_to_string(&path).expect("source reads");
         // A whole-file `#![cfg(test)]` module is test code, like `tests.rs` and
         // inline `#[cfg(test)] mod tests` blocks; it is not a production path.
@@ -73,9 +85,15 @@ fn main_database_open_and_connection_ownership_are_centralized() {
             );
         }
         if production.contains("SqliteWriter::open(") {
-            assert_eq!(
-                relative.to_str(),
-                Some("lib.rs"),
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some(
+                        "lib.rs"
+                            | "lib/window_shutdown_grace.rs"
+                            | "role_routing/operator_configuration.rs"
+                    )
+                ),
                 "unexpected Writer construction in {}",
                 relative.display()
             );
@@ -115,38 +133,30 @@ fn main_database_open_and_connection_ownership_are_centralized() {
         "audio preprocessing must precede the Writer lock"
     );
 
-    let turns = fs::read_to_string(source_root.join("runtime/conversation_turn.rs"))
-        .expect("conversation runtime source reads");
-    let execute_turn = turns
-        .split_once("pub(crate) async fn execute_conversation_turn")
-        .expect("conversation runtime entry point exists")
-        .1;
     let inputs = fs::read_to_string(source_root.join("runtime/conversation_inputs.rs"))
         .expect("conversation input source reads");
     assert!(inputs.contains("state.sqlite_readers.read"));
     assert!(!inputs.contains("state.sqlite_writer.write"));
-    let compose_helper = turns
+    let prepare = fs::read_to_string(source_root.join("runtime/conversation_prepare.rs"))
+        .expect("provider context preparation source reads");
+    let compose_helper = prepare
         .split_once("fn compose_after_connect(")
         .expect("dispatch context composer exists")
         .1
         .split_once("fn world_free_history(")
         .expect("composer boundary exists")
         .0;
-    assert!(!compose_helper.contains("state.sqlite_writer.write"));
     let reader = compose_helper
         .find("conversation_inputs::load(state, input)")
         .expect("context source uses a persistent Reader");
     let compose = compose_helper
         .find("context_window::compose")
         .expect("context composition is explicit");
-    let writer = execute_turn
+    let writer = compose_helper
         .find("state.sqlite_writer.write")
-        .expect("projection telemetry uses the Writer");
-    let dispatch_compose = execute_turn
-        .find("compose_after_connect(")
-        .expect("turn uses the dispatch context composer");
+        .expect("context segment persistence uses the Writer");
     assert!(
-        reader < compose && dispatch_compose < writer,
+        reader < compose && compose < writer,
         "context data must be read first, composed after the Reader transaction, then recorded"
     );
 }

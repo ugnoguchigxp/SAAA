@@ -333,6 +333,22 @@ pub(crate) fn begin_with_writer(
     writer: Arc<SqliteWriter>,
     input: BeginGeneration<'_>,
 ) -> Result<GenerationHandle, String> {
+    begin_with_writer_current(writer, input, None)
+}
+
+pub(crate) fn begin_with_current_instruction(
+    state: &AppState,
+    input: BeginGeneration<'_>,
+    message_id: &str,
+) -> Result<GenerationHandle, String> {
+    begin_with_writer_current(state.sqlite_writer.clone(), input, Some(message_id))
+}
+
+fn begin_with_writer_current(
+    writer: Arc<SqliteWriter>,
+    input: BeginGeneration<'_>,
+    current_message_id: Option<&str>,
+) -> Result<GenerationHandle, String> {
     let id = new_id("context_generation");
     let valid = writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
@@ -342,8 +358,18 @@ pub(crate) fn begin_with_writer(
             input.provider_session_id,
             input.provider_id,
         )?;
-        let (message_id, content): (String, String) = transaction
-            .query_row(
+        let (message_id, content): (String, String) = if let Some(current_message_id) = current_message_id {
+            transaction.query_row(
+                "SELECT m.id,m.content
+                 FROM runtime_runs r
+                 JOIN conversation_run_inputs i ON i.run_id=r.id AND i.conversation_id=r.conversation_id
+                 JOIN conversation_messages m ON m.id=i.message_id
+                 WHERE r.id=?1 AND r.status='running' AND m.id=?2 AND m.role='user'",
+                params![input.run_id, current_message_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+        } else {
+            transaction.query_row(
                 "SELECT m.id,m.content
                  FROM runtime_runs r
                  JOIN conversation_messages m ON m.id=r.input_message_id
@@ -353,7 +379,7 @@ pub(crate) fn begin_with_writer(
                 [input.run_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .map_err(database_error)?;
+        }.map_err(database_error)?;
         let ordinal: u64 = transaction
             .query_row(
                 "SELECT COALESCE(MAX(ordinal),0)+1 FROM context_generations WHERE run_id=?1",

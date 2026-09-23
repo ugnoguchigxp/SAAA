@@ -185,25 +185,20 @@ pub(super) async fn execute(
         ))
         .await;
     }
-    persist_conversation_success_with_state(
-        state,
-        input,
-        &result_content,
-        |connection, message| {
-            if let Some(usage_json) = usage_json.as_deref() {
-                crate::role_routing::repository::record_step_usage(
-                    connection,
-                    &input.run_id,
-                    usage_json,
-                )?;
-            }
-            crate::role_routing::repository::accept_provider_turn(
+    persist_conversation_success_with_state(state, input, &result_content, |connection, message| {
+        if let Some(usage_json) = usage_json.as_deref() {
+            crate::role_routing::repository::record_step_usage(
                 connection,
                 &input.run_id,
-                &message.id,
-                now_ms,
-            )
-        },
-    )
+                usage_json,
+            )?;
+        }
+        crate::role_routing::repository::accept_provider_turn(
+            connection,
+            &input.run_id,
+            &message.id,
+            now_ms,
+        )
+    })
     .map_err(Into::into)
 }

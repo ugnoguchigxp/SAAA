@@ -16,6 +16,7 @@ pub struct BackendRouter {
     pub(super) llang: Arc<dyn ToolBackend>,
     pub(super) mcp: Arc<dyn ToolBackend>,
     pub(super) records: Arc<dyn ToolBackend>,
+    pub(super) artifact: Arc<dyn ToolBackend>,
 }
 
 impl BackendRouter {
@@ -28,6 +29,7 @@ impl BackendRouter {
             llang,
             mcp,
             records,
+            artifact: Arc::new(super::artifact_webview::ArtifactWebviewBackend),
         }
     }
 
@@ -36,6 +38,7 @@ impl BackendRouter {
             Some("mcp_http") => "mcp_http",
             Some("llang") => "llang",
             Some("records") => "records",
+            Some("artifact_webview") => "artifact_webview",
             Some(_) => "unknown",
             None => {
                 if LlangBinding::parse(binding).is_some() {
@@ -59,6 +62,7 @@ impl ToolBackend for BackendRouter {
             "llang" => self.llang.invoke(request, cancellation).await,
             "mcp_http" => self.mcp.invoke(request, cancellation).await,
             "records" => self.records.invoke(request, cancellation).await,
+            "artifact_webview" => self.artifact.invoke(request, cancellation).await,
             // Unknown kinds and non-L-Lang bindings without a kind are refused before any send.
             _ => BackendOutcome::failed("integrity"),
         }
