@@ -42,21 +42,23 @@ mod tests {
 
     #[repr(C)]
     struct MachTimeValue {
-        seconds: c_int,
-        microseconds: c_int,
+        pub(super) seconds: c_int,
+        pub(super) microseconds: c_int,
     }
 
     #[repr(C)]
     struct MachTaskBasicInfo {
-        virtual_size: u64,
-        resident_size: u64,
-        resident_size_max: u64,
-        user_time: MachTimeValue,
-        system_time: MachTimeValue,
-        policy: c_int,
-        suspend_count: c_int,
+        pub(super) virtual_size: u64,
+        pub(super) resident_size: u64,
+        pub(super) resident_size_max: u64,
+        pub(super) user_time: MachTimeValue,
+        pub(super) system_time: MachTimeValue,
+        pub(super) policy: c_int,
+        pub(super) suspend_count: c_int,
     }
 
+    // SAFETY: mach_task_self_ and task_info are the process Mach task APIs.
+    // Callers pass MACH_TASK_SELF and a MachTaskBasicInfo-sized buffer.
     unsafe extern "C" {
         #[link_name = "mach_task_self_"]
         static MACH_TASK_SELF: u32;

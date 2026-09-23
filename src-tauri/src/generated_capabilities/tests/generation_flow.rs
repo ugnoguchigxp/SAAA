@@ -17,7 +17,7 @@ use serde_json::json;
 use std::fs;
 use std::sync::Arc;
 
-fn hashed(path: &std::path::Path) -> (std::path::PathBuf, String) {
+pub(super) fn hashed(path: &std::path::Path) -> (std::path::PathBuf, String) {
     let bytes = fs::read(path).expect("fixture file");
     (path.to_path_buf(), sha256_hex(&bytes))
 }
@@ -64,7 +64,7 @@ pub(super) fn context(run: &str, message: &str) -> GenerationContext {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rw_13_generate_a_invoke_update_b_and_keep_prior_call() {
+pub(super) async fn rw_13_generate_a_invoke_update_b_and_keep_prior_call() {
     let env = TestEnv::start(true);
     let request_a = registered("req-a", CANDIDATE_A, ACCEPTANCE_A, true, false);
     let request_b = registered("req-b", CANDIDATE_B, ACCEPTANCE_B, false, true);
@@ -187,7 +187,7 @@ async fn rw_13_generate_a_invoke_update_b_and_keep_prior_call() {
 }
 
 #[tokio::test]
-async fn rw_05_reconcile_does_not_regenerate() {
+pub(super) async fn rw_05_reconcile_does_not_regenerate() {
     let env = TestEnv::start(true);
     let request_a = registered("req-a", CANDIDATE_A, ACCEPTANCE_A, true, false);
     let fake = Arc::new(FakeGenerator::new(

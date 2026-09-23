@@ -2,7 +2,7 @@ use super::*;
 use crate::generated_capabilities::service::InvokeRequest;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn s01_shutdown_rejects_new_work_and_cancels_owned_executions() {
+pub(super) async fn s01_shutdown_rejects_new_work_and_cancels_owned_executions() {
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let resolved = env
@@ -62,7 +62,7 @@ async fn s01_shutdown_rejects_new_work_and_cancels_owned_executions() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn s03_shutdown_cancels_a_running_import() {
+pub(super) async fn s03_shutdown_cancels_a_running_import() {
     let env = TestEnv::start(false);
     let temporary = tempfile::tempdir().unwrap();
     let command = script_command(

@@ -1,7 +1,7 @@
 use serde_json::json;
-pub(super) fn configure_local_harness(state: &crate::AppState) {
+pub(super) fn configure_local_harness(state: &crate::AppState) -> Result<(), String> {
     if std::env::var("SAAA_BBS_USE_HARNESS").as_deref() != Ok("1") {
-        return;
+        return Ok(());
     }
     state
         .sqlite_writer
@@ -33,16 +33,17 @@ pub(super) fn configure_local_harness(state: &crate::AppState) {
             crate::persistence::save_settings_documents_to_connection(c, &documents)?;
             Ok(())
         })
-        .unwrap();
+        .map_err(|error| format!("Harness route settings could not be saved: {error}"))?;
     println!("Saved local LLM Harness conversation route (persistent)");
+    Ok(())
 }
 
-pub(super) fn seed(state: &crate::AppState) {
+pub(super) fn seed(state: &crate::AppState) -> Result<(), String> {
     let Ok(source) = std::env::var("SAAA_BBS_SETTINGS_SOURCE") else {
-        return;
+        return Ok(());
     };
-    let source =
-        crate::persistence::sqlite::SqliteReaders::open(std::path::Path::new(&source)).unwrap();
+    let source = crate::persistence::sqlite::SqliteReaders::open(std::path::Path::new(&source))
+        .map_err(|error| format!("Harness settings source could not be opened: {error}"))?;
     let (documents, coding) = source
         .read(|c| {
             let documents = crate::persistence::list_settings_documents(c)?
@@ -61,21 +62,21 @@ pub(super) fn seed(state: &crate::AppState) {
                 .map_err(crate::database_error)?;
             Ok((documents, coding))
         })
-        .unwrap();
+        .map_err(|error| format!("Harness settings source could not be read: {error}"))?;
     state
         .sqlite_writer
         .write(move |c| {
-            assert_eq!(
-                c.query_row("SELECT count(*) FROM conversation_messages", [], |r| r
-                    .get::<_, i64>(0))
-                    .unwrap(),
-                0,
-                "seed only a fresh E2E database"
-            );
+            let message_count: i64 = c
+                .query_row("SELECT count(*) FROM conversation_messages", [], |r| r.get(0))
+                .map_err(crate::database_error)?;
+            if message_count != 0 {
+                return Err("seed only a fresh E2E database".into());
+            }
             crate::persistence::save_settings_documents_to_connection(c, &documents)?;
             c.execute("UPDATE coding_settings SET value_json=?1", [coding])
                 .map_err(crate::database_error)?;
             Ok(())
         })
-        .unwrap();
+        .map_err(|error| format!("Harness settings could not be seeded: {error}"))?;
+    Ok(())
 }

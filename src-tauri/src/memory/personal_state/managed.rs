@@ -47,13 +47,13 @@ impl Delivery for UnavailableDelivery {
     }
 }
 struct Prepared {
-    incarnation: String,
-    source: SourceRef,
-    text: String,
-    messages: Value,
-    base_tokens: u64,
-    run_id: Option<String>,
-    exposed: Vec<SourceRef>,
+    pub(super) incarnation: String,
+    pub(super) source: SourceRef,
+    pub(super) text: String,
+    pub(super) messages: Value,
+    pub(super) base_tokens: u64,
+    pub(super) run_id: Option<String>,
+    pub(super) exposed: Vec<SourceRef>,
 }
 pub struct Adapter {
     pub product: Option<super::product::Product>,

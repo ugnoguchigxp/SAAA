@@ -25,25 +25,25 @@ pub struct RuntimeConfig {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RuntimeConfigFile {
-    format_version: u32,
-    enabled: bool,
-    bun_path: String,
-    runtime_root: String,
-    expected_runtime_digest: String,
+    pub(super) format_version: u32,
+    pub(super) enabled: bool,
+    pub(super) bun_path: String,
+    pub(super) runtime_root: String,
+    pub(super) expected_runtime_digest: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RuntimeManifest {
-    format_version: u32,
-    entrypoint: String,
-    request_schema: String,
-    response_schema: String,
-    bun_version: String,
-    llang_version: Option<String>,
+    pub(super) format_version: u32,
+    pub(super) entrypoint: String,
+    pub(super) request_schema: String,
+    pub(super) response_schema: String,
+    pub(super) bun_version: String,
+    pub(super) llang_version: Option<String>,
     #[serde(rename = "llangDirty")]
-    _llang_dirty: Option<bool>,
-    files: BTreeMap<String, String>,
+    pub(super) _llang_dirty: Option<bool>,
+    pub(super) files: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -56,7 +56,7 @@ pub struct TrustedRuntime {
     pub digest: String,
     pub bun_version: String,
     pub llang_version: String,
-    files: BTreeMap<String, String>,
+    pub(super) files: BTreeMap<String, String>,
 }
 
 impl TrustedRuntime {

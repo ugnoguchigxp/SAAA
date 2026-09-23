@@ -165,7 +165,7 @@ pub(crate) fn save(connection: &Connection, input: SaveInput) -> Result<Value, S
         return Err("Invalid saved view metadata".into());
     }
     let instance = load(connection, &input.instance_id)?;
-    let changed = connection.execute("UPDATE ui_views SET name=?1,description=?2,tags_json=?3,published_revision=?4,status='published' WHERE id=?5 AND current_revision=?4", params![input.name,input.description,serde_json::to_string(&input.tags).unwrap(),instance.revision,instance.view_id]).map_err(database_error)?;
+    let changed = connection.execute("UPDATE ui_views SET name=?1,description=?2,tags_json=?3,published_revision=?4,status='published' WHERE id=?5 AND current_revision=?4", params![input.name,input.description,serde_json::to_string(&input.tags).map_err(|_| "Saved view tags could not be encoded".to_string())?,instance.revision,instance.view_id]).map_err(database_error)?;
     if changed != 1 {
         return Err("Revision conflict: only the current revision can be published".into());
     }

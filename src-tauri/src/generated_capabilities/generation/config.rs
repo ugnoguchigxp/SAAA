@@ -13,5 +13,9 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-include!("config.d/01.rs");
-include!("config.d/02.rs");
+#[path = "config/generation_config.rs"]
+mod generation_config;
+pub use generation_config::{GENERATION_CONFIG_ENV, KIT_FORMAT_VERSION, REQUESTS_FORMAT_VERSION, MAX_CONFIG_BYTES, MAX_REQUESTS_BYTES, MAX_REQUEST_ENTRIES, MAX_REQUEST_FIELDS, MIN_REQUEST_FIELDS, MAX_PURPOSE_BYTES, GenerationConfig, RegisteredRequest, RequestScope, load_config, enabled_config, from_environment, load_requests};
+#[cfg(test)]
+#[path = "config/tests.rs"]
+mod tests;

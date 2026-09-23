@@ -5,7 +5,7 @@ use crate::generated_capabilities::publication::{
     GeneratedToolSnapshot, MAX_DEFINITIONS_BYTES, MAX_PUBLISHED_TOOLS,
 };
 
-fn contract(names: &[&str]) -> WasmContract {
+pub(super) fn contract(names: &[&str]) -> WasmContract {
     WasmContract {
         version: 1,
         fields: names
@@ -22,7 +22,7 @@ fn contract(names: &[&str]) -> WasmContract {
     }
 }
 
-fn resolved(
+pub(super) fn resolved(
     index: usize,
     contract: WasmContract,
 ) -> crate::generated_capabilities::contracts::ResolvedCapability {
@@ -37,7 +37,7 @@ fn resolved(
 }
 
 #[test]
-fn p05b_the_provider_wrapper_is_counted_in_the_definition_limit() {
+pub(super) fn p05b_the_provider_wrapper_is_counted_in_the_definition_limit() {
     // Regression for F1: the neutral definition array can fit while the OpenAI
     // `{"type":"function","function":...}` wrapper pushes the real request array over 32 KiB.
     // Field-name lengths step the neutral size by 8 tools * 8 fields * 3 bytes = 192, which is

@@ -42,7 +42,7 @@ pub async fn check_frontdesk(base: &str) -> Result<String, String> {
             let input:crate::StartTurnInput=serde_json::from_value(serde_json::json!({
                 "runId":"diagnostic_qwen","conversationId":"conversation_diagnostic","content":request,
                 "inputOrigin":"voice","presentationMode":"visual"
-            })).unwrap();
+            })).expect("Diagnostic StartTurnInput fixture always deserializes");
             let model = crate::OpenAiCompatibleProviderSettings {id:"diagnostic-qwen".into(),enabled:true,
                 label:"Qwen reasoning".into(),location:"local".into(),endpoint:provider.base_url.to_string(),
                 model:provider.model.clone(),authentication:"api-key".into(),request_options:None};

@@ -125,9 +125,9 @@ fn envelope_is_error(envelope: &Value) -> bool {
 /// Releases the reserved call slot exactly once. It is owned by the management task, so a dropped
 /// HTTP handler future (client disconnect or deadline) cannot release a call that is still running.
 pub struct CallPermit {
-    inner: Arc<ServerInner>,
-    session: Arc<Session>,
-    id: TypedRequestId,
+    pub(super) inner: Arc<ServerInner>,
+    pub(super) session: Arc<Session>,
+    pub(super) id: TypedRequestId,
 }
 
 impl CallPermit {

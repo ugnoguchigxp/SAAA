@@ -81,13 +81,13 @@ impl CallError {
 pub struct SourceSession {
     pub source_id: String,
     pub config_generation: i64,
-    transport: Arc<HttpTransport>,
-    state: Mutex<SessionState>,
+    pub(super) transport: Arc<HttpTransport>,
+    pub(super) state: Mutex<SessionState>,
     /// Consecutive initialize failures and the earliest time the next attempt may run. Implements
     /// the 1/2/4/8/16/30s source backoff.
-    failure_count: AtomicU32,
-    next_attempt_at: Mutex<Option<tokio::time::Instant>>,
-    source_permits: Arc<Semaphore>,
+    pub(super) failure_count: AtomicU32,
+    pub(super) next_attempt_at: Mutex<Option<tokio::time::Instant>>,
+    pub(super) source_permits: Arc<Semaphore>,
 }
 
 impl SourceSession {
@@ -327,10 +327,10 @@ fn map_transport(error: TransportError) -> CallError {
 /// Profile-wide session registry. It enforces the per-source and per-profile concurrency caps and
 /// owns the single-flight reconnect behavior through `SourceSession`.
 pub struct McpSessionPool {
-    profile_permits: Arc<Semaphore>,
-    queue_permits: Arc<Semaphore>,
-    sessions: Mutex<HashMap<String, Arc<SourceSession>>>,
-    closing: AtomicBool,
+    pub(super) profile_permits: Arc<Semaphore>,
+    pub(super) queue_permits: Arc<Semaphore>,
+    pub(super) sessions: Mutex<HashMap<String, Arc<SourceSession>>>,
+    pub(super) closing: AtomicBool,
 }
 
 impl Default for McpSessionPool {
@@ -474,6 +474,6 @@ impl McpSessionPool {
 
 /// Held for the duration of one admitted call; released on drop.
 pub struct AdmissionGuard {
-    _queue: OwnedSemaphorePermit,
-    _call: OwnedSemaphorePermit,
+    pub(super) _queue: OwnedSemaphorePermit,
+    pub(super) _call: OwnedSemaphorePermit,
 }

@@ -103,7 +103,9 @@ async fn receive(
                 );
                 first_audio = false;
             }
-            let format = decoder.format.unwrap();
+            let format = decoder.format.ok_or_else(|| {
+                "HTTP TTS streamed samples before a decoded audio format".to_string()
+            })?;
             let packet_samples = (format.rate as usize / 20) * format.channels as usize;
             pending.extend(samples);
             let count = pending.len() / packet_samples * packet_samples;
@@ -117,7 +119,10 @@ async fn receive(
     decoder.finish()?;
     if !pending.is_empty() {
         output.store(true, std::sync::atomic::Ordering::Release);
-        send_packet(sender, cancellation, decoder.format.unwrap(), pending).await?;
+        let format = decoder.format.ok_or_else(|| {
+            "HTTP TTS finished without a decoded audio format".to_string()
+        })?;
+        send_packet(sender, cancellation, format, pending).await?;
     }
     Ok(())
 }

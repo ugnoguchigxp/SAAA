@@ -5,7 +5,7 @@ use crate::generated_capabilities::publication::GeneratedToolSnapshot;
 use crate::generated_capabilities::tools;
 use crate::runtime::agent_tools::AgentToolCall;
 
-async fn active_snapshot(env: &TestEnv) -> (RevisionRef, GeneratedToolSnapshot) {
+pub(super) async fn active_snapshot(env: &TestEnv) -> (RevisionRef, GeneratedToolSnapshot) {
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let resolved = env
         .service
@@ -15,7 +15,7 @@ async fn active_snapshot(env: &TestEnv) -> (RevisionRef, GeneratedToolSnapshot) 
     (revision, snapshot)
 }
 
-fn call(snapshot: &GeneratedToolSnapshot, id: &str, arguments: Value) -> AgentToolCall {
+pub(super) fn call(snapshot: &GeneratedToolSnapshot, id: &str, arguments: Value) -> AgentToolCall {
     AgentToolCall {
         id: id.to_string(),
         name: snapshot.descriptors()[0].tool_name.clone(),
@@ -23,7 +23,7 @@ fn call(snapshot: &GeneratedToolSnapshot, id: &str, arguments: Value) -> AgentTo
     }
 }
 
-async fn run(env: &TestEnv, snapshot: &GeneratedToolSnapshot, call: &AgentToolCall) -> String {
+pub(super) async fn run(env: &TestEnv, snapshot: &GeneratedToolSnapshot, call: &AgentToolCall) -> String {
     tools::execute_with_actor(
         Some(env.service.as_ref()),
         snapshot,
@@ -36,12 +36,12 @@ async fn run(env: &TestEnv, snapshot: &GeneratedToolSnapshot, call: &AgentToolCa
     .await
 }
 
-fn content(result: &str) -> Value {
+pub(super) fn content(result: &str) -> Value {
     serde_json::from_str(result).expect("tool content is JSON")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e01_true_and_false_are_both_successful() {
+pub(super) async fn e01_true_and_false_are_both_successful() {
     let env = TestEnv::start(true);
     let (_revision, snapshot) = active_snapshot(&env).await;
     for (enabled, suspended, expected) in [
@@ -68,7 +68,7 @@ async fn e01_true_and_false_are_both_successful() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e02_invalid_inputs_never_start_a_host_process() {
+pub(super) async fn e02_invalid_inputs_never_start_a_host_process() {
     let env = TestEnv::start(true);
     let (revision, snapshot) = active_snapshot(&env).await;
     let before = env.call_count(&revision.revision_id);
@@ -111,7 +111,7 @@ async fn e02_invalid_inputs_never_start_a_host_process() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e03_an_unoffered_gc_name_is_refused() {
+pub(super) async fn e03_an_unoffered_gc_name_is_refused() {
     let env = TestEnv::start(true);
     let (_revision, snapshot) = active_snapshot(&env).await;
     let forged = AgentToolCall {
@@ -126,7 +126,7 @@ async fn e03_an_unoffered_gc_name_is_refused() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e04_provider_call_ids_never_become_the_durable_call_id() {
+pub(super) async fn e04_provider_call_ids_never_become_the_durable_call_id() {
     let env = TestEnv::start(true);
     let (revision, snapshot) = active_snapshot(&env).await;
     let first = content(
@@ -160,7 +160,7 @@ async fn e04_provider_call_ids_never_become_the_durable_call_id() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e05_an_offer_after_activation_is_rejected_not_forwarded() {
+pub(super) async fn e05_an_offer_after_activation_is_rejected_not_forwarded() {
     let env = TestEnv::start(true);
     let (revision, snapshot) = active_snapshot(&env).await;
     let b = env.import_b().await;
@@ -192,7 +192,7 @@ async fn e05_an_offer_after_activation_is_rejected_not_forwarded() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e06_suspension_and_tampering_are_refused_without_leaking_internals() {
+pub(super) async fn e06_suspension_and_tampering_are_refused_without_leaking_internals() {
     let env = TestEnv::start(true);
     let (revision, snapshot) = active_snapshot(&env).await;
     let epoch = env.service.catalog_epoch(&revision.capability_id).unwrap();
@@ -239,7 +239,7 @@ async fn e06_suspension_and_tampering_are_refused_without_leaking_internals() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn x01_a_pre_cancelled_run_never_starts_a_host_process() {
+pub(super) async fn x01_a_pre_cancelled_run_never_starts_a_host_process() {
     let env = TestEnv::start(true);
     let (revision, snapshot) = active_snapshot(&env).await;
     let cancellation = crate::RunCancellation::default();
@@ -264,7 +264,7 @@ async fn x01_a_pre_cancelled_run_never_starts_a_host_process() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn adapter_conversation_path_records_the_call_owner() {
+pub(super) async fn adapter_conversation_path_records_the_call_owner() {
     let env = TestEnv::start(true);
     let (_revision, snapshot) = active_snapshot(&env).await;
     let tool_call = call(
@@ -310,7 +310,7 @@ async fn adapter_conversation_path_records_the_call_owner() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn adapter_mcp_backend_records_origin_and_owner() {
+pub(super) async fn adapter_mcp_backend_records_origin_and_owner() {
     use crate::generated_capabilities::contracts::CallActor;
     use crate::tool_selection::backends::llang::LlangBackend;
     use crate::tool_selection::backends::{BackendRequest, TechnicalStatus, ToolBackend};

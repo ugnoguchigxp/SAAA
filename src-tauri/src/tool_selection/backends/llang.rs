@@ -62,7 +62,7 @@ impl LlangBinding {
 }
 
 pub struct LlangBackend {
-    service: Option<Arc<CapabilityService>>,
+    pub(super) service: Option<Arc<CapabilityService>>,
 }
 
 impl LlangBackend {

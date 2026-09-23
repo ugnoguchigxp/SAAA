@@ -7,7 +7,7 @@ use crate::RunCancellation;
 use std::sync::Arc;
 
 #[tokio::test]
-async fn generator_failure_finishes_the_job() {
+pub(super) async fn generator_failure_finishes_the_job() {
     let env = TestEnv::start(true);
     let request_a = registered("req-a", CANDIDATE_A, ACCEPTANCE_A, true, false);
     let generation = GenerationService::new(

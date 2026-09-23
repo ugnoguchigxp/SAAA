@@ -10,10 +10,10 @@ use chrono_tz::Tz;
 use rusqlite::{params, Connection, OptionalExtension};
 mod search;
 use search::*;
-include!("mod.d/01.rs");
-include!("mod.d/02.rs");
+mod recall_execution_context;
+mod resolve_time;
+pub use recall_execution_context::{RecallExecutionContext, system_timezone, remaining_calls, record_failed_attempt, execute, migrate_v9_to_v10};
+use recall_execution_context::{MAX_NEIGHBOR_TURNS, MAX_MERGED_EVENTS_PER_WINDOW, MAX_ABSOLUTE_RANGE_DAYS, MAX_EVENTS_PER_WINDOW, MAX_OUTPUT_TOKEN_BUDGET, CURSOR_TTL_MS, MAX_QUERY_TERMS, ResolvedRange, CursorState, InternalEvent, InternalWindow, Candidate};
+use resolve_time::{resolve_time, start_of_day, filter_digest, load_cursor, store_cursor};
 #[cfg(test)]
-mod tests {
-    include!("mod.d/03.rs");
-    include!("mod.d/04.rs");
-}
+mod tests;

@@ -41,19 +41,30 @@ function posix(path: string): string {
   return relative(ROOT, path).split(sep).join("/");
 }
 
-export function productionLines(content: string, path: string): number {
-  if (!path.endsWith(".rs")) return content.split("\n").length;
-  if (/^\s*#!\[cfg\(test\)\]/.test(content)) return 0;
-  const matches = [...content.matchAll(/\n#\[cfg\([^\]\n]*\btest\b[^\]\n]*\)\]\s*\nmod tests \{/g)];
+/** Production source with a trailing `#[cfg(test)] mod tests { … }` stripped when present. */
+export function productionSource(content: string, path: string): string {
+  if (!path.endsWith(".rs")) return content;
+  if (/^\s*#!\[cfg\(test\)\]/.test(content)) return "";
+  const matches = [
+    ...content.matchAll(
+      /\n#\[cfg\([^\]\n]*\btest\b[^\]\n]*\)\]\s*\n(?:pub(?:\([^)]*\))?\s+)?mod tests \{/g,
+    ),
+  ];
   for (const match of matches.reverse()) {
     if (match.index === undefined) continue;
     const openingBrace = match.index + match[0].lastIndexOf("{");
     const closingBrace = matchingRustBrace(content, openingBrace);
     if (closingBrace !== null && content.slice(closingBrace + 1).trim() === "") {
-      return content.slice(0, match.index).split("\n").length;
+      return content.slice(0, match.index);
     }
   }
-  return content.split("\n").length;
+  return content;
+}
+
+export function productionLines(content: string, path: string): number {
+  const source = productionSource(content, path);
+  if (!source) return 0;
+  return source.split("\n").length;
 }
 
 function matchingRustBrace(content: string, openingBrace: number): number | null {
@@ -154,6 +165,46 @@ function hardLimit(record: SizeRecord): number | undefined {
   return undefined;
 }
 
+function frozenSourcePaths(): Set<string> {
+  const freezePath = join(ROOT, "critical-path-freeze.json");
+  if (!existsSync(freezePath)) return new Set();
+  const freeze = JSON.parse(readFileSync(freezePath, "utf8")) as {
+    domains?: Record<string, { files?: Record<string, unknown> }>;
+  };
+  const paths = new Set<string>();
+  for (const domain of Object.values(freeze.domains ?? {})) {
+    for (const path of Object.keys(domain.files ?? {})) paths.add(path);
+  }
+  return paths;
+}
+
+const INCLUDE_D_PATTERN = /include!\s*\(\s*"[^"]*\.d\//;
+
+export function isForbiddenIncludeDSplit(path: string, content: string, frozen: Set<string>): boolean {
+  if (!path.endsWith(".rs") || frozen.has(path) || path.includes(".d/")) return false;
+  return INCLUDE_D_PATTERN.test(content);
+}
+
+/** Non-frozen Rust sources must not keep include!("….d/…") module splits. */
+export function findForbiddenIncludeDSplits(
+  records: SizeRecord[] = collectSizes(),
+  frozen: Set<string> = frozenSourcePaths(),
+): string[] {
+  const failures: string[] = [];
+  for (const record of records) {
+    if (!record.path.endsWith(".rs")) continue;
+    const absolute = join(ROOT, record.path);
+    if (!existsSync(absolute)) continue;
+    const content = readFileSync(absolute, "utf8");
+    if (isForbiddenIncludeDSplit(record.path, content, frozen)) {
+      failures.push(
+        `${record.path}: forbidden include!("….d/…") split; convert to a real submodule (frozen paths exempt)`,
+      );
+    }
+  }
+  return failures;
+}
+
 export function evaluate(
   records: SizeRecord[],
   baseline: BaselineFile,
@@ -192,6 +243,7 @@ export function evaluate(
         );
     }
   }
+  failures.push(...findForbiddenIncludeDSplits(records));
   return failures;
 }
 

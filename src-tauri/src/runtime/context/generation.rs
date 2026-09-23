@@ -8,9 +8,13 @@ use std::sync::{Arc, Mutex};
 use validation::{digest, resolve_provider, validate_dependencies};
 #[path = "generation_test_helpers.rs"]
 mod test_helpers;
-include!("generation.d/01.rs");
+#[path = "generation/final_wire_size.rs"]
+mod final_wire_size;
+pub(crate) use final_wire_size::{MAX_PROVIDER_REQUEST_BYTES, MAX_PROVIDER_CONTEXT_WIRE_BYTES, FinalWireSize, final_wire_size, GenerationHandle, BeginGeneration, begin, begin_with_writer, record_red, finish_result};
 #[cfg(test)]
-mod tests {
-    include!("generation.d/02.rs");
-    include!("generation.d/03.rs");
-}
+pub(crate) use final_wire_size::begin_direct_dispatched;
+#[cfg(test)]
+pub(crate) use final_wire_size::assert_two_round_tool_manifest;
+#[cfg(test)]
+#[path = "generation/tests/mod.rs"]
+mod tests;

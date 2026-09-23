@@ -191,11 +191,11 @@ impl OwnedFrameRequest {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedWorldFrame {
-    frame: WorldFrame,
-    request: OwnedFrameRequest,
-    request_fingerprint: String,
-    stamp: FrameStamp,
-    instance_id: String,
+    pub(super) frame: WorldFrame,
+    pub(super) request: OwnedFrameRequest,
+    pub(super) request_fingerprint: String,
+    pub(super) stamp: FrameStamp,
+    pub(super) instance_id: String,
 }
 
 impl PreparedWorldFrame {
@@ -220,10 +220,10 @@ impl PreparedWorldFrame {
 }
 
 struct DbOutcome {
-    runtime: Vec<RuntimeUnit>,
-    runtime_notices: Vec<FrameNotice>,
-    graph: Option<WorldSliceV2>,
-    graph_notice: Option<FrameNoticeCode>,
+    pub(super) runtime: Vec<RuntimeUnit>,
+    pub(super) runtime_notices: Vec<FrameNotice>,
+    pub(super) graph: Option<WorldSliceV2>,
+    pub(super) graph_notice: Option<FrameNoticeCode>,
 }
 
 fn read_db(
@@ -282,10 +282,10 @@ fn read_db(
 }
 
 pub(crate) struct WorldFrameService {
-    readers: SqliteReaders,
-    clock: Arc<dyn Fn() -> i64 + Send + Sync>,
-    instance_id: String,
-    situation: Option<Arc<crate::situation::SituationRuntime>>,
+    pub(super) readers: SqliteReaders,
+    pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    pub(super) instance_id: String,
+    pub(super) situation: Option<Arc<crate::situation::SituationRuntime>>,
 }
 
 impl WorldFrameService {

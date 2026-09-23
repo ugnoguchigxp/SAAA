@@ -1,16 +1,10 @@
-use super::contracts::{GoalProposal, Notify, Operation, Verifier};
-use super::{authority, evidence, intake, verifier};
-use crate::persistence::schema::initialize_database;
-use crate::PRIMARY_CONVERSATION_ID;
-use rusqlite::Connection;
-
-fn db() -> Connection {
+pub(super) fn db() -> Connection {
     let connection = Connection::open_in_memory().unwrap();
     initialize_database(&connection).unwrap();
     connection
 }
 
-fn insert_user(connection: &Connection, id: &str, text: &str) {
+pub(super) fn insert_user(connection: &Connection, id: &str, text: &str) {
     connection
         .execute(
             "INSERT INTO conversation_messages(id,conversation_id,role,content,created_at)
@@ -20,7 +14,7 @@ fn insert_user(connection: &Connection, id: &str, text: &str) {
         .unwrap();
 }
 
-fn proposal(source: &str, ops: Vec<Operation>) -> GoalProposal {
+pub(super) fn proposal(source: &str, ops: Vec<Operation>) -> GoalProposal {
     GoalProposal {
         source_message_id: source.into(),
         workspace_id: "ws".into(),
@@ -38,7 +32,7 @@ fn proposal(source: &str, ops: Vec<Operation>) -> GoalProposal {
 }
 
 #[test]
-fn rf5_v_03_settled_without_evidence_does_not_complete_or_start_next_step() {
+pub(super) fn rf5_v_03_settled_without_evidence_does_not_complete_or_start_next_step() {
     let connection = db();
     connection
         .execute(
@@ -91,7 +85,7 @@ fn rf5_v_03_settled_without_evidence_does_not_complete_or_start_next_step() {
 }
 
 #[test]
-fn rf5_v_04_missing_is_not_a_success_label() {
+pub(super) fn rf5_v_04_missing_is_not_a_success_label() {
     let outcome = verifier::evaluate_evidence(
         "tests_pass",
         None,
@@ -118,7 +112,7 @@ fn rf5_v_04_missing_is_not_a_success_label() {
 }
 
 #[test]
-fn rf5_n_01_same_length_edit_invalidates_digest() {
+pub(super) fn rf5_n_01_same_length_edit_invalidates_digest() {
     let a = authority::source_digest("実行して下さい");
     let b = authority::source_digest("実行しないで");
     assert_ne!(a, b);
@@ -126,7 +120,7 @@ fn rf5_n_01_same_length_edit_invalidates_digest() {
 }
 
 #[test]
-fn rf5_n_03_and_06_host_intake_uses_full_source() {
+pub(super) fn rf5_n_03_and_06_host_intake_uses_full_source() {
     let connection = db();
     insert_user(&connection, "src", "テストを実行しないで");
     let result = intake::classify(
@@ -149,7 +143,7 @@ fn rf5_n_03_and_06_host_intake_uses_full_source() {
 }
 
 #[test]
-fn rf5_g_06_paraphrase_intents_are_requested() {
+pub(super) fn rf5_g_06_paraphrase_intents_are_requested() {
     use crate::runtime::context::world::query_understand::{understand, QueryUnderstanding};
     use crate::runtime::context::world::question::QuestionIntent;
     let cases = [

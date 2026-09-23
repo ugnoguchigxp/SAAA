@@ -1,3 +1,5 @@
+const MAX_ITEM_JSON_BYTES: usize = 4_000;
+const MAX_SEMANTIC_KEY_BYTES: usize = 128;
 use rusqlite::{params, Connection};
 #[cfg(test)]
 use serde_json::Value;

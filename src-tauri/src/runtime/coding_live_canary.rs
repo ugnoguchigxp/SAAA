@@ -21,7 +21,7 @@ async fn saaa_luna_persists_and_resumes() {
     let settings = documents
         .iter_mut()
         .find(|d| d.namespace == "providers.agent")
-        .unwrap();
+        .expect("agent provider settings document");
     assert_eq!(settings.value_json["model"], "gpt-5.6-luna");
     settings.value_json["enabled"] = true.into();
     crate::persistence::save_settings_documents_to_connection(&mut connection, &documents)
@@ -79,5 +79,10 @@ async fn saaa_luna_persists_and_resumes() {
             })
             .expect("persisted result");
     }
-    assert_eq!(std::fs::read_dir(workspace.path()).unwrap().count(), 0);
+    assert_eq!(
+        std::fs::read_dir(workspace.path())
+            .expect("canary workspace should remain readable")
+            .count(),
+        0
+    );
 }

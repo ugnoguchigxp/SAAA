@@ -86,9 +86,9 @@ pub(crate) trait Generator: Send + Sync {
 /// Deterministic fake generator. It assembles `source.body` from the request contract and never
 /// selects a pre-built package.
 pub struct FakeGenerator {
-    id: String,
-    fields: Vec<String>,
-    body: Mutex<FakeBody>,
+    pub(super) id: String,
+    pub(super) fields: Vec<String>,
+    pub(super) body: Mutex<FakeBody>,
     pub model_calls: AtomicUsize,
 }
 

@@ -32,8 +32,8 @@ async fn saaa_conversation_builds_bbs_via_pi() {
         Arc::new(SqliteWriter::open(&database).expect("SAAA must be closed; acquire DB ownership"));
     state.sqlite_readers = SqliteReaders::open(&database).unwrap();
     state.data_directory = database.parent().unwrap().to_owned();
-    setup::seed(&state);
-    setup::configure_local_harness(&state);
+    setup::seed(&state).expect("E2E settings seed");
+    setup::configure_local_harness(&state).expect("E2E harness route");
     let before = state
         .sqlite_readers
         .read(crate::persistence::list_settings_documents)

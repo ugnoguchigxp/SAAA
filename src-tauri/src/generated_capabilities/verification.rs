@@ -16,47 +16,47 @@ use super::{
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AcceptanceIndex {
-    format_version: u32,
-    entries: Vec<AcceptanceIndexEntry>,
+    pub(super) format_version: u32,
+    pub(super) entries: Vec<AcceptanceIndexEntry>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AcceptanceIndexEntry {
-    id: String,
-    file: String,
-    hash: String,
+    pub(super) id: String,
+    pub(super) file: String,
+    pub(super) hash: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AcceptanceFile {
-    version: u32,
-    id: String,
-    capability_id: String,
-    contract: AcceptanceContract,
-    cases: Vec<AcceptanceCaseFile>,
+    pub(super) version: u32,
+    pub(super) id: String,
+    pub(super) capability_id: String,
+    pub(super) contract: AcceptanceContract,
+    pub(super) cases: Vec<AcceptanceCaseFile>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AcceptanceContract {
-    fields: Vec<AcceptanceField>,
+    pub(super) fields: Vec<AcceptanceField>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AcceptanceField {
-    name: String,
-    kind: String,
+    pub(super) name: String,
+    pub(super) kind: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AcceptanceCaseFile {
-    id: String,
-    input: Map<String, Value>,
-    expected: bool,
+    pub(super) id: String,
+    pub(super) input: Map<String, Value>,
+    pub(super) expected: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -78,7 +78,7 @@ pub struct AcceptanceRef {
 /// their own expectations.
 #[derive(Clone, Debug)]
 pub struct AcceptanceLedger {
-    directory: PathBuf,
+    pub(super) directory: PathBuf,
 }
 
 impl AcceptanceLedger {

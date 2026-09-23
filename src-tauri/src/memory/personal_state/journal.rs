@@ -11,16 +11,16 @@ use std::{
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
-    version: u32,
-    principal: String,
-    tombstones: BTreeMap<String, i64>,
+    pub(super) version: u32,
+    pub(super) principal: String,
+    pub(super) tombstones: BTreeMap<String, i64>,
     #[serde(default)]
-    records: BTreeMap<String, i64>,
+    pub(super) records: BTreeMap<String, i64>,
 }
 pub(crate) struct Journal {
-    path: PathBuf,
-    document: Document,
-    dirty: bool,
+    pub(super) path: PathBuf,
+    pub(super) document: Document,
+    pub(super) dirty: bool,
 }
 impl Journal {
     pub(crate) fn open(c: &Connection, path: PathBuf, allow_create: bool) -> Result<Self, String> {

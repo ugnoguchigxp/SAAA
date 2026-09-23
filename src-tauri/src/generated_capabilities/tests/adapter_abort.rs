@@ -7,7 +7,7 @@ use crate::runtime::agent_tools::AgentToolCall;
 use std::sync::Arc;
 use std::time::Duration;
 
-async fn ready(env: &TestEnv) -> (RevisionRef, GeneratedToolSnapshot) {
+pub(super) async fn ready(env: &TestEnv) -> (RevisionRef, GeneratedToolSnapshot) {
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let resolved = env
         .service
@@ -18,7 +18,7 @@ async fn ready(env: &TestEnv) -> (RevisionRef, GeneratedToolSnapshot) {
     (revision, snapshot)
 }
 
-fn call(snapshot: &GeneratedToolSnapshot) -> AgentToolCall {
+pub(super) fn call(snapshot: &GeneratedToolSnapshot) -> AgentToolCall {
     AgentToolCall {
         id: "provider-call".into(),
         name: snapshot.descriptors()[0].tool_name.clone(),
@@ -27,7 +27,7 @@ fn call(snapshot: &GeneratedToolSnapshot) -> AgentToolCall {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn x02_aborting_the_adapter_future_cancels_and_settles() {
+pub(super) async fn x02_aborting_the_adapter_future_cancels_and_settles() {
     let mut env = TestEnv::start(true);
     let temporary = tempfile::tempdir().unwrap();
     let (root, gate, marker) = super::hanging::install(temporary.path());
@@ -70,7 +70,7 @@ async fn x02_aborting_the_adapter_future_cancels_and_settles() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn x01b_in_flight_run_cancellation_reports_cancelled_and_settles() {
+pub(super) async fn x01b_in_flight_run_cancellation_reports_cancelled_and_settles() {
     let mut env = TestEnv::start(true);
     let temporary = tempfile::tempdir().unwrap();
     let (root, gate, marker) = super::hanging::install(temporary.path());

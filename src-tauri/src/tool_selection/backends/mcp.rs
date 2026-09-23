@@ -40,7 +40,7 @@ impl McpBinding {
 }
 
 pub struct McpBackend {
-    manager: Arc<McpManager>,
+    pub(super) manager: Arc<McpManager>,
 }
 
 impl McpBackend {

@@ -21,7 +21,8 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     )?;
     c.execute(
         "INSERT OR IGNORE INTO coding_settings VALUES(1,?1)",
-        [serde_json::to_string(&CodingSettings::default()).unwrap()],
+        [serde_json::to_string(&CodingSettings::default())
+            .expect("Coding settings defaults always encode as JSON")],
     )?;
     Ok(())
 }
@@ -120,7 +121,9 @@ pub fn inspect(
             truncated = true;
             break;
         }
-        next = row["sequence"].as_u64().unwrap();
+        next = row["sequence"]
+            .as_u64()
+            .ok_or_else(|| "Coding event sequence is missing".to_string())?;
         events.push(row);
     }
     value["events"] = json!(events);

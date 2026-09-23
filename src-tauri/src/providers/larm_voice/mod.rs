@@ -179,7 +179,9 @@ pub(crate) async fn end_larm_voice_session(
 async fn end(owner_id: &str) -> Result<(), String> {
     let mut current = OWNER.lock().await;
     if current.as_ref().is_some_and(|o| o.id == owner_id) {
-        let owner = current.as_ref().unwrap();
+        let Some(owner) = current.as_ref() else {
+            return Ok(());
+        };
         owner.cancel.send_replace(true);
         close_owner(owner).await?;
         *current = None;
@@ -309,12 +311,18 @@ mod tests {
         crate::persistence::schema::initialize_database(&connection).expect("schema initializes");
         let writer = crate::persistence::SqliteWriter::from_connection(connection);
         let first = current_lease_key(&writer).expect("lease slot is created");
-        assert_eq!(current_lease_key(&writer).unwrap(), first);
+        assert_eq!(
+            current_lease_key(&writer).expect("lease key should remain readable"),
+            first
+        );
         rotate_lease_key(&writer, &first).expect("confirmed release rotates the slot");
-        let second = current_lease_key(&writer).unwrap();
+        let second = current_lease_key(&writer).expect("rotated lease key should be readable");
         assert_ne!(second, first);
         rotate_lease_key(&writer, &first).expect("stale release is harmless");
-        assert_eq!(current_lease_key(&writer).unwrap(), second);
+        assert_eq!(
+            current_lease_key(&writer).expect("unchanged lease key should remain readable"),
+            second
+        );
     }
 
     #[tokio::test]

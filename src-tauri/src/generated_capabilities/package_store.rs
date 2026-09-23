@@ -14,7 +14,7 @@ use super::{
 /// Managed package area rooted at `<data directory>/generated-capabilities`.
 #[derive(Clone, Debug)]
 pub struct PackageStore {
-    root: PathBuf,
+    pub(super) root: PathBuf,
 }
 
 #[derive(Clone, Debug)]

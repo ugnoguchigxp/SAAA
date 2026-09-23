@@ -1,4 +1,5 @@
 #![cfg(test)]
+use rusqlite::Connection;
 use super::*;
 
 #[test]

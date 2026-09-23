@@ -32,10 +32,10 @@ pub(crate) struct AuthorizedFrame {
 }
 
 struct Header {
-    principal: String,
-    ledger_revision: u64,
-    input_epoch: u64,
-    policy_revision: u64,
+    pub(super) principal: String,
+    pub(super) ledger_revision: u64,
+    pub(super) input_epoch: u64,
+    pub(super) policy_revision: u64,
 }
 
 fn load_header(c: &Connection) -> Result<Header, FrameError> {

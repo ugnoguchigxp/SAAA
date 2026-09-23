@@ -61,10 +61,10 @@ fn authorize_input(input: &ActivateInputV2<'_>) -> Result<(), String> {
 }
 
 struct ScopeState {
-    revision: u64,
-    input_epoch: u64,
-    policy_revision: u64,
-    principal: String,
+    pub(super) revision: u64,
+    pub(super) input_epoch: u64,
+    pub(super) policy_revision: u64,
+    pub(super) principal: String,
 }
 
 fn scope_state(c: &Connection) -> Result<ScopeState, String> {

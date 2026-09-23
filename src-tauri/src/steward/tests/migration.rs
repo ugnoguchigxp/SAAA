@@ -1,9 +1,5 @@
-use crate::persistence::schema::initialize_database;
-use rusqlite::Connection;
-use std::fs;
-
 #[test]
-fn dw_r01_reopen_two_and_eight_active_goals() {
+pub(super) fn dw_r01_reopen_two_and_eight_active_goals() {
     let directory = tempfile::tempdir().expect("tmp");
     let path = directory.path().join("steward.sqlite");
     {
@@ -56,7 +52,7 @@ fn dw_r01_reopen_two_and_eight_active_goals() {
 }
 
 #[test]
-fn dw_r01_upgrade_legacy_goal_and_job() {
+pub(super) fn dw_r01_upgrade_legacy_goal_and_job() {
     let directory = tempfile::tempdir().expect("tmp");
     let path = directory.path().join("legacy.sqlite");
     {

@@ -21,5 +21,10 @@ use saaa_personal_state_core::world::traversal::{
 use saaa_personal_state_core::world::{normalize_name, WorldPayload, WorldSlice};
 use saaa_personal_state_core::{AccessRequest, Classification, Purpose};
 use std::collections::{BTreeMap, BTreeSet};
-include!("query.d/01.rs");
-include!("query.d/02.rs");
+#[path = "query/world_seed.rs"]
+mod world_seed;
+#[path = "query/focus_row.rs"]
+mod focus_row;
+pub use world_seed::{STALE, PENDING, UNKNOWN_SEED, AMBIGUOUS_SEED, WorldSeed, ActivateInput, activate};
+use world_seed::{EntityRow};
+use focus_row::{load_edges, enrich_relation, FocusRow, load_focus, collect_nodes};

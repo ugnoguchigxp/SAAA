@@ -23,7 +23,26 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-include!("service.d/01.rs");
-include!("service.d/02.rs");
-include!("service.d/03.rs");
-include!("service.d/04.rs");
+#[path = "service/search_candidate.rs"]
+mod search_candidate;
+#[path = "service/rank.rs"]
+mod rank;
+#[path = "service/persist_error.rs"]
+mod persist_error;
+#[path = "service/reconcile_interrupted_invocations.rs"]
+mod reconcile_interrupted_invocations;
+pub use search_candidate::{
+    SearchCandidate, SearchResponse, DescribeResponse, InvokeResponse, ResultPageResponse,
+    TurnOutcome, ToolSelectionService,
+};
+use search_candidate::{
+    SEARCH_CANDIDATE_POOL, BACKEND_TIMEOUT_MS, EMBED_BATCH_SIZE, MAX_SEARCH_ATTEMPTS, Snapshot,
+    RankOutcome,
+};
+use persist_error::{CHANGED, PersistError};
+pub use reconcile_interrupted_invocations::reconcile_interrupted_invocations;
+pub use persist_error::ensure_principal;
+use reconcile_interrupted_invocations::{
+    write_transaction, title_and_summary, validate_arguments, encode_cursor, decode_cursor,
+};
+// Methods (search, describe, invoke, new, …) live on ToolSelectionService via impls in children.

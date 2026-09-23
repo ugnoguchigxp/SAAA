@@ -6,7 +6,7 @@ use crate::generated_capabilities::{publication::GeneratedToolSnapshot, tools};
 use crate::runtime::agent_tools::AgentToolCall;
 use std::time::Duration;
 
-async fn ready(env: &TestEnv) -> (RevisionRef, GeneratedToolSnapshot) {
+pub(super) async fn ready(env: &TestEnv) -> (RevisionRef, GeneratedToolSnapshot) {
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let resolved = env
         .service
@@ -17,7 +17,7 @@ async fn ready(env: &TestEnv) -> (RevisionRef, GeneratedToolSnapshot) {
     (revision, snapshot)
 }
 
-fn call(snapshot: &GeneratedToolSnapshot) -> AgentToolCall {
+pub(super) fn call(snapshot: &GeneratedToolSnapshot) -> AgentToolCall {
     AgentToolCall {
         id: "provider-call".into(),
         name: snapshot.descriptors()[0].tool_name.clone(),
@@ -26,7 +26,7 @@ fn call(snapshot: &GeneratedToolSnapshot) -> AgentToolCall {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn x04_the_adapter_deadline_times_out_cancels_and_settles() {
+pub(super) async fn x04_the_adapter_deadline_times_out_cancels_and_settles() {
     let mut env = TestEnv::start(true);
     let temporary = tempfile::tempdir().unwrap();
     let (root, gate, marker) = super::hanging::install(temporary.path());
@@ -63,7 +63,7 @@ async fn x04_the_adapter_deadline_times_out_cancels_and_settles() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn x04b_expired_budget_is_rejected_before_any_call_row() {
+pub(super) async fn x04b_expired_budget_is_rejected_before_any_call_row() {
     let env = TestEnv::start(true);
     let (_revision, snapshot) = ready(&env).await;
     let call = call(&snapshot);

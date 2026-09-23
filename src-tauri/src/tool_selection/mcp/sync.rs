@@ -50,8 +50,8 @@ pub struct SyncOutcome {
 }
 
 struct ExistingTool {
-    enabled: bool,
-    current_revision_id: Option<String>,
+    pub(super) enabled: bool,
+    pub(super) current_revision_id: Option<String>,
 }
 
 /// Runs a full sync and publishes it atomically. `owner_principal` is the host-confirmed local

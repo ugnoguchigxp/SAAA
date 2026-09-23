@@ -4,23 +4,25 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use super::backends::{BackendOutcome, BackendRequest, FixtureBackend, ToolBackend};
-use super::catalog::{self, CatalogEntry, UsagePage};
-use super::contracts::*;
-use super::extraction::{CorrectionExtractor, FixtureExtractor};
-use super::feedback::ParsedExtraction;
+pub(super) use super::*;
+pub(super) use super::backends::{BackendOutcome, BackendRequest, FixtureBackend, ToolBackend};
+pub(super) use super::catalog::{self, CatalogEntry, UsagePage};
+pub(super) use super::contracts::*;
+pub(super) use super::extraction::{CorrectionExtractor, FixtureExtractor};
+pub(super) use super::feedback::ParsedExtraction;
 use super::inference::{
     EmbedKind, EmbeddingProvider, FixedReranker, InferenceError, RerankProvider,
 };
-use super::repository::{self, Epochs};
-use super::service::ToolSelectionService;
-use crate::persistence::SqliteWriter;
-use async_trait::async_trait;
-use rusqlite::{Connection, TransactionBehavior};
-use serde_json::{json, Value};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-include!("mod.d/01.rs");
-include!("mod.d/02.rs");
-include!("mod.d/03.rs");
-include!("mod.d/04.rs");
+pub(super) use super::repository::{self, Epochs};
+pub(super) use super::service::ToolSelectionService;
+pub(super) use crate::persistence::SqliteWriter;
+pub(super) use async_trait::async_trait;
+pub(super) use rusqlite::{Connection, TransactionBehavior};
+pub(super) use serde_json::{json, Value};
+pub(super) use std::sync::atomic::{AtomicUsize, Ordering};
+pub(super) use std::sync::{Arc, Mutex};
+mod constant_embedding;
+pub(super) use constant_embedding::*;
+mod g03_other_object_type_keeps_the_base_order;
+mod g19_old_execution_ref_is_stale_after_a_revision_;
+mod mixed_backend;

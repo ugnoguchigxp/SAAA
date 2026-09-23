@@ -73,11 +73,11 @@ pub(crate) fn interrupt(writer: &SqliteWriter, kind: ExecutionKind, id: &str) {
 /// Owns the registry entry of one accepted execution. Dropping it releases the entry and moves a
 /// record that never reached a terminal status to `interrupted`.
 pub(crate) struct ExecutionGuard<'a> {
-    registry: &'a ExecutionRegistry,
-    writer: &'a SqliteWriter,
-    id: String,
-    kind: ExecutionKind,
-    settled: bool,
+    pub(super) registry: &'a ExecutionRegistry,
+    pub(super) writer: &'a SqliteWriter,
+    pub(super) id: String,
+    pub(super) kind: ExecutionKind,
+    pub(super) settled: bool,
 }
 
 impl<'a> ExecutionGuard<'a> {

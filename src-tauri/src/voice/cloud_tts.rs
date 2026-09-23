@@ -301,10 +301,11 @@ mod tests {
 
     #[test]
     fn startup_cleanup_removes_only_owned_tts_artifacts() {
-        let directory = tempfile::tempdir().unwrap();
-        std::fs::write(directory.path().join("tts-stale.wav"), b"audio").unwrap();
-        std::fs::write(directory.path().join("keep.txt"), b"keep").unwrap();
-        cleanup_cache(directory.path()).unwrap();
+        let directory = tempfile::tempdir().expect("temporary TTS cache directory");
+        std::fs::write(directory.path().join("tts-stale.wav"), b"audio")
+            .expect("stale TTS fixture writes");
+        std::fs::write(directory.path().join("keep.txt"), b"keep").expect("keep fixture writes");
+        cleanup_cache(directory.path()).expect("TTS cache cleanup");
         assert!(!directory.path().join("tts-stale.wav").exists());
         assert!(directory.path().join("keep.txt").exists());
     }

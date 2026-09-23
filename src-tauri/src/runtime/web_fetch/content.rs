@@ -259,7 +259,10 @@ impl ContentFetcher for FakeContentFetcher {
         if cancellation.is_cancelled() {
             return Err(WebFetchFailure::cancelled());
         }
-        self.seen.lock().unwrap().push(request.url.clone());
+        self.seen
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(request.url.clone());
         match &self.result {
             Ok(result) => Ok(result.clone()),
             Err(failure) => Err(failure.clone()),

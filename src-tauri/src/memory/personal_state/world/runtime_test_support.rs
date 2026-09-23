@@ -29,8 +29,8 @@ pub(crate) struct Fixture {
     pub(crate) principal: String,
     pub(crate) policy_revision: u64,
     pub(crate) project: String,
-    _tempdir: Option<tempfile::TempDir>,
-    db_path: Option<std::path::PathBuf>,
+    pub(crate) _tempdir: Option<tempfile::TempDir>,
+    pub(crate) db_path: Option<std::path::PathBuf>,
 }
 
 impl Fixture {

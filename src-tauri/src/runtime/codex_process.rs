@@ -14,6 +14,17 @@ use crate::{
 };
 use serde_json::{json, Value};
 use std::sync::mpsc;
-include!("codex_process.d/01.rs");
-include!("codex_process.d/02.rs");
-include!("codex_process.d/03.rs");
+#[path = "codex_process/developer_instructions.rs"]
+mod developer_instructions;
+#[path = "codex_process/run_codex_turn_process_with_dispatch.rs"]
+mod run_codex_turn_process_with_dispatch;
+use developer_instructions::developer_instructions;
+pub(crate) use run_codex_turn_process_with_dispatch::run_codex_turn_process_with_dispatch;
+#[cfg(test)]
+pub(crate) use developer_instructions::{
+    run_codex_turn_process, run_codex_turn_process_with_policy,
+    run_codex_turn_process_with_policy_and_context,
+};
+#[cfg(test)]
+#[path = "codex_process/tests.rs"]
+mod tests;

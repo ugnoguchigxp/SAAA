@@ -2,7 +2,7 @@ use super::*;
 use crate::generated_capabilities::recovery;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn r01_interrupted_rows_are_recovered_without_spawning() {
+pub(super) async fn r01_interrupted_rows_are_recovered_without_spawning() {
     let env = TestEnv::start(true);
     let revision = env.import_a().await;
     let revision_id = revision.revision_id.clone();
@@ -56,7 +56,7 @@ async fn r01_interrupted_rows_are_recovered_without_spawning() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn r02_missing_or_changed_payload_stops_the_capability() {
+pub(super) async fn r02_missing_or_changed_payload_stops_the_capability() {
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let epoch_before = env.service.catalog_epoch(&revision.capability_id).unwrap();
@@ -112,7 +112,7 @@ async fn r02_missing_or_changed_payload_stops_the_capability() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn r03_packages_without_a_catalog_row_are_reported_not_published() {
+pub(super) async fn r03_packages_without_a_catalog_row_are_reported_not_published() {
     let env = TestEnv::start(true);
     let orphan = env.service.store().root().join("packages").join("deadbeef");
     std::fs::create_dir_all(&orphan).unwrap();
@@ -131,7 +131,7 @@ async fn r03_packages_without_a_catalog_row_are_reported_not_published() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn r04_restart_keeps_the_catalog_without_running_candidates() {
+pub(super) async fn r04_restart_keeps_the_catalog_without_running_candidates() {
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let epoch = env.service.catalog_epoch(&revision.capability_id).unwrap();

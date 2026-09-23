@@ -1,13 +1,15 @@
 //! Product HTTP orchestration; synthetic v1 adapters are not a production fallback.
-use super::{
+pub(super) use super::{
     generation::{self, Manifest},
     managed::Adapter,
 };
 use crate::{database_error, RunCancellation};
+pub(super) use crate::persistence::SqliteWriter;
 use saaa_larm_session::personal_state::Capability;
 use saaa_personal_state_core::SourceRef;
-use serde_json::Value;
+pub(super) use serde_json::{json, Value};
 use std::sync::Arc;
+pub(super) use rusqlite::Connection;
 pub struct Product {
     pub can_generate: bool,
     pub capability: Capability,

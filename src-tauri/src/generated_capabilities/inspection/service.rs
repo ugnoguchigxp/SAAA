@@ -26,5 +26,9 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-include!("service.d/01.rs");
-include!("service.d/02.rs");
+#[path = "service/inspection_store.rs"]
+mod inspection_store;
+pub use inspection_store::{INSPECTION_DIRECTORY, TYPESCRIPT_FILE, REPORT_FILE, Inspector, InspectionStore, InspectionService};
+#[cfg(test)]
+#[path = "service/tests.rs"]
+mod tests;

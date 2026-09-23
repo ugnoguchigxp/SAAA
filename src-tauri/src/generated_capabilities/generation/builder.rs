@@ -179,8 +179,8 @@ pub fn build_candidate(kit: &GenerationKit, workspace: &Path) -> CapabilityResul
 /// Trusted inspector backed by the same kit (`inspect` command). The candidate's own JavaScript is
 /// never executed; the kit reads the package and returns the fixed report.
 pub struct KitInspector {
-    kit: std::sync::Arc<GenerationKit>,
-    workspace_root: PathBuf,
+    pub(super) kit: std::sync::Arc<GenerationKit>,
+    pub(super) workspace_root: PathBuf,
 }
 
 impl KitInspector {

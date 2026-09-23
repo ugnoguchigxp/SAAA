@@ -16,12 +16,12 @@ pub struct Candidate {
 
 #[derive(Debug, Clone)]
 pub struct Hysteresis {
-    stable: SituationState,
-    candidate_scene: String,
-    candidate_since: String,
-    candidate_count: u8,
-    exit_count: u8,
-    last_transition_ms: u128,
+    pub(super) stable: SituationState,
+    pub(super) candidate_scene: String,
+    pub(super) candidate_since: String,
+    pub(super) candidate_count: u8,
+    pub(super) exit_count: u8,
+    pub(super) last_transition_ms: u128,
 }
 
 impl Hysteresis {

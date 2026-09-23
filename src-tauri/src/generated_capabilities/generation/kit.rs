@@ -29,33 +29,33 @@ pub const MAX_KIT_STDERR_BYTES: usize = 64 * 1024;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct KitManifest {
-    format_version: u32,
-    entrypoint: String,
-    commands: KitCommands,
-    bun_version: String,
-    llang_version: Option<String>,
-    llang_dirty: Option<bool>,
-    files: BTreeMap<String, String>,
-    digest: String,
+    pub(super) format_version: u32,
+    pub(super) entrypoint: String,
+    pub(super) commands: KitCommands,
+    pub(super) bun_version: String,
+    pub(super) llang_version: Option<String>,
+    pub(super) llang_dirty: Option<bool>,
+    pub(super) files: BTreeMap<String, String>,
+    pub(super) digest: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct KitCommands {
-    package: String,
-    inspect: String,
+    pub(super) package: String,
+    pub(super) inspect: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct GenerationKit {
-    root: PathBuf,
-    entrypoint: PathBuf,
-    bun_path: PathBuf,
+    pub(super) root: PathBuf,
+    pub(super) entrypoint: PathBuf,
+    pub(super) bun_path: PathBuf,
     pub digest: String,
     pub bun_version: String,
     pub llang_version: String,
     pub llang_dirty: bool,
-    files: BTreeMap<String, String>,
+    pub(super) files: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]

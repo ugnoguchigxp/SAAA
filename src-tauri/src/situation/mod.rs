@@ -11,7 +11,9 @@ mod speech;
 mod tick;
 use crate::persistence::{SqliteReaders, SqliteWriter};
 use classifier::{classify_with_parameters, shadow_policy, Hysteresis};
-use contracts::{
+#[cfg(test)]
+pub(super) use classifier::classify;
+pub(super) use contracts::{
     initial_decision, initial_signals, initial_state, AudioSignal, AudioState, CalendarSignal,
     CalendarState, CalibrationParameters, ConversationSignal, ConversationState,
     ForegroundCategory, ForegroundSignal, InputActivitySignal, InputActivityState,
@@ -31,9 +33,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Notify;
-include!("mod.d/01.rs");
-include!("mod.d/02.rs");
-#[cfg(test)]
-mod tests {
-    include!("mod.d/03.rs");
-}
+mod situation_runtime;
+use situation_runtime::accumulate_quality;
+mod health_signals;
+pub(crate) use situation_runtime::{SituationRuntime, validate_settings, validate_scene};
+pub(crate) use situation_runtime::{SituationSample};
+use situation_runtime::{MAX_EVENTS, RuntimeInner};
+use health_signals::{signal_health, push_event, epoch_millis, fresh_owned};
+mod tests;

@@ -62,8 +62,8 @@ pub(crate) trait Packager: Send + Sync {
 }
 
 pub(crate) struct KitPackager {
-    kit: Arc<GenerationKit>,
-    workspace_root: PathBuf,
+    pub(super) kit: Arc<GenerationKit>,
+    pub(super) workspace_root: PathBuf,
 }
 
 impl KitPackager {
@@ -148,7 +148,7 @@ impl Packager for FixturePackager {
 #[cfg(test)]
 pub(crate) struct SequencePackager {
     pub directories: Vec<PathBuf>,
-    index: std::sync::atomic::AtomicUsize,
+    pub(super) index: std::sync::atomic::AtomicUsize,
 }
 
 #[cfg(test)]

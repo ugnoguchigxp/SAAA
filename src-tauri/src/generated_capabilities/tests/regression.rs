@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn i07_import_shares_the_single_execution_slot() {
+pub(super) async fn i07_import_shares_the_single_execution_slot() {
     let env = TestEnv::start(false);
     let permit = env
         .service
@@ -27,7 +27,7 @@ async fn i07_import_shares_the_single_execution_slot() {
     assert!(env.import(CANDIDATE_A, ACCEPTANCE_A).await.is_ok());
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn l05_promotion_requires_the_current_runtime_and_an_intact_payload() {
+pub(super) async fn l05_promotion_requires_the_current_runtime_and_an_intact_payload() {
     // (a) A revision verified under one runtime cannot be promoted by a service trusting a
     // different runtime, and cannot be invoked there either.
     let env = TestEnv::start(true);
@@ -110,7 +110,7 @@ async fn l05_promotion_requires_the_current_runtime_and_an_intact_payload() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn v05_a_revision_stopped_during_verification_leaves_no_running_check() {
+pub(super) async fn v05_a_revision_stopped_during_verification_leaves_no_running_check() {
     let env = TestEnv::start(false);
     let revision = env.import_a().await;
     assert!(env.verify(&revision, ACCEPTANCE_A).await.unwrap().passed);
@@ -167,7 +167,7 @@ async fn v05_a_revision_stopped_during_verification_leaves_no_running_check() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn s04_an_abandoned_caller_does_not_leak_an_execution_registration() {
+pub(super) async fn s04_an_abandoned_caller_does_not_leak_an_execution_registration() {
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let resolved = env

@@ -142,24 +142,24 @@ pub fn parse_rerank_response(
 }
 
 struct WorkerChild {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    pub(super) child: Child,
+    pub(super) stdin: ChildStdin,
+    pub(super) stdout: BufReader<ChildStdout>,
 }
 
 /// Fixed local worker. Requests are serialized; a timeout or protocol failure kills the process so
 /// a late answer cannot leak into the next request.
 pub struct MlWorker {
-    python_path: PathBuf,
-    script_path: PathBuf,
-    manifest_path: PathBuf,
-    model: ModelManifest,
-    child: tokio::sync::Mutex<Option<WorkerChild>>,
-    pending: tokio::sync::Semaphore,
-    embedding_loaded: std::sync::atomic::AtomicBool,
-    reranker_loaded: std::sync::atomic::AtomicBool,
-    spawn_failures: std::sync::atomic::AtomicU32,
-    disabled: std::sync::atomic::AtomicBool,
+    pub(super) python_path: PathBuf,
+    pub(super) script_path: PathBuf,
+    pub(super) manifest_path: PathBuf,
+    pub(super) model: ModelManifest,
+    pub(super) child: tokio::sync::Mutex<Option<WorkerChild>>,
+    pub(super) pending: tokio::sync::Semaphore,
+    pub(super) embedding_loaded: std::sync::atomic::AtomicBool,
+    pub(super) reranker_loaded: std::sync::atomic::AtomicBool,
+    pub(super) spawn_failures: std::sync::atomic::AtomicU32,
+    pub(super) disabled: std::sync::atomic::AtomicBool,
 }
 
 impl MlWorker {

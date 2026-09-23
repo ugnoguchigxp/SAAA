@@ -69,9 +69,9 @@ pub struct SseEvent {
 /// sequence at the end of a chunk is retained until the continuation arrives.
 #[derive(Default)]
 pub struct SseDecoder {
-    pending: Vec<u8>,
-    current: SseEvent,
-    saw_data: bool,
+    pub(super) pending: Vec<u8>,
+    pub(super) current: SseEvent,
+    pub(super) saw_data: bool,
 }
 
 impl SseDecoder {
@@ -144,8 +144,8 @@ impl SseDecoder {
 
 /// Reads `data:` JSON-RPC messages from a byte stream, enforcing the event size bound.
 pub struct SseReader {
-    decoder: SseDecoder,
-    total_bytes: usize,
+    pub(super) decoder: SseDecoder,
+    pub(super) total_bytes: usize,
 }
 
 impl SseReader {
@@ -196,12 +196,12 @@ impl Default for SseReader {
 /// A client for exactly one MCP Streamable HTTP endpoint. Session state lives here so the
 /// session state machine above does not need to know about HTTP headers.
 pub struct HttpTransport {
-    client: reqwest::Client,
-    url: String,
-    token: Option<String>,
-    session_id: Mutex<Option<String>>,
-    protocol_version: String,
-    closed: Mutex<bool>,
+    pub(super) client: reqwest::Client,
+    pub(super) url: String,
+    pub(super) token: Option<String>,
+    pub(super) session_id: Mutex<Option<String>>,
+    pub(super) protocol_version: String,
+    pub(super) closed: Mutex<bool>,
 }
 
 pub type EventReceiver = mpsc::UnboundedReceiver<Value>;

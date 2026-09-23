@@ -40,8 +40,8 @@ pub fn router(inner: Arc<ServerInner>) -> Router {
 }
 
 struct RpcReply {
-    value: Value,
-    session_id: Option<String>,
+    pub(super) value: Value,
+    pub(super) session_id: Option<String>,
 }
 
 impl RpcReply {

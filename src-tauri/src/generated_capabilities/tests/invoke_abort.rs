@@ -2,7 +2,7 @@ use super::*;
 use crate::generated_capabilities::service::InvokeRequest;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn s02_abort_cancels_started_process_and_releases_capacity() {
+pub(super) async fn s02_abort_cancels_started_process_and_releases_capacity() {
     let mut env = TestEnv::start(true);
     let temporary = tempfile::tempdir().unwrap();
     let (root, gate, marker) = super::hanging::install(temporary.path());

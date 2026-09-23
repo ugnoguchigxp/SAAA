@@ -1,6 +1,6 @@
 use super::*;
 
-fn hash_columns(
+pub(super) fn hash_columns(
     env: &TestEnv,
     revision_id: &str,
 ) -> (Option<String>, Option<String>, Option<String>) {
@@ -18,7 +18,7 @@ fn hash_columns(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn v01_a_valid_candidate_becomes_validated_with_recorded_hashes() {
+pub(super) async fn v01_a_valid_candidate_becomes_validated_with_recorded_hashes() {
     let env = TestEnv::start(false);
     let revision = env.import_a().await;
     let report = env
@@ -39,7 +39,7 @@ async fn v01_a_valid_candidate_becomes_validated_with_recorded_hashes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn v02_mismatched_acceptance_never_validates() {
+pub(super) async fn v02_mismatched_acceptance_never_validates() {
     // (a) A is imported with B's expectations: the acceptance cases disagree.
     let env = TestEnv::start(false);
     let revision = env
@@ -75,7 +75,7 @@ async fn v02_mismatched_acceptance_never_validates() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn v03_double_verify_and_suspended_revisions_are_refused() {
+pub(super) async fn v03_double_verify_and_suspended_revisions_are_refused() {
     let env = TestEnv::start(false);
     let revision = env.import_a().await;
 
@@ -137,7 +137,7 @@ async fn v03_double_verify_and_suspended_revisions_are_refused() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn v04_cancellation_aborts_verification_without_validating() {
+pub(super) async fn v04_cancellation_aborts_verification_without_validating() {
     let env = TestEnv::start(false);
     let revision = env.import_a().await;
     let cancellation = Cancellation::default();
@@ -160,7 +160,7 @@ async fn v04_cancellation_aborts_verification_without_validating() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn l01_activation_requires_a_passed_check_for_the_current_runtime() {
+pub(super) async fn l01_activation_requires_a_passed_check_for_the_current_runtime() {
     let env = TestEnv::start(true);
     let revision = env.import_a().await;
 
@@ -201,7 +201,7 @@ async fn l01_activation_requires_a_passed_check_for_the_current_runtime() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn l02_switching_to_a_passing_candidate_keeps_epoch_and_states() {
+pub(super) async fn l02_switching_to_a_passing_candidate_keeps_epoch_and_states() {
     let env = TestEnv::start(true);
     let a = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let epoch_before = env.service.catalog_epoch(&a.capability_id).unwrap();
@@ -233,7 +233,7 @@ async fn l02_switching_to_a_passing_candidate_keeps_epoch_and_states() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn l03_two_activations_at_the_same_epoch_conflict() {
+pub(super) async fn l03_two_activations_at_the_same_epoch_conflict() {
     let env = TestEnv::start(true);
     let a = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let epoch = env.service.catalog_epoch(&a.capability_id).unwrap();
@@ -255,7 +255,7 @@ async fn l03_two_activations_at_the_same_epoch_conflict() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn l04_transaction_failure_rolls_back_pointers_states_and_epoch() {
+pub(super) async fn l04_transaction_failure_rolls_back_pointers_states_and_epoch() {
     let env = TestEnv::start(true);
     let a = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let epoch_before = env.service.catalog_epoch(&a.capability_id).unwrap();

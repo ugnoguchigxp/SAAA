@@ -1,8 +1,7 @@
 //! Owner diagnostics keep only phase names and states, never source/credential payloads.
-use super::super::managed::Adapter;
-use crate::database_error;
+use super::*;
 use rusqlite::Connection;
-use serde_json::{json, Value};
+use serde_json::json;
 pub fn record(a: &Adapter, id: &str, v: &Value) -> Result<(), String> {
     let cap = &a
         .product

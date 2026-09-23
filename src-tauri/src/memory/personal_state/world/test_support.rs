@@ -11,5 +11,10 @@ use saaa_personal_state_core::world::*;
 use saaa_personal_state_core::*;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-include!("test_support.d/01.rs");
-include!("test_support.d/02.rs");
+#[path = "test_support/built_assertion.rs"]
+mod built_assertion;
+#[path = "test_support/v2_spec.rs"]
+mod v2_spec;
+
+pub use built_assertion::*;
+pub use v2_spec::*;

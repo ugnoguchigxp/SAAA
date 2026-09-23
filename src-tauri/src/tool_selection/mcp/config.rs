@@ -106,28 +106,28 @@ impl McpSources {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SourcesDocument {
-    format_version: u32,
-    sources: Vec<SourceDocument>,
+    pub(super) format_version: u32,
+    pub(super) sources: Vec<SourceDocument>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SourceDocument {
-    id: String,
-    url: String,
+    pub(super) id: String,
+    pub(super) url: String,
     #[serde(default = "default_enabled")]
-    enabled: bool,
-    bearer_token_env: Option<String>,
+    pub(super) enabled: bool,
+    pub(super) bearer_token_env: Option<String>,
     #[serde(default)]
-    grants: Vec<GrantDocument>,
+    pub(super) grants: Vec<GrantDocument>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GrantDocument {
-    tool_name: String,
-    scope_kind: String,
-    project_id: Option<String>,
+    pub(super) tool_name: String,
+    pub(super) scope_kind: String,
+    pub(super) project_id: Option<String>,
 }
 
 fn default_enabled() -> bool {

@@ -56,25 +56,97 @@ mod tests {
 
 #[cfg(test)]
 mod dwr_tests {
+    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
+    pub(super) use super::repository as repo;
+    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
+    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(super) use crate::persistence::schema::initialize_database;
+    pub(super) use crate::runtime::turns::prepare_runtime_run;
+    pub(super) use crate::test_support::app_state;
+    pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
+    pub(super) use rusqlite::{params, Connection};
+    pub(super) use std::fs;
+    pub(super) use std::path::Path;
+    pub(super) use std::sync::mpsc;
+    pub(super) use std::sync::{Mutex, OnceLock};
+    pub(super) use std::time::{Duration, Instant};
     include!("tests/dwr.rs");
 }
 
 #[cfg(test)]
 mod migration_tests {
+    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
+    pub(super) use super::repository as repo;
+    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
+    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(super) use crate::persistence::schema::initialize_database;
+    pub(super) use crate::runtime::turns::prepare_runtime_run;
+    pub(super) use crate::test_support::app_state;
+    pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
+    pub(super) use rusqlite::{params, Connection};
+    pub(super) use std::fs;
+    pub(super) use std::path::Path;
+    pub(super) use std::sync::mpsc;
+    pub(super) use std::sync::{Mutex, OnceLock};
+    pub(super) use std::time::{Duration, Instant};
+    pub(super) use crate::persistence::schema::DATABASE_SCHEMA_VERSION;
     include!("tests/migration.rs");
 }
 
 #[cfg(test)]
 mod latency_tests {
+    pub(crate) use super::pump::Wake;
+    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
+    pub(super) use super::repository as repo;
+    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
+    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(super) use crate::persistence::schema::initialize_database;
+    pub(super) use crate::runtime::turns::prepare_runtime_run;
+    pub(super) use crate::test_support::app_state;
+    pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
+    pub(super) use rusqlite::{params, Connection};
+    pub(super) use std::fs;
+    pub(super) use std::path::Path;
+    pub(super) use std::sync::mpsc;
+    pub(super) use std::sync::{Mutex, OnceLock};
+    pub(super) use std::time::{Duration, Instant};
     include!("tests/latency.rs");
 }
 
 #[cfg(test)]
 mod rf5_tests {
+    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
+    pub(super) use super::repository as repo;
+    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
+    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(super) use crate::persistence::schema::initialize_database;
+    pub(super) use crate::runtime::turns::prepare_runtime_run;
+    pub(super) use crate::test_support::app_state;
+    pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
+    pub(super) use rusqlite::{params, Connection};
+    pub(super) use std::fs;
+    pub(super) use std::path::Path;
+    pub(super) use std::sync::mpsc;
+    pub(super) use std::sync::{Mutex, OnceLock};
+    pub(super) use std::time::{Duration, Instant};
     include!("tests/rf5.rs");
 }
 
 #[cfg(test)]
 mod sc_tests {
+    pub(crate) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, TaskPlan, Verifier};
+    pub(super) use super::repository as repo;
+    pub(crate) use super::{authority, budget, commands, evidence, intake, invalidation, queue, verifier, views, pump, faults};
+    pub(super) use super::{flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
+    pub(super) use crate::persistence::schema::initialize_database;
+    pub(super) use crate::runtime::turns::prepare_runtime_run;
+    pub(super) use crate::test_support::app_state;
+    pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
+    pub(super) use rusqlite::{params, Connection};
+    pub(super) use std::fs;
+    pub(super) use std::path::Path;
+    pub(super) use std::sync::mpsc;
+    pub(super) use std::sync::{Mutex, OnceLock};
+    pub(super) use std::time::{Duration, Instant};
     include!("tests/sc.rs");
 }

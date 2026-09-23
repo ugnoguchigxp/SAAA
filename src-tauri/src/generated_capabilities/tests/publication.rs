@@ -6,18 +6,18 @@ use crate::generated_capabilities::publication::{
     self, GeneratedToolSnapshot, GeneratedToolsConfig, MAX_DEFINITIONS_BYTES, MAX_PUBLISHED_TOOLS,
 };
 
-fn write_config(value: Value) -> (tempfile::TempDir, PathBuf) {
+pub(super) fn write_config(value: Value) -> (tempfile::TempDir, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("generated-tools.json");
     fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     (directory, path)
 }
 
-fn enabled(ids: Vec<&str>) -> Value {
+pub(super) fn enabled(ids: Vec<&str>) -> Value {
     json!({ "formatVersion": 1, "enabled": true, "capabilityIds": ids })
 }
 
-fn contract(names: &[&str]) -> WasmContract {
+pub(super) fn contract(names: &[&str]) -> WasmContract {
     WasmContract {
         version: 1,
         fields: names
@@ -34,7 +34,7 @@ fn contract(names: &[&str]) -> WasmContract {
     }
 }
 
-fn resolved(
+pub(super) fn resolved(
     index: usize,
     contract: WasmContract,
 ) -> crate::generated_capabilities::contracts::ResolvedCapability {
@@ -49,7 +49,7 @@ fn resolved(
 }
 
 #[test]
-fn p01_no_config_disabled_or_empty_list_publishes_nothing() {
+pub(super) fn p01_no_config_disabled_or_empty_list_publishes_nothing() {
     assert!(!GeneratedToolsConfig::from_path(None).enabled);
     let (_directory, disabled) = write_config(json!({
         "formatVersion": 1,
@@ -66,7 +66,7 @@ fn p01_no_config_disabled_or_empty_list_publishes_nothing() {
 }
 
 #[test]
-fn p02_malformed_configs_disable_publication_without_failing_startup() {
+pub(super) fn p02_malformed_configs_disable_publication_without_failing_startup() {
     let cases = [
         json!({ "formatVersion": 2, "enabled": true, "capabilityIds": [] }),
         json!({ "formatVersion": 1, "enabled": true, "capabilityIds": [], "extra": 1 }),
@@ -97,7 +97,7 @@ fn p02_malformed_configs_disable_publication_without_failing_startup() {
 }
 
 #[test]
-fn p02b_relative_config_path_is_rejected_before_read() {
+pub(super) fn p02b_relative_config_path_is_rejected_before_read() {
     // A relative path would resolve against the launch directory, so it must
     // never enable publication even if a matching file exists in the cwd.
     let config =
@@ -107,7 +107,7 @@ fn p02b_relative_config_path_is_rejected_before_read() {
 }
 
 #[test]
-fn p04_names_come_from_the_revision_and_schema_is_the_strict_boolean_subset() {
+pub(super) fn p04_names_come_from_the_revision_and_schema_is_the_strict_boolean_subset() {
     let snapshot = GeneratedToolSnapshot::build(vec![resolved(0, contract(&["alpha", "beta"]))])
         .expect("snapshot builds");
     let descriptor = &snapshot.descriptors()[0];
@@ -136,7 +136,7 @@ fn p04_names_come_from_the_revision_and_schema_is_the_strict_boolean_subset() {
 }
 
 #[test]
-fn p05_definition_limit_rejects_the_whole_offer_without_truncation() {
+pub(super) fn p05_definition_limit_rejects_the_whole_offer_without_truncation() {
     let long: Vec<String> = (0..8)
         .map(|index| format!("field{index}_{}", "x".repeat(240)))
         .collect();
@@ -162,7 +162,7 @@ fn p05_definition_limit_rejects_the_whole_offer_without_truncation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn p03_and_p06_only_the_allowlisted_active_revision_is_resolved() {
+pub(super) async fn p03_and_p06_only_the_allowlisted_active_revision_is_resolved() {
     // P03: an active capability that is not on the allowlist is never resolved.
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;

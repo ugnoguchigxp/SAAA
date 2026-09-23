@@ -11,15 +11,15 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 struct Host {
-    cap: Capability,
-    log: Arc<Mutex<Vec<String>>>,
-    state: Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
-    partial: bool,
-    wrong_subject: bool,
-    lost_source: bool,
-    forget_writer: Arc<Mutex<Option<Arc<SqliteWriter>>>>,
-    pause_source: Arc<std::sync::atomic::AtomicBool>,
-    source_arrived: Arc<tokio::sync::Notify>,
+    pub(super) cap: Capability,
+    pub(super) log: Arc<Mutex<Vec<String>>>,
+    pub(super) state: Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
+    pub(super) partial: bool,
+    pub(super) wrong_subject: bool,
+    pub(super) lost_source: bool,
+    pub(super) forget_writer: Arc<Mutex<Option<Arc<SqliteWriter>>>>,
+    pub(super) pause_source: Arc<std::sync::atomic::AtomicBool>,
+    pub(super) source_arrived: Arc<tokio::sync::Notify>,
 }
 async fn http(State(h): State<Host>, req: Request) -> Response {
     let path = req.uri().path().to_string();

@@ -39,9 +39,9 @@ pub struct GeneratedToolsConfig {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GeneratedToolsConfigFile {
-    format_version: u32,
-    enabled: bool,
-    capability_ids: Vec<String>,
+    pub(super) format_version: u32,
+    pub(super) enabled: bool,
+    pub(super) capability_ids: Vec<String>,
 }
 
 impl GeneratedToolsConfig {
@@ -123,8 +123,8 @@ pub struct GeneratedToolDescriptor {
 /// offered to the revision that must run, so a later catalog change can never swap the target.
 #[derive(Clone, Debug, Default)]
 pub struct GeneratedToolSnapshot {
-    descriptors: Vec<GeneratedToolDescriptor>,
-    by_name: std::collections::HashMap<String, usize>,
+    pub(super) descriptors: Vec<GeneratedToolDescriptor>,
+    pub(super) by_name: std::collections::HashMap<String, usize>,
 }
 
 impl GeneratedToolSnapshot {

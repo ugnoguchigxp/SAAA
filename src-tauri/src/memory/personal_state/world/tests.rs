@@ -9,7 +9,13 @@ use saaa_personal_state_core::world::traversal::{CausalDirection, Limits, Traver
 use saaa_personal_state_core::world::*;
 use saaa_personal_state_core::*;
 use serde_json::json;
-include!("tests.d/01.rs");
-include!("tests.d/02.rs");
-include!("tests.d/03.rs");
-include!("tests.d/04.rs");
+#[path = "tests/fixture.rs"]
+mod fixture;
+use fixture::*;
+#[path = "tests/t14_scope_isolation_and_authorization.rs"]
+mod t14_scope_isolation_and_authorization;
+#[path = "tests/t11_patch_replay_is_noop_and_content_conflict_is.rs"]
+mod t11_patch_replay_is_noop_and_content_conflict_is;
+pub(super) use t11_patch_replay_is_noop_and_content_conflict_is::query_at;
+#[path = "tests/r06_unrelated_focus_does_not_join_another_focus_.rs"]
+mod r06_unrelated_focus_does_not_join_another_focus_;

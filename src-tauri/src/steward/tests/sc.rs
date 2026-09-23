@@ -1,17 +1,10 @@
-use super::{commands, invalidation, queue, repository as repo};
-use crate::persistence::schema::initialize_database;
-use crate::test_support::app_state;
-use crate::{now_iso, PRIMARY_CONVERSATION_ID};
-use rusqlite::{params, Connection};
-use std::time::Duration;
-
-fn db() -> Connection {
+pub(super) fn db() -> Connection {
     let connection = Connection::open_in_memory().expect("db");
     initialize_database(&connection).expect("init");
     connection
 }
 
-fn goal(connection: &Connection, id: &str, summary: &str, budget_ms: i64) {
+pub(super) fn goal(connection: &Connection, id: &str, summary: &str, budget_ms: i64) {
     connection
         .execute(
             "INSERT INTO steward_goals(id,conversation_id,origin,success_condition,status,created_at,summary)
@@ -34,7 +27,7 @@ fn goal(connection: &Connection, id: &str, summary: &str, budget_ms: i64) {
         .expect("delegation");
 }
 
-fn work(goal_id: &str, budget_ms: i64) -> repo::ActiveWork {
+pub(super) fn work(goal_id: &str, budget_ms: i64) -> repo::ActiveWork {
     repo::ActiveWork {
         goal_id: goal_id.into(),
         goal_status: "active".into(),
@@ -56,7 +49,7 @@ impl Drop for ClearFault {
 }
 
 #[test]
-fn sc_01_flush_rolls_back_message_when_mark_flushed_fails() {
+pub(super) fn sc_01_flush_rolls_back_message_when_mark_flushed_fails() {
     let _clear = ClearFault;
     let directory = tempfile::tempdir().expect("dir");
     let path = directory.path().join("sc01.sqlite3");
@@ -116,7 +109,7 @@ fn sc_01_flush_rolls_back_message_when_mark_flushed_fails() {
 }
 
 #[test]
-fn sc_02_remaining_deadline_uses_elapsed_run_time() {
+pub(super) fn sc_02_remaining_deadline_uses_elapsed_run_time() {
     let connection = db();
     goal(&connection, "g-elapsed", "elapsed", 5_000);
     connection
@@ -181,7 +174,7 @@ fn sc_02_remaining_deadline_uses_elapsed_run_time() {
 }
 
 #[test]
-fn sc_02_short_budget_stops_before_fixed_1800_seconds() {
+pub(super) fn sc_02_short_budget_stops_before_fixed_1800_seconds() {
     let connection = db();
     goal(&connection, "g-short", "short", 80);
     connection
@@ -227,7 +220,7 @@ fn sc_02_short_budget_stops_before_fixed_1800_seconds() {
 }
 
 #[test]
-fn sc_03_runner_request_contains_goal_summary() {
+pub(super) fn sc_03_runner_request_contains_goal_summary() {
     let connection = db();
     let marker = "SC03-MARKER-摘要";
     goal(&connection, "g-req", marker, 1_000);
@@ -267,7 +260,7 @@ fn sc_03_runner_request_contains_goal_summary() {
 }
 
 #[test]
-fn sc_04_reorder_changes_next_eligible_task() {
+pub(super) fn sc_04_reorder_changes_next_eligible_task() {
     let connection = db();
     connection
         .execute_batch(&format!(
@@ -302,7 +295,7 @@ fn sc_04_reorder_changes_next_eligible_task() {
 }
 
 #[test]
-fn sc_05_forget_keeps_sibling_goal_report() {
+pub(super) fn sc_05_forget_keeps_sibling_goal_report() {
     let connection = db();
     connection
         .execute(
@@ -364,7 +357,7 @@ fn sc_05_forget_keeps_sibling_goal_report() {
 }
 
 #[test]
-fn sc_06_withdraw_one_goal_leaves_the_other_running() {
+pub(super) fn sc_06_withdraw_one_goal_leaves_the_other_running() {
     let connection = db();
     connection
         .execute(

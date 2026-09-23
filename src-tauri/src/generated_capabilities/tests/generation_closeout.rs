@@ -29,5 +29,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-include!("generation_closeout.d/01.rs");
-include!("generation_closeout.d/02.rs");
+#[path = "generation_closeout/fixture_inspector.rs"]
+mod fixture_inspector;
+#[path = "generation_closeout/gc_06_epoch_change_during_update_conflicts.rs"]
+mod gc_06_epoch_change_during_update_conflicts;
+use fixture_inspector::{actor, capability_id, catalog_enabled, generate_a, invoke_on, bind_typescript, GatedGenerator};
+pub(crate) use gc_06_epoch_change_during_update_conflicts::*;

@@ -76,12 +76,12 @@ pub fn parse(bytes: &[u8]) -> Result<McpServerConfig, &'static str> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ConfigDocument {
-    format_version: u32,
-    enabled: bool,
-    port: u16,
-    token_file: Option<String>,
+    pub(super) format_version: u32,
+    pub(super) enabled: bool,
+    pub(super) port: u16,
+    pub(super) token_file: Option<String>,
     #[serde(default)]
-    project_id: Option<String>,
+    pub(super) project_id: Option<String>,
 }
 
 impl ConfigDocument {

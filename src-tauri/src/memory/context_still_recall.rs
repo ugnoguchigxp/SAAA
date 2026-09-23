@@ -24,10 +24,13 @@ use std::{
 use tokio::sync::Mutex;
 use url::{Host, Url};
 use zeroize::Zeroizing;
-include!("context_still_recall.d/01.rs");
-include!("context_still_recall.d/02.rs");
+#[path = "context_still_recall/context_still_recall_error.rs"]
+mod context_still_recall_error;
+#[path = "context_still_recall/load_manifest.rs"]
+mod load_manifest;
+pub use context_still_recall_error::{ContextStillRecallError, ContextStillRecallClient};
+use context_still_recall_error::{MCP_PROTOCOL_VERSION, ENDPOINT_MANIFEST_FILE, MAX_MANIFEST_BYTES, MAX_TOKEN_BYTES, MAX_HTTP_RESPONSE_BYTES, EndpointManifest, validate_tool_catalog};
+use load_manifest::{load_manifest, read_token, valid_session_id};
 #[cfg(test)]
-mod tests {
-    include!("context_still_recall.d/03.rs");
-    include!("context_still_recall.d/04.rs");
-}
+#[path = "context_still_recall/tests/mod.rs"]
+mod tests;

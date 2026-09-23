@@ -2,15 +2,15 @@ use super::*;
 use uuid::Uuid;
 
 struct PreparedVoiceEnrollmentSample {
-    sample_id: String,
-    relative_path: PathBuf,
-    absolute_path: PathBuf,
-    duration_ms: u64,
-    embedding: Zeroizing<Vec<f32>>,
-    input_device_id: String,
-    effective_aec: bool,
-    created_at: String,
-    persisted: bool,
+    pub(super) sample_id: String,
+    pub(super) relative_path: PathBuf,
+    pub(super) absolute_path: PathBuf,
+    pub(super) duration_ms: u64,
+    pub(super) embedding: Zeroizing<Vec<f32>>,
+    pub(super) input_device_id: String,
+    pub(super) effective_aec: bool,
+    pub(super) created_at: String,
+    pub(super) persisted: bool,
 }
 
 impl Drop for PreparedVoiceEnrollmentSample {

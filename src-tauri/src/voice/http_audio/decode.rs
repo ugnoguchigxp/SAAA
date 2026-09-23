@@ -45,9 +45,10 @@ impl Decoder {
                     break;
                 }
                 let kind = &self.pending[cursor..cursor + 4];
-                let size =
-                    u32::from_le_bytes(self.pending[cursor + 4..cursor + 8].try_into().unwrap())
-                        as usize;
+                let size_bytes: [u8; 4] = self.pending[cursor + 4..cursor + 8]
+                    .try_into()
+                    .map_err(|_| "WAV chunk size is truncated".to_string())?;
+                let size = u32::from_le_bytes(size_bytes) as usize;
                 if kind == b"data" {
                     if self.format.is_none() {
                         return Err("WAV data arrived before its format".into());
@@ -72,15 +73,32 @@ impl Decoder {
                         return Err("Invalid WAV format chunk".into());
                     }
                     let data = &self.pending[cursor + 8..cursor + 8 + size];
-                    let u16at = |n| u16::from_le_bytes(data[n..n + 2].try_into().unwrap());
-                    let rate = u32::from_le_bytes(data[4..8].try_into().unwrap());
-                    let byte_rate = u32::from_le_bytes(data[8..12].try_into().unwrap());
-                    let channels = u16at(2);
-                    if u16at(0) != 1
-                        || u16at(14) != 16
+                    let u16at = |n: usize| -> Result<u16, String> {
+                        let bytes: [u8; 2] = data
+                            .get(n..n + 2)
+                            .ok_or_else(|| "WAV format chunk is truncated".to_string())?
+                            .try_into()
+                            .map_err(|_| "WAV format field is truncated".to_string())?;
+                        Ok(u16::from_le_bytes(bytes))
+                    };
+                    let rate_bytes: [u8; 4] = data
+                        .get(4..8)
+                        .ok_or_else(|| "WAV sample rate is truncated".to_string())?
+                        .try_into()
+                        .map_err(|_| "WAV sample rate is truncated".to_string())?;
+                    let rate = u32::from_le_bytes(rate_bytes);
+                    let byte_rate_bytes: [u8; 4] = data
+                        .get(8..12)
+                        .ok_or_else(|| "WAV byte rate is truncated".to_string())?
+                        .try_into()
+                        .map_err(|_| "WAV byte rate is truncated".to_string())?;
+                    let byte_rate = u32::from_le_bytes(byte_rate_bytes);
+                    let channels = u16at(2)?;
+                    if u16at(0)? != 1
+                        || u16at(14)? != 16
                         || !(1..=2).contains(&channels)
                         || !(8000..=192000).contains(&rate)
-                        || u16at(12) != channels * 2
+                        || u16at(12)? != channels * 2
                         || byte_rate != rate * u32::from(channels) * 2
                     {
                         return Err("WAV must be PCM s16le, 1–2 channels, 8–192 kHz".into());
@@ -94,7 +112,10 @@ impl Decoder {
                 return Ok(Vec::new());
             }
         }
-        let align = self.format.unwrap().channels as usize * 2;
+        let format = self
+            .format
+            .ok_or_else(|| "WAV format is missing before sample decode".to_string())?;
+        let align = format.channels as usize * 2;
         let available = self
             .remaining
             .unwrap_or(self.pending.len())

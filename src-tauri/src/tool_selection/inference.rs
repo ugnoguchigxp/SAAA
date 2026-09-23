@@ -139,8 +139,8 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest, InferenceError> {
 /// Deterministic embedding double. Vectors are a normalized byte-gram bag so identical text
 /// always produces the same vector and shared tokens raise cosine similarity.
 pub struct HashEmbedding {
-    model_hash: String,
-    dimension: usize,
+    pub(super) model_hash: String,
+    pub(super) dimension: usize,
 }
 
 impl HashEmbedding {
@@ -197,9 +197,9 @@ impl EmbeddingProvider for HashEmbedding {
 
 /// Fixed reranker double. Missing documents fall back to `default_score`.
 pub struct FixedReranker {
-    model_hash: String,
-    scores: HashMap<String, f64>,
-    default_score: f64,
+    pub(super) model_hash: String,
+    pub(super) scores: HashMap<String, f64>,
+    pub(super) default_score: f64,
 }
 
 impl FixedReranker {
@@ -241,8 +241,8 @@ impl RerankProvider for FixedReranker {
 /// Deterministic mock reranker used by the evaluation CLI's mock lane and by tests. It scores
 /// with the same hash embedding so the hybrid pipeline is exercised without a live model.
 pub struct HashReranker {
-    model_hash: String,
-    embedding: HashEmbedding,
+    pub(super) model_hash: String,
+    pub(super) embedding: HashEmbedding,
 }
 
 impl Default for HashReranker {

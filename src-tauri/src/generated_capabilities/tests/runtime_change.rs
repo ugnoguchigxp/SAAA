@@ -71,7 +71,7 @@ pub(crate) fn rebuild_service(env: &TestEnv, runtime_root: &Path) -> Arc<Capabil
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn h05_runtime_modified_after_construction_is_never_executed() {
+pub(super) async fn h05_runtime_modified_after_construction_is_never_executed() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("runtime");
     copy_tree(&fixture_root().join("runtime"), &root);

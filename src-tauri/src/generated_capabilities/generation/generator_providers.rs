@@ -6,7 +6,7 @@ use super::super::contracts::GenerationErrorCode;
 use super::{GenerationPrompt, Generator};
 
 pub(crate) struct ConversationProviderGenerator {
-    writer: std::sync::Arc<crate::persistence::SqliteWriter>,
+    pub(super) writer: std::sync::Arc<crate::persistence::SqliteWriter>,
 }
 
 impl ConversationProviderGenerator {

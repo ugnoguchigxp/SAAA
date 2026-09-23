@@ -2,7 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { evaluate, productionLines, walk, type BaselineFile } from "../scripts/module-size";
+import {
+  evaluate,
+  isForbiddenIncludeDSplit,
+  productionLines,
+  walk,
+  type BaselineFile,
+} from "../scripts/module-size";
 
 const temporaryDirectories: string[] = [];
 
@@ -79,5 +85,22 @@ describe("module-size ratchet", () => {
     symlinkSync(source, join(directory, "file-link.ts"));
 
     expect(walk(directory)).toEqual([source]);
+  });
+
+  test("rejects non-frozen include!(….d/…) module splits", () => {
+    const path = "src-tauri/src/example_split.rs";
+    const content = 'include!("example_split.d/01.rs");\n';
+    expect(isForbiddenIncludeDSplit(path, content, new Set())).toBe(true);
+    expect(isForbiddenIncludeDSplit(path, content, new Set([path]))).toBe(false);
+    expect(isForbiddenIncludeDSplit("src-tauri/src/example_split.d/01.rs", content, new Set())).toBe(
+      false,
+    );
+    expect(isForbiddenIncludeDSplit(path, "mod child;\n", new Set())).toBe(false);
+    const baseline: BaselineFile = { generatedAt: "test", files: {} };
+    expect(
+      evaluate([{ path: "src-tauri/src/ok.rs", total: 1, production: 1 }], baseline, false).every(
+        (failure) => !failure.includes("forbidden include!"),
+      ),
+    ).toBe(true);
   });
 });

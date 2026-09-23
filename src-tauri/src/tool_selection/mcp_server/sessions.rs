@@ -50,25 +50,25 @@ impl SessionState {
 }
 
 struct SessionInner {
-    state: SessionState,
-    last_activity_ms: i64,
-    used_ids: HashSet<TypedRequestId>,
-    inflight: HashMap<TypedRequestId, RunCancellation>,
+    pub(super) state: SessionState,
+    pub(super) last_activity_ms: i64,
+    pub(super) used_ids: HashSet<TypedRequestId>,
+    pub(super) inflight: HashMap<TypedRequestId, RunCancellation>,
 }
 
 pub struct Session {
-    id: String,
-    protocol_version: String,
-    client_info: Option<Value>,
-    conversation_id: String,
-    run_id: String,
-    role_binding: Option<RoleSessionBinding>,
-    principal_id: String,
-    project_id: Option<String>,
-    created_at_ms: i64,
-    closing: AtomicBool,
-    ready: AtomicBool,
-    inner: Mutex<SessionInner>,
+    pub(super) id: String,
+    pub(super) protocol_version: String,
+    pub(super) client_info: Option<Value>,
+    pub(super) conversation_id: String,
+    pub(super) run_id: String,
+    pub(super) role_binding: Option<RoleSessionBinding>,
+    pub(super) principal_id: String,
+    pub(super) project_id: Option<String>,
+    pub(super) created_at_ms: i64,
+    pub(super) closing: AtomicBool,
+    pub(super) ready: AtomicBool,
+    pub(super) inner: Mutex<SessionInner>,
 }
 
 impl Session {
@@ -273,8 +273,8 @@ pub enum ReserveResult {
 }
 
 pub struct SessionRegistry {
-    sessions: Mutex<HashMap<String, Arc<Session>>>,
-    global_inflight: AtomicUsize,
+    pub(super) sessions: Mutex<HashMap<String, Arc<Session>>>,
+    pub(super) global_inflight: AtomicUsize,
 }
 
 impl Default for SessionRegistry {

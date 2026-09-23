@@ -8,5 +8,10 @@ use crate::{
 use http_migration::migrate_http_bases;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
-include!("settings_migration.d/01.rs");
-include!("settings_migration.d/02.rs");
+#[path = "settings_migration/stored_document.rs"]
+mod stored_document;
+pub(crate) use stored_document::{migrate_settings_to_current};
+pub(super) use stored_document::{initialize_revision, migrate_provider_document, migrate_obsolete_direct_lan_route, migrated_voice_document, migrate_security_document};
+#[cfg(test)]
+#[path = "settings_migration/tests.rs"]
+mod tests;

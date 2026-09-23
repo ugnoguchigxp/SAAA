@@ -24,8 +24,14 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{oneshot, Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore};
-#[cfg(test)]
-mod test_support;
 pub use super::contracts::{InvocationResult, InvokeRequest, ResolvedCapability};
-include!("service.d/01.rs");
-include!("service.d/02.rs");
+#[cfg(test)]
+#[path = "service/test_support.rs"]
+mod test_support;
+#[path = "service/import_candidate.rs"]
+mod import_candidate;
+#[path = "service/verify_inner.rs"]
+mod verify_inner;
+pub use import_candidate::{ImportCandidate, RevisionRef, VerificationSummary, CapabilityService};
+pub(super) use verify_inner::storage_error;
+// Methods on CapabilityService live in child impl blocks.

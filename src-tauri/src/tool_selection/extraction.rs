@@ -35,7 +35,7 @@ pub trait CorrectionExtractor: Send + Sync {
 /// Deterministic extractor used by the golden fixtures. It returns a fixed JSON body, after
 /// running the same strict host validation as the production path.
 pub struct FixtureExtractor {
-    body: String,
+    pub(super) body: String,
 }
 
 impl FixtureExtractor {

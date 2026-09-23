@@ -19,13 +19,13 @@ use crate::generated_capabilities::limits::{MAX_STDERR_BYTES, MAX_STDOUT_BYTES};
 
 #[derive(Clone, Debug, Default)]
 pub struct Cancellation {
-    inner: Arc<CancellationInner>,
+    pub(super) inner: Arc<CancellationInner>,
 }
 
 #[derive(Debug, Default)]
 struct CancellationInner {
-    cancelled: AtomicBool,
-    notify: Notify,
+    pub(super) cancelled: AtomicBool,
+    pub(super) notify: Notify,
 }
 
 impl Cancellation {

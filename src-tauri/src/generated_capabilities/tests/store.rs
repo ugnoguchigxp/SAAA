@@ -4,18 +4,18 @@ use crate::generated_capabilities::{
     package_store::PackageStore,
 };
 
-fn packages_count(env: &TestEnv) -> usize {
+pub(super) fn packages_count(env: &TestEnv) -> usize {
     std::fs::read_dir(env.service.store().root().join("packages"))
         .unwrap()
         .count()
 }
 
-fn failed_imports(env: &TestEnv) -> i64 {
+pub(super) fn failed_imports(env: &TestEnv) -> i64 {
     env.scalar("SELECT COUNT(*) FROM generated_capability_imports WHERE status = 'failed'")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn p01_reimporting_the_same_package_reuses_the_revision() {
+pub(super) async fn p01_reimporting_the_same_package_reuses_the_revision() {
     let env = TestEnv::start(false);
     let first = env.import_a().await;
     let second = env.import_a().await;
@@ -37,7 +37,7 @@ async fn p01_reimporting_the_same_package_reuses_the_revision() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn p02_managed_copy_ignores_later_external_changes() {
+pub(super) async fn p02_managed_copy_ignores_later_external_changes() {
     let env = TestEnv::start(false);
     let temporary = tempfile::tempdir().unwrap();
     let external = temporary.path().join("candidate-a");
@@ -81,7 +81,7 @@ async fn p02_managed_copy_ignores_later_external_changes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn p03_unsafe_layouts_are_refused_before_publication() {
+pub(super) async fn p03_unsafe_layouts_are_refused_before_publication() {
     let env = TestEnv::start(false);
     let temporary = tempfile::tempdir().unwrap();
     let before = packages_count(&env);
@@ -147,7 +147,7 @@ async fn p03_unsafe_layouts_are_refused_before_publication() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn p04_tampering_with_the_managed_copy_is_detected() {
+pub(super) async fn p04_tampering_with_the_managed_copy_is_detected() {
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let directory = env.service.store().package_dir(&revision.package_hash);
@@ -184,7 +184,7 @@ async fn p04_tampering_with_the_managed_copy_is_detected() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn p05_conflicting_existing_package_directory_is_never_overwritten() {
+pub(super) async fn p05_conflicting_existing_package_directory_is_never_overwritten() {
     let env = TestEnv::start(false);
     let staged_hash = package_hash(
         &serde_json::from_slice::<Value>(
@@ -208,7 +208,7 @@ async fn p05_conflicting_existing_package_directory_is_never_overwritten() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn p06_acceptance_for_another_capability_is_refused() {
+pub(super) async fn p06_acceptance_for_another_capability_is_refused() {
     let temporary = tempfile::tempdir().unwrap();
     let ledger = temporary.path().join("acceptance");
     copy_tree(&fixture_root().join("acceptance"), &ledger);
@@ -241,7 +241,7 @@ async fn p06_acceptance_for_another_capability_is_refused() {
 }
 
 #[test]
-fn d01_schema_initialization_is_idempotent() {
+pub(super) fn d01_schema_initialization_is_idempotent() {
     let env = TestEnv::start(false);
     let tables = [
         "generated_capabilities",
@@ -276,7 +276,7 @@ fn d01_schema_initialization_is_idempotent() {
 }
 
 #[test]
-fn d02_migration_preserves_existing_conversation_data() {
+pub(super) fn d02_migration_preserves_existing_conversation_data() {
     let env = TestEnv::start(false);
     env.writer
         .write(|connection| {
@@ -303,7 +303,7 @@ fn d02_migration_preserves_existing_conversation_data() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn d03_foreign_keys_reject_cross_capability_pointers_and_double_active() {
+pub(super) async fn d03_foreign_keys_reject_cross_capability_pointers_and_double_active() {
     let env = TestEnv::start(false);
     let a = env.import_a().await;
     let b = env.import_b().await;
@@ -357,7 +357,7 @@ async fn d03_foreign_keys_reject_cross_capability_pointers_and_double_active() {
 
 /// T01: the Rust `package_hash` must reproduce the L-Lang fixed value for the fixture.
 #[test]
-fn t01_package_hash_matches_the_fixed_vector() {
+pub(super) fn t01_package_hash_matches_the_fixed_vector() {
     let manifest: Value = serde_json::from_slice(
         &std::fs::read(candidate_dir(CANDIDATE_A).join("capability.json")).unwrap(),
     )

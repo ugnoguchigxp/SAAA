@@ -14,7 +14,7 @@ use super::contracts::{InspectionError, InspectionErrorCode, InspectionResult};
 /// for the projection and one host run per case for the Wasm). The lookup is keyed by the canonical
 /// encoding of the input produced by [`enumerate_inputs`].
 pub struct PrecomputedEvaluator {
-    results: HashMap<String, Result<bool, String>>,
+    pub(super) results: HashMap<String, Result<bool, String>>,
 }
 
 impl PrecomputedEvaluator {

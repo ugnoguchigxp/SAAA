@@ -51,7 +51,7 @@ impl ReferenceEntry {
 
 #[derive(Default)]
 pub struct ReferenceStore {
-    entries: Mutex<HashMap<String, ReferenceEntry>>,
+    pub(super) entries: Mutex<HashMap<String, ReferenceEntry>>,
 }
 
 impl ReferenceStore {

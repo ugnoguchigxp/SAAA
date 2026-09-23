@@ -1,3 +1,4 @@
+use super::*;
 mod abandonment;
 mod adapter;
 mod adapter_abort;
@@ -32,5 +33,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-include!("mod.d/01.rs");
-include!("mod.d/02.rs");
+mod test_env;
+mod h04_child_environment_is_cleared;
+pub(crate) use test_env::{CANDIDATE_A, CANDIDATE_B, ACCEPTANCE_A, ACCEPTANCE_B, fixture_root, candidate_dir, bun_path, runtime_files, runtime_digest, test_writer, TestEnv, fixture_host, host_request_from, object, wire, parse_wire, script_command, revision_row};
+pub(crate) use h04_child_environment_is_cleared::{copy_tree};

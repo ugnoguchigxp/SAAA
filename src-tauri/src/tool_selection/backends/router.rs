@@ -13,9 +13,9 @@ use super::{BackendOutcome, BackendRequest, ToolBackend};
 use crate::RunCancellation;
 
 pub struct BackendRouter {
-    llang: Arc<dyn ToolBackend>,
-    mcp: Arc<dyn ToolBackend>,
-    records: Arc<dyn ToolBackend>,
+    pub(super) llang: Arc<dyn ToolBackend>,
+    pub(super) mcp: Arc<dyn ToolBackend>,
+    pub(super) records: Arc<dyn ToolBackend>,
 }
 
 impl BackendRouter {

@@ -12,7 +12,7 @@ use super::feedback::{parse_extraction, ExtractionFailure, ParsedExtraction};
 use crate::persistence::SqliteWriter;
 
 pub struct ConversationProviderExtractor {
-    writer: Arc<SqliteWriter>,
+    pub(super) writer: Arc<SqliteWriter>,
 }
 
 impl ConversationProviderExtractor {

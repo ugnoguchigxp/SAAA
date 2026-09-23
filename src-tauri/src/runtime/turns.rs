@@ -11,5 +11,12 @@ use crate::{
     database_error, execute_codex_turn, memory, new_id, now_iso, situation, AppState,
     RunCancellation, StartTurnInput, TurnExecutionFailure,
 };
-include!("turns.d/01.rs");
-include!("turns.d/02.rs");
+#[path = "turns/execute_turn.rs"]
+mod execute_turn;
+#[path = "turns/prepare_runtime_run.rs"]
+mod prepare_runtime_run;
+pub(crate) use execute_turn::{execute_turn, expire_stale_input_barrier, send_runtime_terminal_event, finish_supervised_runtime_run};
+use execute_turn::{public_failure_code};
+pub(crate) use prepare_runtime_run::prepare_runtime_run;
+#[cfg(test)]
+pub(crate) use prepare_runtime_run::finish_runtime_run;

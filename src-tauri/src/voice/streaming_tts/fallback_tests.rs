@@ -1,6 +1,6 @@
 use super::*;
 #[tokio::test]
-async fn tts_retries_transient_requests_but_stops_on_authentication() {
+pub(super) async fn tts_retries_transient_requests_but_stops_on_authentication() {
     for (primary_status, expected_fallbacks) in [(503, 1), (401, 0)] {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());

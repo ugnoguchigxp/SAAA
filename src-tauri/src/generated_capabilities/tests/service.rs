@@ -1,7 +1,7 @@
 use super::*;
 use crate::generated_capabilities::service::InvokeRequest;
 
-fn truth_table() -> [(bool, bool, bool); 4] {
+pub(super) fn truth_table() -> [(bool, bool, bool); 4] {
     [
         (false, false, false),
         (false, true, false),
@@ -10,7 +10,7 @@ fn truth_table() -> [(bool, bool, bool); 4] {
     ]
 }
 
-async fn invoke(
+pub(super) async fn invoke(
     env: &TestEnv,
     resolved: &super::super::service::ResolvedCapability,
     enabled: bool,
@@ -29,7 +29,7 @@ async fn invoke(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn i01_truth_table_matches_and_invalid_inputs_never_spawn() {
+pub(super) async fn i01_truth_table_matches_and_invalid_inputs_never_spawn() {
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let resolved = env
@@ -85,7 +85,7 @@ async fn i01_truth_table_matches_and_invalid_inputs_never_spawn() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn i02_stale_resolved_capability_is_not_forwarded() {
+pub(super) async fn i02_stale_resolved_capability_is_not_forwarded() {
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let stale = env
@@ -109,7 +109,7 @@ async fn i02_stale_resolved_capability_is_not_forwarded() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn i03_suspension_does_not_cancel_accepted_work() {
+pub(super) async fn i03_suspension_does_not_cancel_accepted_work() {
     let env = TestEnv::start(true);
     let a = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let resolved = env
@@ -154,7 +154,7 @@ async fn i03_suspension_does_not_cancel_accepted_work() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn i04_cancelled_calls_are_recorded_and_release_capacity() {
+pub(super) async fn i04_cancelled_calls_are_recorded_and_release_capacity() {
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let resolved = env
@@ -190,7 +190,7 @@ async fn i04_cancelled_calls_are_recorded_and_release_capacity() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn i05_capacity_is_bounded_and_never_queues() {
+pub(super) async fn i05_capacity_is_bounded_and_never_queues() {
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;
     let resolved = env
@@ -215,7 +215,7 @@ async fn i05_capacity_is_bounded_and_never_queues() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn i06_database_write_failures_never_report_success() {
+pub(super) async fn i06_database_write_failures_never_report_success() {
     // Start-of-call failure: no host process may be spawned.
     let env = TestEnv::start(true);
     let revision = env.ready(CANDIDATE_A, ACCEPTANCE_A).await;

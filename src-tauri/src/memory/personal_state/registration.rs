@@ -8,8 +8,8 @@ use serde_json::json;
 use std::sync::Arc;
 
 pub(super) struct Pins<'a> {
-    adapter: &'a Adapter,
-    ids: Vec<String>,
+    pub(super) adapter: &'a Adapter,
+    pub(super) ids: Vec<String>,
 }
 impl<'a> Pins<'a> {
     pub fn new(adapter: &'a Adapter) -> Self {

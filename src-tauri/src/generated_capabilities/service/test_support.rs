@@ -1,15 +1,7 @@
 //! Test-only hooks on [`CapabilityService`]. They live in a child module so the production file
 //! stays focused; a child module can reach the service's private fields and methods.
 
-use tokio::sync::OwnedSemaphorePermit;
-
-use super::{CapabilityService, ImportCandidate, RevisionRef};
-use crate::generated_capabilities::{
-    errors::CapabilityResult,
-    execution,
-    host::process::{self, Cancellation},
-};
-
+use super::*;
 impl CapabilityService {
     /// Occupies the single process slot so capacity limits can be observed.
     pub fn occupy_process_slot(&self) -> CapabilityResult<OwnedSemaphorePermit> {

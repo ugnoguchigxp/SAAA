@@ -1,6 +1,5 @@
-use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
-
+use super::*;
 pub(super) async fn render(
     receiver: &mut mpsc::Receiver<SpeechWork>,
     context: &RenderSessionContext,
@@ -64,7 +63,7 @@ pub(super) async fn render(
     }
 }
 #[allow(clippy::too_many_arguments)]
-async fn play_one(
+pub(super) async fn play_one(
     route: &TtsRoute,
     text: &str,
     expression: crate::voice::cloud_tts::speech_directive::SpeechExpression,
