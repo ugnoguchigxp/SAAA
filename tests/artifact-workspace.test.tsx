@@ -4,7 +4,7 @@ import type { Root } from "react-dom/client";
 import type { UiInstance } from "../src/lib/generated/generativeUi";
 import { INTERACTIVE_HTML_FIXTURE } from "../src/features/chat/artifacts/artifactPreviewApi";
 import { installJsdom } from "./jsdomGlobals";
-import { invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
+import { invokeCalls, invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
 
 await import("./tauriCoreMock");
 mock.module("../src/features/chat/artifacts/artifactWebviewHost.ts", () => ({
@@ -125,6 +125,7 @@ function OpenManyArtifacts() {
 describe("artifact workspace", () => {
   let root: Root | null = null;
   let restore: (() => void) | null = null;
+  let restoreRect: (() => void) | null = null;
 
   beforeEach(() => {
     resetTauriCoreMock();
@@ -157,10 +158,12 @@ describe("artifact workspace", () => {
         return {
           url: "https://example.com/weather",
           text: "Saved <script>text</script>",
+          sourceKind: "search-excerpt",
           observedAt: 1_790_000_000_000,
           truncated: false,
         };
       }
+      if (command === "mount_source_website") return "source-website-test";
       return undefined;
     };
   });
@@ -169,6 +172,8 @@ describe("artifact workspace", () => {
     await act(async () => root?.unmount());
     await new Promise((resolve) => setTimeout(resolve, 0));
     root = null;
+    restoreRect?.();
+    restoreRect = null;
     restore?.();
     restore = null;
   });
@@ -313,8 +318,15 @@ describe("artifact workspace", () => {
     expect(document.querySelector(".artifact-webview-host")).toBeNull();
   });
 
-  test("opens a saved source as plain text in the artifact panel", async () => {
+  test("opens the source website in the artifact panel", async () => {
     restore = installJsdom().restore;
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = () => ({
+      x: 400, y: 100, width: 500, height: 400,
+      top: 100, left: 400, right: 900, bottom: 500, toJSON: () => ({}),
+    });
+    restoreRect = () => { HTMLElement.prototype.getBoundingClientRect = originalRect; };
     const { createRoot } = await import("react-dom/client");
     root = createRoot(document.getElementById("root")!);
     await act(async () =>
@@ -324,14 +336,27 @@ describe("artifact workspace", () => {
       document.querySelector<HTMLButtonElement>(".open-source")!.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(document.querySelector(".artifact-source-text")?.textContent).toBe(
-      "Saved <script>text</script>",
-    );
-    expect(document.querySelector(".artifact-source script")).toBeNull();
+    expect(invokeCalls).toContainEqual(expect.objectContaining({
+      command: "mount_source_website",
+      args: expect.objectContaining({ url: "https://example.com/weather" }),
+    }));
+    expect(document.querySelector(".artifact-source-text")).toBeNull();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(".artifact-source-browser")!.click();
+      await Promise.resolve();
+    });
+    expect(invokeCalls.some((call) => call.command === "open_source_website_in_browser")).toBe(true);
   });
 
   test("assistant source links open the artifact panel", async () => {
     restore = installJsdom().restore;
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = () => ({
+      x: 400, y: 100, width: 500, height: 400,
+      top: 100, left: 400, right: 900, bottom: 500, toJSON: () => ({}),
+    });
+    restoreRect = () => { HTMLElement.prototype.getBoundingClientRect = originalRect; };
     const { createRoot } = await import("react-dom/client");
     root = createRoot(document.getElementById("root")!);
     await act(async () =>
@@ -358,5 +383,6 @@ describe("artifact workspace", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(document.querySelector(".artifact-panel")?.textContent).toContain("Source");
+    expect(invokeCalls.some((call) => call.command === "mount_source_website")).toBe(true);
   });
 });

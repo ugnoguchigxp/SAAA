@@ -341,11 +341,11 @@ pub(crate) async fn run_with_options(
                     &serde_json::to_vec(&body).unwrap_or_default(),
                 ),
             );
-            output.push_str(&completion.content);
-            if output.len() > 1_048_576 {
-                return Err(Failure::RequestTooLarge);
-            }
             if tool_calls.is_empty() {
+                output.push_str(&completion.content);
+                if output.len() > 1_048_576 {
+                    return Err(Failure::RequestTooLarge);
+                }
                 generation.complete()?;
                 return Ok(output);
             }

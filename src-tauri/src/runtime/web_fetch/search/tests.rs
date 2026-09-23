@@ -1,4 +1,5 @@
 use super::*;
+use super::raw_hit::parse_ddg_web;
 const HTML_FIXTURE: &str = r#"<!doctype html><html><body>
 <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage&amp;rut=x">Example <b>Page</b></a>
 <div class="result__snippet">A snippet here.</div>
@@ -78,10 +79,23 @@ fn unsafe_result_urls_never_reach_hits() {
         "https://10.0.0.1/",
         "https://example.local/",
         "javascript:alert(1)",
+        "https://duckduckgo.com/y.js?ad_domain=example.com",
     ] {
         assert!(!is_allowed_result_url(banned), "{banned}");
     }
     assert!(is_allowed_result_url("https://example.com/page?q=1"));
+}
+
+#[test]
+fn ddg_ad_redirect_does_not_consume_an_organic_result_slot() {
+    let body = r#"DDG.pageLayout.load("d",[{"t":"Ad","a":"sponsored","u":"https://duckduckgo.com/y.js?ad_domain=example.com"},{"t":"Forecast","a":"tomorrow","u":"https://weather.example/forecast"}]);"#;
+    let candidates = parse_ddg_web(body, 1).unwrap();
+    let outcome = filter_and_project(
+        candidates,
+        &SearchInput { query: "weather".into(), limit: 1 },
+    );
+    assert_eq!(outcome.hits.len(), 1);
+    assert_eq!(outcome.hits[0].url, "https://weather.example/forecast");
 }
 
 #[test]

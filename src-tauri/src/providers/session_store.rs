@@ -55,7 +55,7 @@ impl<'a> ToolExecutionAudit<'a> {
         future: impl std::future::Future<Output = (String, &'static str)>,
     ) -> String {
         let (result, outcome) = future.await;
-        self.record_terminal(outcome);
+        self.record_terminal(tool_result_outcome(&result, outcome));
         result
     }
 
@@ -71,6 +71,39 @@ impl<'a> ToolExecutionAudit<'a> {
                 Some((outcome, self.started.elapsed())),
             );
         }
+    }
+}
+
+fn tool_result_outcome(result: &str, outcome: &'static str) -> &'static str {
+    if outcome == "success"
+        && serde_json::from_str::<serde_json::Value>(result)
+            .ok()
+            .is_some_and(|value| value.get("error").is_some())
+    {
+        "failure"
+    } else {
+        outcome
+    }
+}
+
+#[cfg(test)]
+mod tool_result_outcome_tests {
+    use super::tool_result_outcome;
+
+    #[test]
+    fn structured_fetch_error_is_not_a_successful_tool_execution() {
+        assert_eq!(
+            tool_result_outcome(r#"{"error":{"code":"UNSAFE_URL"}}"#, "success"),
+            "failure"
+        );
+        assert_eq!(
+            tool_result_outcome(r#"{"type":"fetch_content_result"}"#, "success"),
+            "success"
+        );
+        assert_eq!(
+            tool_result_outcome("interrupted", "interrupted"),
+            "interrupted"
+        );
     }
 }
 

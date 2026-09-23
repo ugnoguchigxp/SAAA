@@ -100,6 +100,14 @@
   border-color: #587087;
   background: #202936;
 }
+.artifact-source-browser {
+  flex: none;
+  border: 1px solid #34404f;
+  border-radius: 8px;
+  background: #171d26;
+  color: #d8e1eb;
+  padding: 5px 8px;
+}
 .artifact-panel-body {
   min-height: 0;
   overflow: auto;
@@ -108,15 +116,6 @@
 .artifact-panel-body > h2 {
   margin-bottom: 18px;
   font-size: 1.15rem;
-}
-.artifact-source-url {
-  overflow-wrap: anywhere;
-}
-.artifact-source-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: inherit;
-  line-height: 1.6;
 }
 .artifact-toolbar {
   display: flex;

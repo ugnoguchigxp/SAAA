@@ -8,9 +8,11 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { invoke } from "@tauri-apps/api/core";
 import { AppIcon } from "../../../components/AppIcon";
 import type { UiInstance } from "../../../lib/generated/generativeUi";
 import { UiBoundary } from "../ui/UiBoundary";
@@ -26,7 +28,7 @@ import "./artifact.css";
 
 const ArtifactPanel = lazy(() => import("./ArtifactPanel"));
 const InteractivePreview = lazy(() => import("./InteractivePreview"));
-const SourceArtifact = lazy(() => import("./SourceArtifact"));
+const SourceWebsite = lazy(() => import("./SourceWebsite"));
 
 type ArtifactWorkspaceContextValue = {
   open: (instance: UiInstance, conversationId: string) => void;
@@ -46,6 +48,7 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
     activeTabId: null,
   });
   const panelRef = useRef<HTMLElement>(null);
+  const [sourceBrowserError, setSourceBrowserError] = useState(false);
   const openerRef = useRef<HTMLElement | null>(null);
   const wasOpenRef = useRef(false);
   const open = useCallback((instance: UiInstance, conversationId: string) => {
@@ -149,6 +152,24 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                   );
                 })}
               </div>
+              {active.kind === "source" && (
+                <>
+                  {sourceBrowserError && <span role="alert">{t("genui.sourceWebsiteFailed")}</span>}
+                  <button
+                    type="button"
+                    className="artifact-source-browser"
+                    onClick={() => {
+                      setSourceBrowserError(false);
+                      void invoke("open_source_website_in_browser", {
+                        conversationId: active.conversationId,
+                        url: active.url,
+                      }).catch(() => setSourceBrowserError(true));
+                    }}
+                  >
+                    {t("genui.sourceOpenBrowser")}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="artifact-panel-close"
@@ -191,7 +212,7 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                 </UiBoundary>
               ) : (
                 <Suspense fallback={<p>{t("genui.loading")}</p>}>
-                  <SourceArtifact conversationId={active.conversationId} url={active.url} />
+                  <SourceWebsite conversationId={active.conversationId} url={active.url} title={active.title} />
                 </Suspense>
               )}
             </div>

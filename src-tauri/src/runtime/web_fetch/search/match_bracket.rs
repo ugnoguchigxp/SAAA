@@ -1,4 +1,4 @@
-use super::*;
+use super::{HashSet, MAX_CANDIDATES, MAX_RESPONSE_BYTES, RawHit, SearchHit, SearchInput, SearchOutcome, WebFetchFailure, compact_text};
 /// String-aware bracket matcher: returns the index of the `]` closing the
 /// `[` at `open`. Bounded by construction (body <= 2 MiB).
 pub(super) fn match_bracket(body: &str, open: usize) -> Option<usize> {
@@ -45,6 +45,9 @@ pub(super) fn normalize_result_url(raw: &str) -> Option<String> {
     if !url.username().is_empty() || url.password().is_some() {
         return None;
     }
+    if is_search_provider_navigation(&url) {
+        return None;
+    }
     url.set_fragment(None);
     let path = url.path().to_string();
     if path.len() > 1 && path.ends_with('/') {
@@ -65,6 +68,13 @@ pub(super) fn normalize_result_url(raw: &str) -> Option<String> {
         url.set_query(Some(&query));
     }
     Some(url.to_string())
+}
+
+fn is_search_provider_navigation(url: &url::Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        host == "duckduckgo.com" || host.ends_with(".duckduckgo.com")
+    })
 }
 pub(super) fn assert_not_challenge(body: &str) -> Result<(), WebFetchFailure> {
     // Cheap substring pre-filter before the regex set; keeps the common path
@@ -354,6 +364,9 @@ pub fn is_allowed_result_url(raw: &str) -> bool {
         return false;
     }
     if !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    if is_search_provider_navigation(&url) {
         return false;
     }
     let Some(host) = url.host_str() else {

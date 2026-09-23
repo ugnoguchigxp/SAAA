@@ -64,7 +64,7 @@ struct RequestsFile {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RequestEntryFile {
+pub(super) struct RequestEntryFile {
     pub(super) id: String,
     pub(super) capability_id: String,
     pub(super) purpose: String,

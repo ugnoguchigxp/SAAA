@@ -52,11 +52,11 @@ const MarkdownMessage = memo(function MarkdownMessage({
       className="markdown-content"
       onClick={(event) => {
         const anchor = (event.target as Element).closest("a[href]");
-        if (!anchor || !event.currentTarget.contains(anchor) || !artifacts) return;
+        if (!anchor || !event.currentTarget.contains(anchor)) return;
         const href = anchor.getAttribute("href");
         if (!href || !/^https?:\/\//i.test(href)) return;
         event.preventDefault();
-        artifacts.openSource({ conversationId, url: href, title: anchor.textContent?.trim() || href });
+        artifacts?.openSource({ conversationId, url: href, title: anchor.textContent?.trim() || href });
       }}
       dangerouslySetInnerHTML={{ __html: html }}
     />

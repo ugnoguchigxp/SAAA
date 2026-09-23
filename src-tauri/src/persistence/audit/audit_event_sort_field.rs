@@ -61,7 +61,7 @@ pub(crate) struct VoiceAsrAuditChannel {
     pub(super) channel: Channel<VoiceAsrStreamEvent>,
     pub(super) audit: Option<VoiceAsrAuditContext>,
 }
-struct VoiceAsrAuditContext {
+pub(super) struct VoiceAsrAuditContext {
     pub(super) connection: Arc<super::SqliteWriter>,
     pub(super) conversation_id: String,
 }

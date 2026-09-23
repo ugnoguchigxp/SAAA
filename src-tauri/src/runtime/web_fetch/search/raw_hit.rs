@@ -219,7 +219,7 @@ impl SearchProvider for RustSearchProvider {
     }
 }
 #[derive(Clone, Copy)]
-enum ExpectedBody {
+pub(super) enum ExpectedBody {
     Html,
     Script,
     Json,

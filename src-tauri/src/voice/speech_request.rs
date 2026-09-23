@@ -42,6 +42,16 @@ pub(crate) fn speech_request_value(
         .expect("speech request is valid JSON")
 }
 
+pub(crate) fn apply_harness_prosody(
+    provider: &mut CloudTtsProviderSettings,
+    harness: &crate::HarnessSettings,
+) {
+    provider.style = harness.tts_style.clone();
+    provider.speed = harness.tts_speed;
+    provider.pitch_scale = harness.tts_pitch_scale;
+    provider.intonation_scale = harness.tts_intonation_scale;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,14 +141,4 @@ mod tests {
         assert_eq!(body["pitch_scale"], -0.05);
         assert_eq!(body["intonation_scale"], 1.2);
     }
-}
-
-pub(crate) fn apply_harness_prosody(
-    provider: &mut CloudTtsProviderSettings,
-    harness: &crate::HarnessSettings,
-) {
-    provider.style = harness.tts_style.clone();
-    provider.speed = harness.tts_speed;
-    provider.pitch_scale = harness.tts_pitch_scale;
-    provider.intonation_scale = harness.tts_intonation_scale;
 }

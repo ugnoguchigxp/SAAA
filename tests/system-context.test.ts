@@ -54,10 +54,10 @@ test("renders voice transcription context for every conversation provider", () =
 test("keeps the system context outside Rust program code", () => {
   const rustSource = [
     projectFile("src-tauri/src/lib.rs"),
-    projectFile("src-tauri/src/lib.d/01.rs"),
+    projectFile("src-tauri/src/lib/window_shutdown_grace.rs"),
     projectFile("src-tauri/src/runtime/codex_process.rs"),
-    projectFile("src-tauri/src/runtime/codex_process.d/01.rs"),
-    projectFile("src-tauri/src/runtime/codex_process.d/02.rs"),
+    projectFile("src-tauri/src/runtime/codex_process/run_codex_turn_process_with_dispatch.rs"),
+    projectFile("src-tauri/src/runtime/codex_process/developer_instructions.rs"),
     projectFile("src-tauri/src/runtime/conversation_context.rs"),
     projectFile("src-tauri/src/runtime/turns.rs"),
     projectFile("src-tauri/src/runtime/conversation_inputs.rs"),
@@ -65,7 +65,8 @@ test("keeps the system context outside Rust program code", () => {
 
   expect(rustSource).toContain('include_str!("../../../.s11tnext/codex-read-only.txt")');
   expect(rustSource).toContain('include_str!("../../../.s11tnext/conversation-respond.txt")');
-  expect(rustSource).toContain('"developerInstructions": developer_instructions(host_context)');
+  expect(rustSource).toContain('"developerInstructions": if coding_mode {');
+  expect(rustSource).toContain("developer_instructions(host_context)");
   expect(rustSource).toContain("render_conversation_system_context(");
   expect(rustSource).toContain("regional_preferences::load(connection)");
   expect(rustSource).not.toContain("Operate read-only. Do not modify files");

@@ -5,11 +5,13 @@ import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../components/AppIcon";
 import { localizeRuntimeActivity, localizeUiMessage } from "../../i18n/presentation";
 import { DEFAULT_VOICE_SILENCE_TIMEOUT_MS } from "../../lib/voiceActivity";
+import { conversationActivityOutcome } from "../../lib/conversationActivity";
 import { ConversationBehaviorMenu } from "./ConversationBehaviorMenu";
 import { VirtualMessages } from "./VirtualMessages";
 import { StreamingPlainText } from "./ChatMessages";
 import { RoutingProposal } from "./RoutingProposal";
 import type { ChatPageProps } from "./chatPageTypes";
+import { useArtifactWorkspace } from "./artifacts/ArtifactDrawer";
 
 const VOICE_BAR_WEIGHTS = [0.18, 0.32, 0.54, 0.78, 1, 0.7, 0.48, 0.72, 0.46, 0.28, 0.16];
 
@@ -59,6 +61,18 @@ export function ChatPage({
   onDecideRoutingProposal,
 }: ChatPageProps) {
   const { t } = useTranslation();
+  const artifacts = useArtifactWorkspace();
+  const openedSourceRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeRunId || !selectedConversation || !artifacts) return;
+    if (openedSourceRunRef.current === activeRunId) return;
+    const source = runtimeActivity.find(
+      (activity) => activity.type === "sourceAvailable" && activity.runId === activeRunId,
+    );
+    if (!source || source.type !== "sourceAvailable") return;
+    openedSourceRunRef.current = activeRunId;
+    artifacts.openSource({ conversationId: selectedConversation.id, url: source.url, title: source.title });
+  }, [activeRunId, selectedConversation, runtimeActivity, artifacts]);
   const {
     messageAreaRef,
     messageContentRef,
@@ -179,8 +193,16 @@ export function ChatPage({
             </div>
           ) : null}
           {runtimeActivity.length > 0 && (
-            <details className="activity-panel">
-              <summary>{t("chat.runtimeActivity")}</summary>
+            <details className="activity-panel" open={Boolean(conversationActivityOutcome(runtimeActivity))}>
+              <summary>
+                {conversationActivityOutcome(runtimeActivity) === "cancelled-after-search"
+                  ? t("chat.activity.cancelledAfterSearch")
+                  : conversationActivityOutcome(runtimeActivity) === "cancelled"
+                    ? t("chat.activity.generationCancelled")
+                    : conversationActivityOutcome(runtimeActivity) === "failed"
+                      ? t("chat.activity.providerFailed")
+                      : t("chat.runtimeActivity")}
+              </summary>
               {runtimeActivity.map((activity, index) => (
                 <p key={`${index}-${activity.type}`}>{localizeRuntimeActivity(t, activity)}</p>
               ))}

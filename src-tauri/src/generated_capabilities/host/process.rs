@@ -23,7 +23,7 @@ pub struct Cancellation {
 }
 
 #[derive(Debug, Default)]
-struct CancellationInner {
+pub(super) struct CancellationInner {
     pub(super) cancelled: AtomicBool,
     pub(super) notify: Notify,
 }

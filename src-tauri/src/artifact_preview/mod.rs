@@ -6,6 +6,7 @@ mod policy;
 mod protocol;
 mod service;
 mod source;
+mod source_web;
 mod tokens;
 
 pub use contracts::typescript_bindings;

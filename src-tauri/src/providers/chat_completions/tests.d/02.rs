@@ -22,7 +22,7 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
     let first = format!(
         "{}{}data: [DONE]\r\n\r\n",
         chunk(
-            json!({"tool_calls":[{"index":0,"id":"ui-call","type":"function","function":{"name":"present_ui","arguments":arguments}}]}),
+            json!({"content":"表示を準備します。","tool_calls":[{"index":0,"id":"ui-call","type":"function","function":{"name":"present_ui","arguments":arguments}}]}),
             Value::Null
         ),
         chunk(json!({}), json!("tool_calls"))
@@ -69,7 +69,7 @@ async fn generative_ui_http_tool_round_persists_a_view_without_speaking_dsl() {
     .await
     .unwrap();
     assert_eq!(result, "表示しました。");
-    assert_eq!(sink.0.lock().unwrap().join(""), "表示しました。");
+    assert_eq!(sink.0.lock().unwrap().join(""), "表示を準備します。表示しました。");
     let requests = server.await.unwrap();
     assert!(requests[0]["tools"]
         .as_array()

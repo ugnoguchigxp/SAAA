@@ -188,6 +188,7 @@ export const jaCore = {
     pacePatient: "長め",
     activity: {
       generationCancelled: "生成を中止しました",
+      cancelledAfterSearch: "Web検索後、回答前に処理が中止されました。もう一度送信できます。",
       voiceQueryQueued: "実行中の応答が終わるまで音声クエリーを待機させています",
       providerFailed: "プロバイダーがリクエストを完了できませんでした。",
       usingProvider: "{{provider}} を使用中",

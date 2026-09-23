@@ -22,7 +22,23 @@ fn ipc_receiver_fixture_matches_rust_serialization() {
         text: "Fixture transcript".into(),
         language: Some("ja".into()),
     };
-    let mut value = serde_json::json!({ "snapshot": snapshot, "runtime": runtime, "asr": asr });
+    let routing_root = role_routing::ipc::RoutingRootSnapshot {
+        root_id: "root-fixture".into(),
+        runtime_run_id: Some("run-fixture".into()),
+        phase: "responding".into(),
+        revision: 0,
+        active_slot: Some("reasoning".into()),
+        cancel_requested: false,
+        last_event_seq: 4,
+        selected_recipe_id: Some("20-respond-away".into()),
+        decision_reason_codes: vec!["rules".into(), "location_fallback".into()],
+    };
+    let mut value = serde_json::json!({
+        "snapshot": snapshot,
+        "runtime": runtime,
+        "asr": asr,
+        "routingRoot": routing_root,
+    });
     fn stable_timestamps(value: &mut serde_json::Value) {
         match value {
             serde_json::Value::Object(fields) => {

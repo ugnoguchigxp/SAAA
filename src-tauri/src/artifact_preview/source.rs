@@ -8,6 +8,7 @@ use crate::records::{auth::Authorization, read};
 pub(crate) struct SourceArtifact {
     pub url: String,
     pub text: String,
+    pub source_kind: &'static str,
     pub observed_at: i64,
     pub truncated: bool,
 }
@@ -77,6 +78,11 @@ pub(crate) fn read_source(
     Ok(Some(SourceArtifact {
         url: url.to_string(),
         text,
+        source_kind: if kind == "web_search_result" {
+            "search-excerpt"
+        } else {
+            "saved-page"
+        },
         observed_at,
         truncated,
     }))
@@ -130,6 +136,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(result.text, "Saved page text");
+        assert_eq!(result.source_kind, "saved-page");
+        connection
+            .execute("DELETE FROM records WHERE kind='web_fetch'", [])
+            .unwrap();
+        let excerpt = read_source(&connection, &auth, "https://example.com/source")
+            .unwrap()
+            .unwrap();
+        assert_eq!(excerpt.source_kind, "search-excerpt");
+        assert_eq!(excerpt.text, "Hit\n\nSearch excerpt");
         assert!(read_source(
             &connection,
             &Authorization {

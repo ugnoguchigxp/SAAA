@@ -458,7 +458,7 @@ where
     }
     serde_json::to_string(&envelope).map_err(|_| TypedRecallContractError::InvalidResponse)
 }
-trait MemoryItemValidation {
+pub(super) trait MemoryItemValidation {
     fn validate(&self) -> Result<(), TypedRecallContractError>;
 }
 impl MemoryItemValidation for ExperienceItem {

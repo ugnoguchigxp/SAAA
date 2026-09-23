@@ -382,6 +382,11 @@ pub fn run() {
             let tauri::WindowEvent::CloseRequested { api, .. } = event else {
                 return;
             };
+            // The fetch plugin closes its short-lived worker WebViews after each request.
+            // Only closing the application window may cancel conversation runs.
+            if window.label() != "main" {
+                return;
+            }
             let state = window.state::<AppState>();
             window_size::save(window, &state.data_directory);
             if state.shutdown_started.swap(true, Ordering::SeqCst) {

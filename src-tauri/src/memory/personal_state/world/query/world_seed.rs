@@ -19,7 +19,7 @@ pub struct ActivateInput<'a> {
     /// encode a non-empty slice is `world-budget-too-small`, never enlarged (R8).
     pub max_bytes: usize,
 }
-struct ScopeState {
+pub(super) struct ScopeState {
     pub(super) revision: u64,
     pub(super) input_epoch: u64,
     pub(super) policy_revision: u64,

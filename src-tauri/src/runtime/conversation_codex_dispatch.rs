@@ -36,8 +36,8 @@ pub(super) async fn execute(
     let FreshProviderContext { history, world, .. } = compose_after_connect(
         state,
         input,
-        &identity,
-        &regional,
+        identity,
+        regional,
         crate::runtime::context::broker::ProviderInputBudget::openai_compatible(),
     )
     .map_err(|error| TurnExecutionFailure::configuration(context_recovery_message(&error)))?;

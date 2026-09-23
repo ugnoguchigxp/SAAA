@@ -14,7 +14,7 @@ pub(crate) fn initialize_revision(connection: &Connection) -> rusqlite::Result<(
            BEGIN UPDATE settings_revision SET revision = revision + 1 WHERE singleton = 1; END;",
     )
 }
-struct StoredDocument {
+pub(super) struct StoredDocument {
     pub(super) schema_version: i64,
     pub(super) value: Value,
 }

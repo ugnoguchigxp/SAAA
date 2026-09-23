@@ -150,6 +150,24 @@ export function createConversationTurnControls(input: {
         appendStreamingText(event.runId, event.text);
         break;
       case "activity":
+        if (event.kind === "source-available") {
+          try {
+            const source = JSON.parse(event.summary) as { url?: string; title?: string };
+            if (source.url && /^https?:\/\//i.test(source.url)) {
+              setRuntimeActivity((current) =>
+                appendConversationActivity(current, {
+                  type: "sourceAvailable",
+                  runId: event.runId,
+                  url: source.url!,
+                  title: source.title || source.url!,
+                }),
+              );
+            }
+          } catch {
+            // Ignore malformed source metadata from a runtime event.
+          }
+          break;
+        }
         if (event.kind === "ui-presented") {
           void loadMessages(conversationId, issueScope);
           break;

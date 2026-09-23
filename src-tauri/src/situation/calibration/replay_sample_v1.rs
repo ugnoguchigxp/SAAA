@@ -9,7 +9,7 @@ pub(super) struct ReplaySampleV1 {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ReplayFixtureSet {
+pub(super) struct ReplayFixtureSet {
     pub(super) version: String,
     pub(super) scenarios: Vec<ReplayScenario>,
 }

@@ -141,7 +141,7 @@ pub fn parse_rerank_response(
     Ok(parsed)
 }
 
-struct WorkerChild {
+pub(super) struct WorkerChild {
     pub(super) child: Child,
     pub(super) stdin: ChildStdin,
     pub(super) stdout: BufReader<ChildStdout>,

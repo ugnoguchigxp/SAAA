@@ -9,7 +9,7 @@ import {
   localizeUiMessage,
   uiMessage,
 } from "../src/i18n/presentation";
-import { appendConversationActivity } from "../src/lib/conversationActivity";
+import { appendConversationActivity, conversationActivityOutcome } from "../src/lib/conversationActivity";
 
 afterEach(() => void i18n.changeLanguage("en"));
 
@@ -70,6 +70,18 @@ describe("localized UI presentation", () => {
 
     expect(activities).toHaveLength(8);
     expect(activities[0]).toEqual({ type: "providerStarted", providerId: "provider-1" });
+  });
+
+  test("explains cancellation after web search", () => {
+    expect(
+      conversationActivityOutcome([
+        { type: "webSearching" },
+        { type: "sourceFetching" },
+        { type: "answerPreparing" },
+        { type: "generationCancelled" },
+      ]),
+    ).toBe("cancelled-after-search");
+    expect(conversationActivityOutcome([{ type: "generationCancelled" }])).toBe("cancelled");
   });
 
   test("formats timestamps in the saved time zone", () => {

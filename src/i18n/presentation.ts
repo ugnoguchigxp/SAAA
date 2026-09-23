@@ -251,6 +251,8 @@ export function localizeRuntimeActivity(
       return t("chat.activity.webSearching");
     case "sourceFetching":
       return t("chat.activity.sourceFetching");
+    case "sourceAvailable":
+      return activity.title;
     case "answerPreparing":
       return t("chat.activity.answerPreparing");
   }

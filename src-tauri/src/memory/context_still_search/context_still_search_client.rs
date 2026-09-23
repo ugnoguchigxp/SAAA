@@ -18,19 +18,19 @@ const SESSION_REUSE_WINDOW: Duration = Duration::from_secs(55);
 pub struct ContextStillSearchClient {
     pub(super) inner: Arc<ClientInner>,
 }
-struct ClientInner {
+pub(super) struct ClientInner {
     pub(super) enabled: bool,
     pub(super) run_dir: PathBuf,
     pub(super) session: Mutex<Option<Session>>,
 }
-struct Session {
+pub(super) struct Session {
     pub(super) manifest: EndpointManifest,
     pub(super) transport: Arc<HttpTransport>,
     pub(super) last_used: tokio::time::Instant,
 }
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-struct EndpointManifest {
+pub(super) struct EndpointManifest {
     pub(super) server: String,
     pub(super) url: String,
     pub(super) transport: String,

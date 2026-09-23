@@ -10,7 +10,7 @@ use std::{
 };
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Document {
+pub(super) struct Document {
     pub(super) version: u32,
     pub(super) principal: String,
     pub(super) tombstones: BTreeMap<String, i64>,

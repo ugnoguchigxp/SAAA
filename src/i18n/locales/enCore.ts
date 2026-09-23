@@ -189,6 +189,7 @@ export const enCore = {
     pacePatient: "Patient",
     activity: {
       generationCancelled: "Generation cancelled",
+      cancelledAfterSearch: "The response was cancelled after web search, before the answer. You can send the request again.",
       voiceQueryQueued: "Voice query queued until the active response completes",
       providerFailed: "A provider could not complete the request.",
       usingProvider: "Using {{provider}}",

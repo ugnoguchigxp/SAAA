@@ -61,14 +61,14 @@ impl From<TypedRecallContractError> for ContextStillRecallError {
 pub struct ContextStillRecallClient {
     pub(super) inner: Arc<ClientInner>,
 }
-struct ClientInner {
+pub(super) struct ClientInner {
     pub(super) enabled: bool,
     pub(super) run_dir: PathBuf,
     pub(super) http: Option<Client>,
     pub(super) session: Mutex<Option<SessionState>>,
     pub(super) contract_blocked_manifest: RwLock<Option<EndpointManifest>>,
 }
-struct SessionState {
+pub(super) struct SessionState {
     pub(super) manifest: EndpointManifest,
     pub(super) token: Zeroizing<String>,
     pub(super) session_id: Zeroizing<String>,

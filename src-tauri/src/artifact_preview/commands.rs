@@ -7,21 +7,26 @@ use super::{
 use crate::AppState;
 
 #[tauri::command]
-pub(crate) fn read_source_artifact(
+pub(crate) fn mount_source_website(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     conversation_id: String,
     url: String,
-) -> Result<Option<super::source::SourceArtifact>, String> {
-    let principal = crate::tool_selection::service::ensure_principal(&state.sqlite_writer)
-        .map_err(|error| error.to_string())?;
-    state.sqlite_readers.read(|connection| {
-        let auth = crate::records::auth::Authorization {
-            principal_id: principal,
-            conversation_id,
-            allowed_scope_keys: Vec::new(),
-        };
-        super::source::read_source(connection, &auth, &url)
-    })
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<String, String> {
+    super::source_web::mount(&app, &state, &conversation_id, &url, x, y, width, height)
+}
+
+#[tauri::command]
+pub(crate) fn open_source_website_in_browser(
+    state: tauri::State<'_, AppState>,
+    conversation_id: String,
+    url: String,
+) -> Result<(), String> {
+    super::source_web::open_in_browser(&state, &conversation_id, &url)
 }
 
 #[tauri::command]

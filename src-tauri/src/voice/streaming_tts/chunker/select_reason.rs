@@ -31,7 +31,7 @@ pub(crate) struct SentenceAccumulator {
     pub(super) protected_tail: Option<ProtectedTail>,
 }
 #[derive(Debug)]
-enum ProtectedTail {
+pub(super) enum ProtectedTail {
     Fence {
         start: usize,
         marker: &'static str,
@@ -271,7 +271,7 @@ impl ProtectedTail {
     }
 }
 #[derive(Debug, Default)]
-struct Boundaries {
+pub(super) struct Boundaries {
     pub(super) strong: Vec<usize>,
     pub(super) weak: Vec<usize>,
     pub(super) safe: Vec<usize>,

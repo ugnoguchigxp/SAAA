@@ -44,6 +44,7 @@ pub(super) async fn execute(
         .flatten()
     else {
         let result = tool.await;
+        announce_search_source(context, call, &result);
         if web_activity.is_some() {
             let _ = context
                 .on_event
@@ -81,6 +82,7 @@ pub(super) async fn execute(
             (tool.await, spoken)
         }
     };
+    announce_search_source(context, call, &result.0);
     if web_activity.is_some() {
         let _ = context
             .on_event
@@ -91,6 +93,33 @@ pub(super) async fn execute(
             });
     }
     result
+}
+
+fn announce_search_source(
+    context: &ModelStreamContext<'_>,
+    call: &crate::runtime::agent_tools::AgentToolCall,
+    result: &str,
+) {
+    if call.name != "web_search" {
+        return;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(result) else {
+        return;
+    };
+    let Some(hit) = value.get("hits").and_then(|hits| hits.as_array()).and_then(|hits| hits.first()) else {
+        return;
+    };
+    let (Some(url), Some(title)) = (hit.get("url").and_then(|url| url.as_str()), hit.get("title").and_then(|title| title.as_str())) else {
+        return;
+    };
+    if !matches!(url::Url::parse(url), Ok(parsed) if matches!(parsed.scheme(), "http" | "https")) {
+        return;
+    }
+    let _ = context.on_event.send(crate::ipc_contract::RuntimeEvent::Activity {
+        run_id: context.input.run_id.clone(),
+        kind: "source-available".into(),
+        summary: serde_json::json!({"url": url, "title": title}).to_string(),
+    });
 }
 
 async fn catch_tool_execution(
