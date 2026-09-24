@@ -15,6 +15,7 @@ pub(super) async fn execute(
     active_provider_step: Option<&ActiveRoleStep>,
     role_provider_step: bool,
     role_provider_max_input_bytes: Option<usize>,
+    larm_provider: &'static str,
 ) -> Result<ConversationMessage, TurnExecutionFailure> {
     let shared_larm_voice = should_share_larm_voice_session(
         &route.source,
@@ -23,6 +24,22 @@ pub(super) async fn execute(
         input.source_id.as_deref(),
     );
     let harness = providers.harness.clone();
+    if active_provider_step
+        .as_ref()
+        .is_some_and(|step| step.purpose == "frontend")
+    {
+        return complete_frontend_step(
+            state,
+            input,
+            on_event,
+            cancellation,
+            role_candidates,
+            active_provider_step,
+            shared_larm_voice,
+            larm_provider,
+        )
+        .await;
+    }
     if let Some(message) = dispatch_reasoning_client(
         state,
         input,
@@ -286,29 +303,97 @@ pub(super) async fn execute(
             .as_ref()
             .map(|sink| sink as &dyn RuntimeEventSender)
             .unwrap_or(on_event);
-        let outcome = streaming::attempt(
-            &provider,
-            &history,
-            attempt_timeout_ms,
-            ModelStreamContext {
-                reasoning_effort: &reasoning_effort,
-                max_output_tokens,
-                input,
-                on_event: provider_events,
-                cancellation: cancellation.clone(),
-                context_health: envelope.health.status.as_str(),
-                context_sources: &envelope.selected,
-                context_omissions: &envelope.omitted,
-                output_persistence: Some(ProviderOutputPersistence {
-                    state,
-                    session_id: &session_id,
-                    world: world_live.as_ref(),
-                }),
-            },
-            &harness,
-            shared_larm_voice,
-        )
-        .await;
+        let fill_wait = input.input_origin == "voice"
+            && role_candidates
+                .iter()
+                .any(|candidate| candidate.purpose == "frontend")
+            && active_provider_step
+                .as_ref()
+                .is_some_and(|step| step.purpose == "respond");
+        let stream_context = ModelStreamContext {
+            reasoning_effort: &reasoning_effort,
+            max_output_tokens,
+            input,
+            on_event: provider_events,
+            cancellation: cancellation.clone(),
+            context_health: envelope.health.status.as_str(),
+            context_sources: &envelope.selected,
+            context_omissions: &envelope.omitted,
+            output_persistence: Some(ProviderOutputPersistence {
+                state,
+                session_id: &session_id,
+                world: world_live.as_ref(),
+            }),
+        };
+        let outcome = if fill_wait {
+            match wait_for_reasoner(
+                &provider,
+                &history,
+                attempt_timeout_ms,
+                stream_context,
+                &harness,
+                shared_larm_voice,
+                larm_provider,
+                state,
+                on_event,
+                &cancellation,
+            )
+            .await
+            {
+                ReasonerWait::Finished(outcome) => outcome,
+                ReasonerWait::TimedOut(cleanup) => {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|duration| duration.as_millis() as i64)
+                        .unwrap_or(0);
+                    if matches!(
+                        &provider,
+                        ModelProviderSettings::DynamicLan(_) | ModelProviderSettings::AgentSession(_)
+                    ) {
+                        finish_dynamic_lan_provider_session(
+                            state,
+                            &session_id,
+                            "cancelled",
+                            Some(ProviderFailureKind::Cancelled),
+                            cleanup,
+                        )?;
+                    } else {
+                        finish_provider_session(
+                            state,
+                            &session_id,
+                            "cancelled",
+                            Some(ProviderFailureKind::Cancelled),
+                        )?;
+                    }
+                    return persist_conversation_success_with_state(
+                        state,
+                        input,
+                        "すみません、時間内にお答えできませんでした。",
+                        |connection, message| {
+                            crate::role_routing::repository::accept_provider_turn_with_status(
+                                connection,
+                                &input.run_id,
+                                &message.id,
+                                now_ms,
+                                "cancelled",
+                            )
+                        },
+                    )
+                    .map_err(Into::into);
+                }
+            }
+        } else {
+            streaming::attempt(
+                &provider,
+                &history,
+                attempt_timeout_ms,
+                stream_context,
+                &harness,
+                shared_larm_voice,
+                larm_provider,
+            )
+            .await
+        };
         match outcome {
             ProviderAttemptOutcome::Completed { content, cleanup } => {
                 let (content, state_validation) = if state_query {
@@ -587,4 +672,365 @@ pub(super) async fn execute(
         }
     }
     collapse_provider_failures(failures)
+}
+
+enum ReasonerWait {
+    Finished(ProviderAttemptOutcome),
+    TimedOut(crate::CleanupOutcome),
+}
+
+const FILLER: &str = "まだ確認しています。";
+
+async fn wait_for_reasoner(
+    provider: &ModelProviderSettings,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    context: ModelStreamContext<'_>,
+    harness: &crate::HarnessSettings,
+    shared_larm_voice: bool,
+    larm_provider: &'static str,
+    state: &AppState,
+    on_event: &dyn RuntimeEventSender,
+    parent: &Arc<RunCancellation>,
+) -> ReasonerWait {
+    let step_cancel = Arc::new(RunCancellation::default());
+    let ModelStreamContext {
+        reasoning_effort,
+        max_output_tokens,
+        input,
+        on_event: provider_events,
+        context_health,
+        context_sources,
+        context_omissions,
+        output_persistence,
+        ..
+    } = context;
+    let attempt = streaming::attempt(
+        provider,
+        history,
+        timeout_ms,
+        ModelStreamContext {
+            reasoning_effort,
+            max_output_tokens,
+            input,
+            on_event: provider_events,
+            cancellation: step_cancel.clone(),
+            context_health,
+            context_sources,
+            context_omissions,
+            output_persistence,
+        },
+        harness,
+        shared_larm_voice,
+        larm_provider,
+    );
+    tokio::pin!(attempt);
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval.tick().await;
+    let mut tick = 0u32;
+    let mut deferred = false;
+    loop {
+        let mut speak = false;
+        tokio::select! {
+            biased;
+            _ = parent.cancelled() => {
+                step_cancel.cancel();
+                return ReasonerWait::Finished(attempt.await);
+            }
+            outcome = &mut attempt => return ReasonerWait::Finished(outcome),
+            _ = interval.tick() => {
+                tick += 1;
+                #[cfg(test)]
+                crate::runtime::event_hub::reasoning_ack::observe_filler_tick(&input.run_id, tick);
+                if tick >= 20 {
+                    step_cancel.cancel();
+                    let cleanup = match attempt.await {
+                        ProviderAttemptOutcome::Completed { cleanup, .. }
+                        | ProviderAttemptOutcome::Cancelled { cleanup, .. }
+                        | ProviderAttemptOutcome::Failed { cleanup, .. } => cleanup,
+                    };
+                    return ReasonerWait::TimedOut(cleanup);
+                }
+                let playing =
+                    crate::runtime::event_hub::reasoning_ack::speech_still_playing(&input.run_id);
+                let (due, next_deferred) =
+                    crate::role_routing::frontend::filler_decision(tick, playing, deferred);
+                deferred = next_deferred;
+                speak = due;
+                if speak {
+                    #[cfg(test)]
+                    crate::role_routing::frontend::record_filler_tick(tick);
+                }
+            }
+        }
+        if speak {
+            tokio::select! {
+                biased;
+                _ = parent.cancelled() => {
+                    step_cancel.cancel();
+                    return ReasonerWait::Finished(attempt.await);
+                }
+                outcome = &mut attempt => return ReasonerWait::Finished(outcome),
+                _ = on_event.acknowledge_hold(
+                    state,
+                    &input.run_id,
+                    &input.conversation_id,
+                    FILLER.to_string(),
+                    parent.clone(),
+                ) => {}
+            }
+        }
+    }
+}
+
+async fn complete_frontend_step(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &dyn RuntimeEventSender,
+    cancellation: Arc<RunCancellation>,
+    mut role_candidates: Vec<RoleCandidate>,
+    active_provider_step: Option<&ActiveRoleStep>,
+    shared_larm_voice: bool,
+    larm_provider: &'static str,
+) -> Result<ConversationMessage, TurnExecutionFailure> {
+    let (content, ack) = if shared_larm_voice {
+        frontend_model_output(state, input, &cancellation, larm_provider).await
+    } else {
+        (String::new(), None)
+    };
+    let turn = continue_after_frontend(
+        state,
+        input,
+        on_event,
+        cancellation.clone(),
+        role_candidates,
+        active_provider_step,
+        content,
+    );
+    if let Some(text) = ack {
+        let (_, result) = tokio::join!(
+            on_event.acknowledge_text(
+                state,
+                &input.run_id,
+                &input.conversation_id,
+                text,
+                cancellation,
+            ),
+            turn,
+        );
+        return result;
+    }
+    turn.await
+}
+
+async fn continue_after_frontend(
+    state: &AppState,
+    input: &StartTurnInput,
+    on_event: &dyn RuntimeEventSender,
+    cancellation: Arc<RunCancellation>,
+    mut role_candidates: Vec<RoleCandidate>,
+    active_provider_step: Option<&ActiveRoleStep>,
+    content: String,
+) -> Result<ConversationMessage, TurnExecutionFailure> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
+    if state.sqlite_writer.write(|connection| {
+        crate::role_routing::repository::advance_provider_step(
+            connection,
+            &input.run_id,
+            &content,
+            now_ms,
+        )
+    })? {
+        if let Some(step) = active_provider_step {
+            role_candidates.push(RoleCandidate {
+                step_id: step.step_id.clone(),
+                purpose: step.purpose.clone(),
+                content,
+            });
+        }
+        return Box::pin(super::execute_conversation_turn_with_candidates(
+            state,
+            input,
+            on_event,
+            cancellation,
+            role_candidates,
+        ))
+        .await;
+    }
+    persist_conversation_success_with_state(state, input, &content, |connection, message| {
+        crate::role_routing::repository::accept_provider_turn(
+            connection,
+            &input.run_id,
+            &message.id,
+            now_ms,
+        )
+    })
+    .map_err(Into::into)
+}
+
+async fn frontend_model_output(
+    state: &AppState,
+    input: &StartTurnInput,
+    cancellation: &Arc<RunCancellation>,
+    larm_provider: &'static str,
+) -> (String, Option<String>) {
+    let timeout_ms = state
+        .sqlite_readers
+        .read(|connection| {
+            Ok(crate::persistence::load_role_routing_settings(connection)?
+                .limits
+                .frontend_timeout_ms)
+        })
+        .unwrap_or(1_200);
+    let max_ack_chars = state
+        .sqlite_readers
+        .read(|connection| {
+            Ok(crate::persistence::load_role_routing_settings(connection)?
+                .speech
+                .max_ack_chars)
+        })
+        .unwrap_or(80);
+    let settings = match state
+        .sqlite_readers
+        .read(|connection| Ok(crate::persistence::load_model_providers(connection)?.harness))
+    {
+        Ok(settings) => settings,
+        Err(_) => return (String::new(), None),
+    };
+    if cancellation.is_cancelled() {
+        return (String::new(), None);
+    }
+    let call = frontend_completion(input, &settings, larm_provider, timeout_ms, cancellation);
+    let raw = match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), call).await {
+        Ok(Ok(raw)) => raw,
+        _ => return (String::new(), None),
+    };
+    let Ok(parsed) = crate::role_routing::frontend::parse(&raw) else {
+        return (String::new(), None);
+    };
+    let ack = crate::role_routing::frontend::ack_text(parsed.ack, false)
+        .filter(|text| text.chars().count() <= usize::from(max_ack_chars))
+        .map(str::to_string);
+    let recorded = serde_json::json!({
+        "ack": match parsed.ack {
+            crate::role_routing::frontend::Ack::None => "none",
+            crate::role_routing::frontend::Ack::Nod => "nod",
+            crate::role_routing::frontend::Ack::Greeting => "greeting",
+            crate::role_routing::frontend::Ack::Thanks => "thanks",
+            crate::role_routing::frontend::Ack::Working => "working",
+        },
+        "intent": match parsed.intent {
+            crate::role_routing::frontend::Intent::Social => "social",
+            crate::role_routing::frontend::Intent::Acknowledgement => "acknowledgement",
+            crate::role_routing::frontend::Intent::Request => "request",
+            crate::role_routing::frontend::Intent::Unclear => "unclear",
+        },
+        "resolvesTurn": parsed.resolves_turn,
+        "confidence": if parsed.high_confidence { "high" } else { "low" },
+    })
+    .to_string();
+    (recorded, ack)
+}
+
+async fn frontend_completion(
+    input: &StartTurnInput,
+    settings: &crate::HarnessSettings,
+    larm_provider: &'static str,
+    timeout_ms: u64,
+    cancellation: &Arc<RunCancellation>,
+) -> Result<String, ()> {
+    let ready = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(()),
+        result = crate::larm_voice::current_at(&input.conversation_id, settings) => result.map_err(|_| ())?,
+    };
+    let lease = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(()),
+        result = ready.session.acquire(larm_provider) => result.map_err(|_| ())?,
+    };
+    let provider = lease.provider();
+    let url = provider.endpoint("chat/completions").map_err(|_| ())?;
+    let body = serde_json::json!({
+        "model": provider.model,
+        "stream": true,
+        "max_tokens": 64,
+        "temperature": 0.0,
+        "chat_template_kwargs": {"enable_thinking": false},
+        "response_format": crate::role_routing::frontend::response_format(),
+        "messages": [
+            {"role": "system", "content": crate::role_routing::frontend::INSTRUCTION},
+            {"role": "user", "content": input.content}
+        ]
+    });
+    let client = reqwest::Client::new();
+    let token = provider.token().to_string();
+    let first = client
+        .post(url.clone())
+        .bearer_auth(&token)
+        .timeout(std::time::Duration::from_millis(timeout_ms.max(1)))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|_| ())?;
+    let mut response = if matches!(first.status(), reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::UNPROCESSABLE_ENTITY)
+    {
+        let mut retry = body;
+        retry.as_object_mut().map(|object| object.remove("response_format"));
+        client
+            .post(url)
+            .bearer_auth(token)
+            .timeout(std::time::Duration::from_millis(timeout_ms.max(1)))
+            .json(&retry)
+            .send()
+            .await
+            .map_err(|_| ())?
+    } else {
+        first
+    };
+    if !response.status().is_success() {
+        return Err(());
+    }
+    let mut bytes = Vec::new();
+    loop {
+        if bytes.len() >= 65_536 {
+            break;
+        }
+        let Some(chunk) = response.chunk().await.map_err(|_| ())? else {
+            break;
+        };
+        let room = 65_536 - bytes.len();
+        let take = chunk.len().min(room);
+        bytes.extend_from_slice(&chunk[..take]);
+    }
+    Ok(collect_completion_text(&bytes))
+}
+
+fn collect_completion_text(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(content) = value["choices"][0]["message"]["content"].as_str() {
+            return content.to_string();
+        }
+    }
+    let mut collected = String::new();
+    for line in text.lines() {
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data == "[DONE]" {
+            break;
+        }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+            if let Some(piece) = value["choices"][0]["delta"]["content"].as_str() {
+                collected.push_str(piece);
+            }
+        }
+    }
+    collected
 }

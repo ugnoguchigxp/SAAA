@@ -23,6 +23,8 @@ import {
   artifactTabId,
   artifactTabTitle,
   emptyArtifactWorkspace,
+  nextWebsiteTabIndex,
+  planWebviewCommand,
   reduceArtifactSessions,
   type ArtifactSessionStore,
   type InteractivePreviewTab,
@@ -216,8 +218,16 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
               };
               dispatch({ type: "select", tabId: targetId });
             } else if (request.operation === "next_tab" || request.operation === "previous_tab") {
+              const plan = planWebviewCommand(request.operation, selected, websiteTabs.length);
+              if (plan.outcome === "ack-now") {
+                await invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: true });
+                return;
+              }
+              if (plan.outcome !== "reduce-then-ack") throw new Error("no-website-tabs");
               const delta = request.operation === "next_tab" ? 1 : -1;
-              const next = websiteTabs[(selected + delta + websiteTabs.length) % websiteTabs.length];
+              const nextIndex = nextWebsiteTabIndex(selected, websiteTabs.length, delta);
+              const next = nextIndex === null ? undefined : websiteTabs[nextIndex];
+              if (!next) throw new Error("no-website-tabs");
               if (artifactTabId(next) === current.activeTabId) {
                 await invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: true });
                 return;

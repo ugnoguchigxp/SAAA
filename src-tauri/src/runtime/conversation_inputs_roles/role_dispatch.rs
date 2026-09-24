@@ -3,6 +3,7 @@ use super::*;
 pub(crate) enum RoleDispatch {
     Provider {
         max_input_bytes: u32,
+        larm_provider: &'static str,
     },
     CodexSdk {
         model: String,
@@ -163,8 +164,14 @@ pub(crate) fn apply_enabled_role_route(
             .step_timeout_ms
             .min(role_policy.limits.root_timeout_ms),
     );
+    let larm_provider = if actor.larm_provider.as_deref() == Some("backchannel") {
+        "backchannel"
+    } else {
+        "llm"
+    };
     Ok(Some(RoleDispatch::Provider {
         max_input_bytes: actor.max_input_bytes,
+        larm_provider,
     }))
 }
 /// Re-checks mutable host facts at the last synchronous boundary before any provider/SDK I/O.

@@ -10,7 +10,7 @@ pub(crate) use repository_policy::capture_current_policy;
 #[allow(unused_imports)]
 pub(crate) use repository_policy::capture_policy_version;
 pub(crate) use repository_turns::{
-    accept_provider_turn, accept_reviewed_draft, advance_provider_step,
+    accept_provider_turn, accept_provider_turn_with_status, accept_reviewed_draft, advance_provider_step,
     advance_provider_step_with_usage, advance_review_step, cancel_all_for_disable,
     disable_drain_in_progress, disabled_runtime_run_ids, record_actor_activity,
     record_input_receipt, record_provider_turn_finish, record_provider_turn_start_in_transaction,

@@ -634,6 +634,7 @@ pub(crate) async fn run_with_options(
                         report_progress,
                         Duration::from_millis(timeout_ms).saturating_sub(request_started.elapsed()),
                         &offer.generated,
+                        offer.direct.as_ref(),
                     )
                     .await
                 };
@@ -649,11 +650,20 @@ pub(crate) async fn run_with_options(
                             .state
                             .sqlite_writer
                             .write(|connection| {
+                                let tracked = serde_json::from_str::<Value>(&result)
+                                    .ok()
+                                    .and_then(|value| {
+                                        value
+                                            .get("invocationId")
+                                            .and_then(Value::as_str)
+                                            .map(str::to_string)
+                                    })
+                                    .unwrap_or_else(|| call.id.clone());
                                 crate::runtime::butler_loop::record_tool_event(
                                     connection,
                                     &context.input.conversation_id,
                                     &context.input.run_id,
-                                    &call.id,
+                                    &tracked,
                                     "tool_result",
                                 )
                                 .map(|_| ())

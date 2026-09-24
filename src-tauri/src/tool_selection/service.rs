@@ -23,6 +23,8 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+#[path = "service/direct_offer.rs"]
+mod direct_offer;
 #[path = "service/persist_error.rs"]
 mod persist_error;
 #[path = "service/rank.rs"]
@@ -31,6 +33,7 @@ mod rank;
 mod reconcile_interrupted_invocations;
 #[path = "service/search_candidate.rs"]
 mod search_candidate;
+pub use direct_offer::DirectOffer;
 pub use persist_error::ensure_principal;
 use persist_error::{PersistError, CHANGED};
 pub use reconcile_interrupted_invocations::reconcile_interrupted_invocations;

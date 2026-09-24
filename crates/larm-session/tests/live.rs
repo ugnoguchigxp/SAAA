@@ -82,7 +82,9 @@ async fn live_restart_reclaims_connection() {
     let (_first_stop, first_receiver) = tokio::sync::watch::channel(false);
     let first = Session::connect_with_profile_credential_and_key(
         &base,
-        saaa_larm_session::DEFAULT_PROFILE,
+        saaa_larm_session::ProfilePreference::Explicit(
+            saaa_larm_session::DEFAULT_PROFILE.into(),
+        ),
         token.clone(),
         key.clone(),
         first_receiver,
@@ -100,7 +102,9 @@ async fn live_restart_reclaims_connection() {
     let (_second_stop, second_receiver) = tokio::sync::watch::channel(false);
     let second = Session::connect_with_profile_credential_and_key(
         &base,
-        saaa_larm_session::DEFAULT_PROFILE,
+        saaa_larm_session::ProfilePreference::Explicit(
+            saaa_larm_session::DEFAULT_PROFILE.into(),
+        ),
         token,
         key,
         second_receiver,

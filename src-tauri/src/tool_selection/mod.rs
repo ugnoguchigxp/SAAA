@@ -27,6 +27,7 @@ pub mod retrieval;
 pub mod rules;
 pub mod schema;
 pub mod service;
+pub mod simulator;
 pub mod source_lookup;
 pub mod worker;
 

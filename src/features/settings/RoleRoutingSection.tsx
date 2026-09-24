@@ -7,6 +7,7 @@ import {
   runRoutingLearningOnce,
 } from "../../lib/roleRoutingApi";
 import { AdaptiveImprovementSection } from "./AdaptiveImprovementSection";
+import { applyButlerConfiguration } from "./settingsRoleRouting";
 import { useEffect, useState } from "react";
 
 export function RoleRoutingSection({
@@ -105,6 +106,41 @@ export function RoleRoutingSection({
       <button type="button" className="secondary-button" onClick={prepareActors}>
         利用可能な Provider からアクターを準備
       </button>
+      <button
+        type="button"
+        className="secondary-button"
+        onClick={() => {
+          const next = applyButlerConfiguration(settings, (actorId) =>
+            window.confirm(`${actorId} を執事構成で上書きしますか？`),
+          );
+          if (next) onChange(next);
+        }}
+      >
+        執事構成（LARM: Qwen 2B 受付 + Ornith 思考）を適用
+      </button>
+      {settings.actors
+        .filter((actor) => actor.providerId === "lan-llm-dynamic")
+        .map((actor) => (
+          <label className="settings-field" key={`${actor.id}-larm-provider`}>
+            <span>{actor.label} の LARM Provider</span>
+            <select
+              value={actor.larmProvider ?? "llm"}
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  actors: settings.actors.map((item) =>
+                    item.id === actor.id
+                      ? { ...item, larmProvider: event.target.value as "llm" | "backchannel" }
+                      : item,
+                  ),
+                })
+              }
+            >
+              <option value="llm">llm</option>
+              <option value="backchannel">backchannel</option>
+            </select>
+          </label>
+        ))}
       {settings.actors.length > 0 && (
         <div className="settings-field-group">
           {roleNames.map(([role, label]) => (

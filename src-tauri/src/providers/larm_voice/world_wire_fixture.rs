@@ -10,6 +10,7 @@ pub(super) struct Fake {
     pub base: String,
     pub clock: Arc<AtomicI64>,
     pub bodies: StdMutex<Vec<Value>>,
+    pub hits: StdMutex<Vec<String>>,
     pub released: AtomicBool,
     route: &'static str,
     transition: &'static str,
@@ -22,12 +23,22 @@ impl Fake {
         transition: &'static str,
         clock: Arc<AtomicI64>,
     ) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        Self::listen("127.0.0.1:0", route, transition, clock).await
+    }
+
+    pub async fn listen(
+        address: &str,
+        route: &'static str,
+        transition: &'static str,
+        clock: Arc<AtomicI64>,
+    ) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind(address).await.unwrap();
         let created = chrono::Utc::now() - chrono::Duration::seconds(1);
         let f = Arc::new(Self {
             base: format!("http://{}", listener.local_addr().unwrap()),
             clock,
             bodies: StdMutex::new(vec![]),
+            hits: StdMutex::new(vec![]),
             released: AtomicBool::new(false),
             route,
             transition,
@@ -71,7 +82,16 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
             if f.route == "dynamic-lan" {
                 return Json(f.dynamic_claim()).into_response();
             }
-            return Json(json!({"id":"world-fixture","status":"ready","allocationId":"world-allocation","expiresAt":f.expires,"providers":([("llm","openai.chat-completions.v1"),("tts","openai.audio-speech.v1"),("embedding","larm.embedding.v1"),("asr","openai.audio-transcriptions.v1")].iter().map(|(name,protocol)|json!({"name":name,"protocol":protocol,"baseUrl":format!("{}/{name}/v1",f.base),"model":if *name=="llm" {"gemma-4-e4b"} else if *name=="embedding" {"multilingual-e5-small"} else {"fixture"},"configuration":{"fields":{}},"credential":{"token":format!("token-{name}")},"health":{"url":format!("{}/{name}/health",f.base),"maxAgeMs":10000},"contextWindow":if *name=="llm" {json!({"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976})} else {Value::Null},"embeddingSpace":if *name=="embedding" {json!({"dimension":384})} else {Value::Null}})).collect::<Vec<_>>())})).into_response();
+            let mut names = vec![
+                ("llm", "openai.chat-completions.v1"),
+                ("tts", "openai.audio-speech.v1"),
+                ("embedding", "larm.embedding.v1"),
+                ("asr", "openai.audio-transcriptions.v1"),
+            ];
+            if f.route == "butler" {
+                names.push(("backchannel", "openai.chat-completions.v1"));
+            }
+            return Json(json!({"id":"world-fixture","status":"ready","allocationId":"world-allocation","expiresAt":f.expires,"providers":(names.iter().map(|(name,protocol)|json!({"name":name,"protocol":protocol,"baseUrl":format!("{}/{name}/v1",f.base),"model":if *name=="llm" {"gemma-4-e4b"} else if *name=="embedding" {"multilingual-e5-small"} else {"fixture"},"configuration":{"fields":{}},"credential":{"token":format!("token-{name}")},"health":{"url":format!("{}/{name}/health",f.base),"maxAgeMs":10000},"contextWindow":if *name=="llm" || *name=="backchannel" {json!({"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976})} else {Value::Null},"embeddingSpace":if *name=="embedding" {json!({"dimension":384})} else {Value::Null}})).collect::<Vec<_>>())})).into_response();
         }
         if f.transition == "initial" {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
@@ -106,20 +126,55 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
     }
     assert!(matches!(
         path.as_str(),
-        "/llm/v1/chat/completions" | "/v1/chat/completions"
+        "/llm/v1/chat/completions"
+            | "/backchannel/v1/chat/completions"
+            | "/v1/chat/completions"
     ));
+    if f.route == "butler" && name == "backchannel" && f.transition == "frontend-slow" {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+    if f.route == "butler" && name == "llm" && f.transition == "reasoner-slow" {
+        tokio::time::sleep(std::time::Duration::from_secs(25)).await;
+    }
+    if f.route == "butler"
+        && name == "llm"
+        && f.transition == "reasoner-fifteen"
+        && !f.hits.lock().unwrap().iter().any(|hit| hit == "llm")
+    {
+        tokio::time::sleep(std::time::Duration::from_secs(13)).await;
+    }
+    if f.route == "butler" && name == "llm" && f.transition == "reasoner-hang" {
+        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+    }
     let body: Value = serde_json::from_slice(
         &axum::body::to_bytes(request.into_body(), 65536)
             .await
             .unwrap(),
     )
     .unwrap();
-    let streaming = body["stream"] == true;
     let count = {
         let mut bodies = f.bodies.lock().unwrap();
-        bodies.push(body);
+        bodies.push(body.clone());
+        f.hits.lock().unwrap().push(name.to_string());
         bodies.len()
     };
+    if f.route == "butler" && name == "backchannel" {
+        let content = match f.transition {
+            "frontend-bad" => "not-json",
+            "frontend-nod" => {
+                r#"{"ack":"nod","intent":"acknowledgement","resolvesTurn":true,"confidence":"high"}"#
+            }
+            "frontend-thanks" => {
+                r#"{"ack":"thanks","intent":"social","resolvesTurn":true,"confidence":"high"}"#
+            }
+            "frontend-low" => {
+                r#"{"ack":"nod","intent":"acknowledgement","resolvesTurn":true,"confidence":"low"}"#
+            }
+            _ => r#"{"ack":"working","intent":"request","resolvesTurn":false,"confidence":"high"}"#,
+        };
+        return Json(json!({"choices":[{"message":{"content":content}}]})).into_response();
+    }
+    let streaming = body["stream"] == true;
     // Chat completions retries a transient 503 twice inside one provider attempt. Keep all
     // three transport requests unavailable so the caller reaches the provider-fallback
     // boundary; the next provider attempt succeeds with a newly prepared World frame.
@@ -133,7 +188,7 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
         f.clock.fetch_add(3000, Ordering::SeqCst);
         json!({"role":"assistant","content":null,"tool_calls":[{"id":"world-tool","type":"function","function":{"name":"present_ui","arguments":json!({"definition":"root=ModelStatus(\"larm.status\")","summary":"fixture","mode":"live"}).to_string()}}]})
     } else {
-        json!({"role":"assistant","content":if f.transition=="context-still" {"ContextStillの検索結果を確認しました。"} else {"fixture"}})
+        json!({"role":"assistant","content":if f.transition=="context-still" {"ContextStillの検索結果を確認しました。"} else if f.route=="butler" {"ornith-answer"} else {"fixture"}})
     };
     let finish = if message.get("tool_calls").is_some() {
         "tool_calls"

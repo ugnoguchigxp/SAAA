@@ -50,6 +50,7 @@ pub(crate) fn available_agent_tools(
             .is_some_and(|persistence| persistence.state.context_still_recall.is_configured());
     let mut definitions =
         agent_tools::agent_tool_definitions(include_conversation, include_typed_memory, false);
+    let mut direct = None;
     if crate::runtime::butler_loop::continuation_enabled()
         && output_persistence.is_some()
         && calls_this_attempt < 24
@@ -57,19 +58,28 @@ pub(crate) fn available_agent_tools(
         definitions.push(continue_work_definition());
     }
     definitions.extend(crate::records::tools::definitions());
-    if calls_this_attempt < 12
-        && crate::artifact_preview::webview_ops::is_active_for(&input.conversation_id)
-    {
+    if calls_this_attempt < 12 {
         if let Some(persistence) = output_persistence {
             if let Ok(principal) =
                 crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer)
             {
-                if let Ok(Some(definition)) = persistence.state.sqlite_readers.read(|connection| {
-                    crate::artifact_preview::webview_catalog::offered_definition(
-                        connection, &principal,
-                    )
-                }) {
-                    definitions.push(definition);
+                let context =
+                    crate::tool_selection::RequestContext::new(&principal, &input.conversation_id)
+                        .with_run(Some(input.run_id.clone()));
+                match persistence
+                    .state
+                    .tool_selection
+                    .offer_direct(&context, "artifact_webview")
+                {
+                    Ok(Some(offer)) => {
+                        direct = Some(crate::generated_capabilities::tools::DirectExecution {
+                            tool_name: "artifact_webview".into(),
+                            execution_ref: offer.execution_ref,
+                            conversation_id: input.conversation_id.clone(),
+                        });
+                        definitions.push(offer.definition);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -126,6 +136,7 @@ pub(crate) fn available_agent_tools(
     AgentToolOffer {
         definitions,
         generated,
+        direct,
     }
 }
 
@@ -142,6 +153,7 @@ pub(crate) async fn execute_agent_tool(
     timeout: Duration,
     generated: &GeneratedToolSnapshot,
     run_cancellation: &RunCancellation,
+    direct: Option<&crate::generated_capabilities::tools::DirectExecution>,
 ) -> String {
     if call.name == CONTINUE_WORK_TOOL_NAME {
         return serde_json::json!({"continued": true}).to_string();
@@ -183,31 +195,8 @@ pub(crate) async fn execute_agent_tool(
         .await;
     }
     if call.name == "artifact_webview" {
-        if !crate::artifact_preview::webview_ops::is_active_for(&input.conversation_id) {
-            return serde_json::json!({"ok": false, "reason": "webview-not-operable"}).to_string();
-        }
-        let arguments: Value = match serde_json::from_str(&call.arguments) {
-            Ok(value) => value,
-            Err(_) => {
-                return serde_json::json!({"ok": false, "reason": "invalid-input"}).to_string()
-            }
-        };
-        let operation = arguments
-            .get("operation")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let index = arguments
-            .get("index")
-            .and_then(Value::as_u64)
-            .map(|value| value as usize);
-        let conversation_id = input.conversation_id.clone();
-        return tokio::task::spawn_blocking(move || {
-            crate::artifact_preview::webview_ops::execute(&operation, index, &conversation_id)
-        })
-        .await
-        .unwrap_or_else(|_| serde_json::json!({"ok": false, "reason": "webview-unavailable"}))
-        .to_string();
+        return execute_artifact_webview(output_persistence, input, call, run_cancellation, direct)
+            .await;
     }
     if crate::coding::contracts::NAMES.contains(&call.name.as_str()) {
         return crate::coding::tools::execute(output_persistence.map(|p| p.state), input, call);
@@ -365,4 +354,64 @@ pub(crate) async fn execute_agent_tool(
         };
     }
     execute_recall_tool(output_persistence, input, call)
+}
+
+async fn execute_artifact_webview(
+    output_persistence: Option<ProviderOutputPersistence<'_>>,
+    input: &StartTurnInput,
+    call: &crate::runtime::agent_tools::AgentToolCall,
+    run_cancellation: &RunCancellation,
+    direct: Option<&crate::generated_capabilities::tools::DirectExecution>,
+) -> String {
+    let Some(persistence) = output_persistence else {
+        return serde_json::json!({"ok": false, "reason": "not-offered", "stage": "offer"})
+            .to_string();
+    };
+    let Some(direct) = direct.filter(|direct| {
+        direct.tool_name == call.name && direct.conversation_id == input.conversation_id
+    }) else {
+        return serde_json::json!({"ok": false, "reason": "not-offered", "stage": "offer"})
+            .to_string();
+    };
+    let execution_ref = &direct.execution_ref;
+    let arguments: Value = match serde_json::from_str(&call.arguments) {
+        Ok(value) => value,
+        Err(_) => {
+            return serde_json::json!({"ok": false, "reason": "invalid-input", "stage": "schema"})
+                .to_string()
+        }
+    };
+    let Ok(principal) =
+        crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer)
+    else {
+        return serde_json::json!({"ok": false, "reason": "not-authorized", "stage": "grant"})
+            .to_string();
+    };
+    let context = crate::tool_selection::RequestContext::new(&principal, &input.conversation_id)
+        .with_run(Some(input.run_id.clone()));
+    match persistence
+        .state
+        .tool_selection
+        .invoke(&context, &execution_ref, &arguments, run_cancellation)
+        .await
+    {
+        Ok(response) => serde_json::json!({
+            "ok": response.status == crate::tool_selection::backends::TechnicalStatus::Succeeded,
+            "stage": "invoke",
+            "invocationId": response.invocation_id,
+            "runId": input.run_id,
+            "status": response.status.as_str(),
+            "errorCode": response.error_code,
+            "result": response.result,
+        })
+        .to_string(),
+        Err(error) => serde_json::json!({
+            "ok": false,
+            "stage": "invoke",
+            "runId": input.run_id,
+            "reason": error.code.as_str(),
+            "message": error.message,
+        })
+        .to_string(),
+    }
 }

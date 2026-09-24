@@ -3,6 +3,7 @@ export type LlmRequestOptions = {
   reasoning: "auto" | "supported" | "unsupported";
   tools: boolean;
   streaming: boolean;
+  thinking?: "auto" | "disabled" | "enabled";
 };
 import type { AsrLanguageCode } from "./asrLanguages";
 

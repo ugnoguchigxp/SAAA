@@ -73,6 +73,8 @@ jobs:
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Rust tests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Tool-chain simulator
+        run: cargo run --locked --manifest-path src-tauri/Cargo.toml --bin toolchain_simulate -- --json
       - name: Ubuntu desktop smoke
         if: runner.os == 'Linux'
         run: xvfb-run -a bun run desktop:smoke --report-dir "${{ runner.temp }}/saaa-desktop-smoke"

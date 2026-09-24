@@ -9,6 +9,7 @@ use tokio::sync::{watch, Mutex, OnceCell};
 pub(crate) mod audio;
 mod decision;
 pub(crate) mod frontdesk;
+pub(crate) mod profile;
 pub(crate) mod frontdesk_decision;
 pub(crate) mod frontdesk_echo;
 pub(crate) mod frontdesk_repository;
@@ -50,9 +51,8 @@ pub(crate) async fn begin_larm_voice_session(
         .sqlite_readers
         .read(|c| Ok(crate::persistence::load_model_providers(c)?.harness))?;
     let base = harness.address;
-    let profile = harness
-        .larm_profile
-        .unwrap_or_else(|| saaa_larm_session::DEFAULT_PROFILE.into());
+    let preference = profile::preference(harness.larm_profile.as_deref());
+    let profile = profile::label(&preference);
     crate::validate_identifier(&owner_id, "voice owner")?;
     crate::validate_identifier(&conversation_id, "conversation id")?;
     let lease_key = current_lease_key(&state.sqlite_writer)?;
@@ -118,7 +118,11 @@ async fn initialize(owner: &Owner) -> Result<Arc<Ready>, StartupError> {
     let control_token = "test-control-token".to_string();
     let session = Session::connect_with_profile_credential_and_key(
         &owner.base,
-        &owner.profile,
+        if owner.profile == profile::AUTO_LABEL {
+            saaa_larm_session::ProfilePreference::Auto
+        } else {
+            saaa_larm_session::ProfilePreference::Explicit(owner.profile.clone())
+        },
         control_token,
         owner.lease_key.clone(),
         owner.cancel.subscribe(),
@@ -192,10 +196,7 @@ pub(crate) async fn current_at(
     conversation: &str,
     settings: &crate::HarnessSettings,
 ) -> Result<Arc<Ready>, String> {
-    let profile = settings
-        .larm_profile
-        .as_deref()
-        .unwrap_or(saaa_larm_session::DEFAULT_PROFILE);
+    let profile = profile::label(&profile::preference(settings.larm_profile.as_deref()));
     {
         let mut slot = OWNER.lock().await;
         let owner = slot.as_ref().ok_or("LARM voice session is not started")?;

@@ -4,6 +4,15 @@ use serde_json::{json, Value};
 use crate::tool_selection::catalog::{register_revision, CatalogEntry, UsagePage};
 
 pub(crate) fn ensure_registered(connection: &Connection, principal_id: &str) -> Result<(), String> {
+    ensure_registered_with_note(connection, principal_id, "")
+}
+
+/// `note` is part of the revision hash. An empty note matches the production catalog.
+pub(crate) fn ensure_registered_with_note(
+    connection: &Connection,
+    principal_id: &str,
+    note: &str,
+) -> Result<(), String> {
     let schema = json!({
         "type": "object",
         "additionalProperties": false,
@@ -32,7 +41,9 @@ pub(crate) fn ensure_registered(connection: &Connection, principal_id: &str) -> 
         usage_pages: vec![UsagePage {
             section: "usage",
             page: 1,
-            text: "Use next_tab, previous_tab, select_tab with a zero-based index, scroll, close_tab, or close_all_tabs. These affect only website tabs in the current conversation.".into(),
+            text: format!(
+                "Use next_tab, previous_tab, select_tab with a zero-based index, scroll, close_tab, or close_all_tabs. These affect only website tabs in the current conversation.{note}"
+            ),
         }],
         backend_binding: json!({"kind": "artifact_webview", "operation": "dispatch"}),
     };

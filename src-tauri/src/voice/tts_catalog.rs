@@ -270,13 +270,12 @@ async fn load_harness_catalog(state: &crate::AppState) -> Result<TtsVoiceCatalog
     let credential =
         crate::providers::dynamic_lan::credential::load().map_err(|error| error.code())?;
     let (_alive, cancellation) = tokio::sync::watch::channel(false);
-    let session = saaa_larm_session::Session::connect_with_profile_and_credential(
+    let preference = crate::larm_voice::profile::preference(harness.larm_profile.as_deref());
+    let session = saaa_larm_session::Session::connect_with_profile_credential_and_key(
         &harness.address,
-        harness
-            .larm_profile
-            .as_deref()
-            .unwrap_or(saaa_larm_session::DEFAULT_PROFILE),
+        preference,
         credential.token().to_string(),
+        format!("saaa-session-{}", uuid::Uuid::new_v4()),
         cancellation,
     )
     .await

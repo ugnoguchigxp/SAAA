@@ -40,6 +40,40 @@ fn accept_receipt(connection: &mut Connection, run_id: &str, now_ms: i64) {
 }
 
 #[test]
+fn backchannel_actor_dispatches_with_backchannel_provider() {
+    let mut connection = Connection::open_in_memory().expect("database opens");
+    initialize_database(&connection).expect("database initializes");
+    let mut documents = default_settings_input();
+    let policy = documents
+        .iter_mut()
+        .find(|document| document.namespace == "routing.roles")
+        .expect("role policy");
+    policy.value_json = json!({
+        "schemaVersion": 1, "enabled": true,
+        "actors": [{"id":"desk","label":"Desk","aliases":[],"transport":"provider","providerId": crate::DYNAMIC_LAN_PROVIDER_ID,"model":null,"location":"local","resourceGroup":"larm-backchannel","maxInputBytes":16000,"capabilities":["social_reply"],"larmProvider":"backchannel"}],
+        "roles":{"frontend":"desk","reasoner":"desk","advanced":null,"reviewer":null,"premium":null,"toolSpecialist":null},
+        "recipes":[{"id":"direct","action":"respond","roles":["reasoner"],"enabled":true}],
+        "limits":{"maxReasoningSteps":4,"maxToolCalls":32,"rootTimeoutMs":180000,"stepTimeoutMs":60000,"frontendTimeoutMs":1200,"classificationTimeoutMs":1500,"maxQueuedInputs":4,"maxReviewRounds":1,"maxAutomaticSwitches":2,"maxEstimatedCostMicros":null},
+        "speech":{"mode":"author_verbatim","ackDelayMs":250,"maxAckChars":80,"progressMinIntervalMs":15000,"maxProgressPerRoot":2},
+        "selection":{"mode":"rules","shadowArtifactId":null,"classificationMinConfidence":0.85,"weights":{"quality":0.6,"latency":0.25,"cost":0.15},"switchMargin":0.15},
+        "premiumApproval":"per_request",
+        "learning":{"enabled":false,"localStart":"02:00","localEnd":"05:00","idleSeconds":300,"maxRunSeconds":600,"batchSize":100,"allowLocalLabeler":false}
+    });
+    save_settings_documents_to_connection(&mut connection, &documents).expect("settings save");
+    let mut route = crate::persistence::load_routing_settings(&connection)
+        .expect("routing settings")
+        .conversation_respond;
+    assert_eq!(
+        apply_enabled_role_route(&connection, None, &mut route, &unknown_reachability())
+            .expect("role route applies"),
+        Some(RoleDispatch::Provider {
+            max_input_bytes: 16000,
+            larm_provider: "backchannel",
+        })
+    );
+}
+
+#[test]
 fn enabled_direct_recipe_overrides_the_legacy_conversation_route() {
     let mut connection = Connection::open_in_memory().expect("database opens");
     initialize_database(&connection).expect("database initializes");
@@ -67,7 +101,8 @@ fn enabled_direct_recipe_overrides_the_legacy_conversation_route() {
         apply_enabled_role_route(&connection, None, &mut route, &unknown_reachability())
             .expect("role route applies"),
         Some(RoleDispatch::Provider {
-            max_input_bytes: 4096
+            max_input_bytes: 4096,
+            larm_provider: "llm",
         })
     );
     assert_eq!(route.source, "provider");
@@ -255,7 +290,8 @@ fn rr_03_queued_root_uses_its_immutable_policy_receipt() {
         )
         .expect("receipt route"),
         Some(RoleDispatch::Provider {
-            max_input_bytes: 4096
+            max_input_bytes: 4096,
+            larm_provider: "llm",
         })
     );
     assert_eq!(
@@ -344,7 +380,8 @@ fn rr_22_role_route_enforces_the_step_budget() {
         )
         .expect("first dispatch fits the budget"),
         Some(RoleDispatch::Provider {
-            max_input_bytes: 4096
+            max_input_bytes: 4096,
+            larm_provider: "llm",
         })
     );
     connection

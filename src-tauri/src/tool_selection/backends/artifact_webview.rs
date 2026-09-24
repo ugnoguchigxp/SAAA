@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{BackendOutcome, BackendRequest, ToolBackend};
+use super::{BackendOutcome, BackendRequest, TechnicalStatus, ToolBackend};
 use crate::RunCancellation;
 
 pub struct ArtifactWebviewBackend;
@@ -34,6 +34,34 @@ impl ToolBackend for ArtifactWebviewBackend {
         })
         .await
         .unwrap_or_else(|_| serde_json::json!({"ok": false, "reason": "webview-unavailable"}));
-        BackendOutcome::succeeded(value)
+        if value.get("ok").and_then(Value::as_bool) == Some(true) {
+            return BackendOutcome::succeeded(value);
+        }
+        let code = stable_reason(
+            value
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("webview-failed"),
+        );
+        BackendOutcome {
+            status: TechnicalStatus::Failed,
+            result: Some(value),
+            error_code: Some(code),
+        }
+    }
+}
+
+fn stable_reason(reason: &str) -> &'static str {
+    match reason {
+        "webview-not-operable" => "webview-not-operable",
+        "webview-not-scrollable" => "webview-not-scrollable",
+        "webview-operation-unknown" => "webview-operation-unknown",
+        "webview-state-changed" => "webview-state-changed",
+        "webview-timeout" => "webview-timeout",
+        "webview-unavailable" => "webview-unavailable",
+        "tab-index-missing" => "tab-index-missing",
+        "tab-index-out-of-range" => "tab-index-out-of-range",
+        "no-website-tabs" => "no-website-tabs",
+        _ => "webview-failed",
     }
 }

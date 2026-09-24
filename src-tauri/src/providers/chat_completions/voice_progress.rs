@@ -14,6 +14,7 @@ pub(super) async fn execute(
     report_progress: bool,
     timeout: Duration,
     generated: &GeneratedToolSnapshot,
+    direct: Option<&crate::generated_capabilities::tools::DirectExecution>,
 ) -> (String, bool) {
     let web_activity = match call.name.as_str() {
         "web_search" => Some("web-search-started"),
@@ -37,6 +38,7 @@ pub(super) async fn execute(
         timeout,
         generated,
         &context.cancellation,
+        direct,
     )));
     let language = language(context);
     let Some(canonical) = report_progress

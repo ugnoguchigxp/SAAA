@@ -10,10 +10,11 @@ pub async fn check_frontdesk(base: &str) -> Result<String, String> {
         crate::providers::dynamic_lan::credential::load().map_err(|e| e.code().to_string())?;
     let (_cancel, receiver) = tokio::sync::watch::channel(false);
     eprintln!("stage=voice-session-prepare; status=started");
-    let session = saaa_larm_session::Session::connect_with_profile_and_credential(
+    let session = saaa_larm_session::Session::connect_with_profile_credential_and_key(
         base,
-        saaa_larm_session::DEFAULT_PROFILE,
+        crate::larm_voice::profile::preference(None),
         credential.token().into(),
+        format!("saaa-session-{}", uuid::Uuid::new_v4()),
         receiver,
     )
     .await

@@ -16,6 +16,8 @@ pub struct LlmOptions {
     /// Optional explicit sampling temperature. `None` keeps the provider default.
     #[serde(default)]
     pub temperature: Option<f32>,
+    #[serde(default)]
+    pub thinking: Thinking,
 }
 impl Default for LlmOptions {
     fn default() -> Self {
@@ -25,8 +27,17 @@ impl Default for LlmOptions {
             tools: true,
             streaming: true,
             temperature: None,
+            thinking: Thinking::Auto,
         }
     }
+}
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Thinking {
+    #[default]
+    Auto,
+    Disabled,
+    Enabled,
 }
 fn yes() -> bool {
     true
@@ -74,6 +85,15 @@ impl LlmOptions {
             // template defaults to xhigh when this value is absent, which makes every tool
             // follow-up perform a full deep-reasoning pass even when SAAA is configured for low.
             body["chat_template_kwargs"] = json!({"reasoning_effort": effort});
+        }
+        match self.thinking {
+            Thinking::Disabled => {
+                body["chat_template_kwargs"] = json!({"enable_thinking": false});
+            }
+            Thinking::Enabled => {
+                body["chat_template_kwargs"] = json!({"enable_thinking": true});
+            }
+            Thinking::Auto => {}
         }
     }
 }
@@ -187,5 +207,39 @@ mod tests {
         };
         options.apply(&mut body, "alias", 456, "high");
         assert_eq!(body, json!({"max_completion_tokens":456}));
+    }
+
+    #[test]
+    fn thinking_disabled_overrides_qwen_reasoning_kwargs() {
+        let mut body = json!({});
+        let options = LlmOptions {
+            thinking: Thinking::Disabled,
+            ..LlmOptions::standard()
+        };
+        options.apply(&mut body, "qwen3.5-2b-fast-response", 32, "low");
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"enable_thinking": false})
+        );
+    }
+
+    #[test]
+    fn thinking_auto_keeps_existing_behavior() {
+        let mut body = json!({});
+        let options = LlmOptions {
+            thinking: Thinking::Auto,
+            ..LlmOptions::standard()
+        };
+        options.apply(&mut body, "Qwen3.8-27B-ROCmFP4-FAST.gguf", 456, "low");
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"reasoning_effort": "low"})
+        );
+    }
+
+    #[test]
+    fn llm_options_without_thinking_key_deserializes() {
+        let options: LlmOptions = serde_json::from_str(r#"{"tokenLimit":"auto"}"#).unwrap();
+        assert_eq!(options.thinking, Thinking::Auto);
     }
 }

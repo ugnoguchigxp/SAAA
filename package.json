@@ -37,6 +37,7 @@
     "quality:check": "bun scripts/conversation-quality-eval.ts check && bun run quality:runtime-contract",
     "quality:runtime-contract": "cargo test --manifest-path src-tauri/Cargo.toml --features quality-eval-harness quality_eval::tests",
     "quality:eval": "bun scripts/conversation-quality-eval.ts run",
+    "toolchain:simulate": "cargo run --manifest-path src-tauri/Cargo.toml --bin toolchain_simulate --",
     "desktop:smoke": "bun scripts/desktop-smoke.ts",
     "desktop:e2e": "bun scripts/desktop-e2e.ts",
     "acceptance:core": "cargo test --manifest-path src-tauri/Cargo.toml --lib acceptance_core_text_turn_persists_and_is_recalled -- --test-threads=1",

@@ -44,6 +44,11 @@ pub(crate) async fn complete(
             state, input, on_event, message,
         );
     }
+    if super::event_hub::reasoning_ack::completion_already_spoken(&input.run_id, &message.content) {
+        return crate::memory::personal_state::output::send_completed(
+            state, input, on_event, message,
+        );
+    }
     if let Ok(speech) = crate::larm_voice::render_response(
         &input.conversation_id,
         crate::larm_voice::ResponseKind::Final,
@@ -104,6 +109,48 @@ impl RuntimeEventSender for TurnEventHub {
             state,
             run_id,
             conversation_id,
+            cancellation,
+        ))
+    }
+
+    fn acknowledge_text<'a>(
+        &'a self,
+        state: &'a AppState,
+        run_id: &'a str,
+        conversation_id: &'a str,
+        text: String,
+        cancellation: Arc<RunCancellation>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        let speech_id = format!("{run_id}_ack");
+        Box::pin(super::event_hub::reasoning_ack::speak_text(
+            self,
+            state,
+            run_id,
+            conversation_id,
+            speech_id,
+            text,
+            false,
+            cancellation,
+        ))
+    }
+
+    fn acknowledge_hold<'a>(
+        &'a self,
+        state: &'a AppState,
+        run_id: &'a str,
+        conversation_id: &'a str,
+        text: String,
+        cancellation: Arc<RunCancellation>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        let speech_id = format!("{run_id}_hold");
+        Box::pin(super::event_hub::reasoning_ack::speak_text(
+            self,
+            state,
+            run_id,
+            conversation_id,
+            speech_id,
+            text,
+            false,
             cancellation,
         ))
     }

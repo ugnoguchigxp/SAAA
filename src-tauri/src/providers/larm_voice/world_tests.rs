@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 #[path = "world_wire_fixture.rs"]
 mod fixture;
 use fixture::Fake;
+include!("butler_route_tests.rs");
 #[tokio::test]
 async fn wr_t13_shared_voice_lease_wait_refreshes_actual_http_frame() {
     matrix_case("shared-larm", "initial", false).await;
@@ -32,7 +33,7 @@ async fn shared_larm_claim_context_still_tool_result_and_final_answer_are_one_fl
         id: "context-still-owner".into(),
         conversation: crate::PRIMARY_CONVERSATION_ID.into(),
         base: f.base.clone(),
-        profile: saaa_larm_session::DEFAULT_PROFILE.into(),
+        profile: "fixture-voice".into(),
         cancel,
         ready: OnceCell::new(),
         started: AtomicBool::new(false),
@@ -74,7 +75,7 @@ async fn shared_larm_claim_context_still_tool_result_and_final_answer_are_one_fl
         },
         &crate::HarnessSettings {
             address: f.base.clone(),
-            larm_profile: Some(saaa_larm_session::DEFAULT_PROFILE.into()),
+            larm_profile: Some("fixture-voice".into()),
             tts_voice: None,
             tts_style: None,
             tts_speed: None,
@@ -86,6 +87,7 @@ async fn shared_larm_claim_context_still_tool_result_and_final_answer_are_one_fl
         &h.history,
         10_000,
         context,
+        "llm",
     )
     .await;
     let crate::ProviderAttemptOutcome::Completed { content, .. } = outcome else {
@@ -189,6 +191,7 @@ async fn matrix_case(route: &'static str, transition: &'static str, emit: bool) 
                         &history,
                         10000,
                         context,
+                        "llm",
                     )
                     .await
                 }

@@ -39,6 +39,8 @@ pub(crate) struct RoutingActor {
     pub(crate) resource_group: String,
     pub(crate) max_input_bytes: u32,
     #[serde(default)]
+    pub(crate) larm_provider: Option<String>,
+    #[serde(default)]
     pub(crate) capabilities: Vec<String>,
 }
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -138,10 +140,46 @@ impl Default for RoleRoutingSettings {
     fn default() -> Self {
         Self {
             schema_version: 1,
-            enabled: false,
-            actors: vec![],
-            roles: RoutingRoles::default(),
-            recipes: vec![],
+            enabled: true,
+            actors: vec![
+                RoutingActor {
+                    id: "larm-frontdesk".into(),
+                    label: "LARM 受付".into(),
+                    aliases: vec![],
+                    transport: "provider".into(),
+                    provider_id: Some(crate::DYNAMIC_LAN_PROVIDER_ID.into()),
+                    model: None,
+                    location: "local".into(),
+                    resource_group: "larm-backchannel".into(),
+                    max_input_bytes: 16_000,
+                    larm_provider: Some("backchannel".into()),
+                    capabilities: vec!["social_reply".into()],
+                },
+                RoutingActor {
+                    id: "larm-reasoner".into(),
+                    label: "LARM 思考".into(),
+                    aliases: vec![],
+                    transport: "provider".into(),
+                    provider_id: Some(crate::DYNAMIC_LAN_PROVIDER_ID.into()),
+                    model: None,
+                    location: "local".into(),
+                    resource_group: "larm-llm".into(),
+                    max_input_bytes: 65_536,
+                    larm_provider: Some("llm".into()),
+                    capabilities: vec!["reason".into(), "tools".into()],
+                },
+            ],
+            roles: RoutingRoles {
+                frontend: Some("larm-frontdesk".into()),
+                reasoner: Some("larm-reasoner".into()),
+                ..RoutingRoles::default()
+            },
+            recipes: vec![RoutingRecipe {
+                id: "00-butler-respond".into(),
+                action: RoutingAction::Respond,
+                roles: vec!["frontend".into(), "reasoner".into()],
+                enabled: true,
+            }],
             limits: RoutingLimits::default(),
             speech: RoutingSpeech::default(),
             selection: RoutingSelection::default(),
@@ -254,6 +292,13 @@ pub(crate) fn validate_settings(v: &RoleRoutingSettings) -> Result<(), String> {
             || !matches!(actor.transport.as_str(), "provider" | "codex_sdk")
             || (actor.transport == "provider"
                 && (!actor.provider_id.as_deref().is_some_and(valid_id) || actor.model.is_some()))
+            || match actor.larm_provider.as_deref() {
+                None => false,
+                Some("llm" | "backchannel") => {
+                    actor.provider_id.as_deref() != Some(crate::DYNAMIC_LAN_PROVIDER_ID)
+                }
+                Some(_) => true,
+            }
             || (actor.transport == "codex_sdk"
                 && (actor.provider_id.is_some()
                     || !actor.model.as_deref().is_some_and(valid_model)))
@@ -406,6 +451,7 @@ mod tests {
             location: "local".to_string(),
             resource_group: "gpu".to_string(),
             max_input_bytes: 1_024,
+            larm_provider: None,
             capabilities: vec!["reason".to_string()],
         }
     }
@@ -474,5 +520,60 @@ mod tests {
         assert!(validate_settings(&settings).is_ok());
         settings.limits.frontend_timeout_ms = 10_001;
         assert!(validate_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn larm_provider_is_limited_to_dynamic_lan_actors() {
+        let mut actor = provider_actor("other");
+        actor.larm_provider = Some("llm".into());
+        let mut settings = RoleRoutingSettings {
+            enabled: true,
+            actors: vec![actor],
+            ..Default::default()
+        };
+        settings.roles.reasoner = Some("other".into());
+        settings.recipes = vec![RoutingRecipe {
+            id: "direct".into(),
+            action: RoutingAction::Respond,
+            roles: vec!["reasoner".into()],
+            enabled: true,
+        }];
+        assert!(validate_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn larm_provider_accepts_only_llm_or_backchannel() {
+        let mut actor = provider_actor("lane");
+        actor.provider_id = Some(crate::DYNAMIC_LAN_PROVIDER_ID.into());
+        actor.larm_provider = Some("asr".into());
+        let mut settings = enabled_with(actor.clone());
+        assert!(validate_settings(&settings).is_err());
+        actor.larm_provider = Some("backchannel".into());
+        settings = enabled_with(actor);
+        assert!(validate_settings(&settings).is_ok());
+    }
+
+    #[test]
+    fn stored_actor_without_larm_provider_still_loads() {
+        let raw = r#"{"id":"qwen","label":"Qwen","transport":"provider","providerId":"dynamic-lan","model":null,"location":"local","resourceGroup":"gpu","maxInputBytes":1024}"#;
+        let actor: RoutingActor = serde_json::from_str(raw).expect("legacy actor");
+        assert!(actor.larm_provider.is_none());
+    }
+
+    fn enabled_with(actor: RoutingActor) -> RoleRoutingSettings {
+        let mut settings = RoleRoutingSettings {
+            enabled: true,
+            actors: vec![actor],
+            ..Default::default()
+        };
+        settings.roles.frontend = None;
+        settings.roles.reasoner = Some(settings.actors[0].id.clone());
+        settings.recipes = vec![RoutingRecipe {
+            id: "direct".into(),
+            action: RoutingAction::Respond,
+            roles: vec!["reasoner".into()],
+            enabled: true,
+        }];
+        settings
     }
 }

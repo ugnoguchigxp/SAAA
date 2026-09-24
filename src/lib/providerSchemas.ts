@@ -30,6 +30,7 @@ const llmRequestOptionsSchema = z
     reasoning: z.enum(["auto", "supported", "unsupported"]).default("auto"),
     tools: z.boolean().default(true),
     streaming: z.boolean().default(true),
+    thinking: z.enum(["auto", "disabled", "enabled"]).optional(),
   })
   .strict();
 

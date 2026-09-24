@@ -16,7 +16,11 @@ pub(crate) async fn stream_voice_aware_dynamic_lan_provider(
     history: &[ConversationMessage],
     timeout_ms: u64,
     context: ModelStreamContext<'_>,
+    larm_provider: &'static str,
 ) -> ProviderAttemptOutcome {
+    if larm_provider == "backchannel" && !shared_voice_session {
+        return failed(ProviderFailureKind::Contract);
+    }
     if shared_voice_session {
         stream_larm_voice_provider(
             settings,
@@ -25,6 +29,7 @@ pub(crate) async fn stream_voice_aware_dynamic_lan_provider(
             history,
             timeout_ms,
             context,
+            larm_provider,
         )
         .await
     } else {
@@ -46,6 +51,7 @@ async fn stream_larm_voice_provider(
     history: &[ConversationMessage],
     timeout_ms: u64,
     context: ModelStreamContext<'_>,
+    larm_provider: &'static str,
 ) -> ProviderAttemptOutcome {
     let cancellation = context.cancellation.clone();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
@@ -59,7 +65,7 @@ async fn stream_larm_voice_provider(
     };
     let lease = tokio::select! { biased;
         _ = cancellation.cancelled() => return cancelled(),
-        result = tokio::time::timeout_at(deadline, ready.session.acquire("llm")) => match result {
+        result = tokio::time::timeout_at(deadline, ready.session.acquire(larm_provider)) => match result {
             Ok(Ok(lease)) => lease,
             Ok(Err(_)) => return failed(ProviderFailureKind::Unavailable),
             Err(_) => return failed(ProviderFailureKind::Timeout),
@@ -84,8 +90,10 @@ async fn stream_larm_voice_provider(
     {
         return failed(ProviderFailureKind::Contract);
     }
+    let mut options = request_options.unwrap_or_default();
+    options.thinking = saaa_larm_session::http_api::Thinking::Disabled;
     let resolved = OpenAiCompatibleProviderSettings {
-        request_options,
+        request_options: Some(options),
         id: crate::DYNAMIC_LAN_PROVIDER_ID.to_string(),
         enabled: true,
         label: "LARM conversation reasoning".to_string(),

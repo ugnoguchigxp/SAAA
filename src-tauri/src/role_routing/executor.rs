@@ -266,6 +266,7 @@ mod tests {
                 location: "local".into(),
                 resource_group: "gpu".into(),
                 max_input_bytes: 1024,
+                larm_provider: None,
                 capabilities: vec!["reason".into()],
             }],
             ..Default::default()

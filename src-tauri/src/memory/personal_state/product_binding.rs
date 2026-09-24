@@ -20,10 +20,11 @@ pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
                 let credential = crate::providers::dynamic_lan::credential::load()
                     .map_err(|error| error.code())?;
                 *cached = Some(
-                    Session::connect_with_profile_and_credential(
+                    Session::connect_with_profile_credential_and_key(
                         &base,
-                        saaa_larm_session::DEFAULT_PROFILE,
+                        crate::larm_voice::profile::preference(None),
                         credential.token().to_string(),
+                        format!("saaa-session-{}", uuid::Uuid::new_v4()),
                         rx,
                     )
                     .await

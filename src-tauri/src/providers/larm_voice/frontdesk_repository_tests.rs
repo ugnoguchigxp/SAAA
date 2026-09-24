@@ -206,8 +206,16 @@ fn altered_or_cross_conversation_reasoning_request_is_rejected() {
 
 #[test]
 fn disabled_role_routing_rejects_voice_before_persisting_it() {
-    let c = rusqlite::Connection::open_in_memory().unwrap();
+    let mut c = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::schema::initialize_database(&c).unwrap();
+    let mut documents = crate::test_support::default_settings_input();
+    let policy = documents
+        .iter_mut()
+        .find(|document| document.namespace == "routing.roles")
+        .unwrap();
+    policy.value_json["enabled"] = serde_json::json!(false);
+    crate::persistence::settings::save_settings_documents_to_connection(&mut c, &documents)
+        .unwrap();
     assert_eq!(
         repo::accept(&c, CONVERSATION, "u-disabled", "保存しないで。").unwrap_err(),
         "role-routing-disabled"

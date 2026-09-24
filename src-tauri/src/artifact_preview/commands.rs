@@ -50,6 +50,7 @@ pub(crate) fn report_artifact_webview_session(
         selected,
         scrollable,
         mounted,
+        other_artifacts: Vec::new(),
     });
 }
 

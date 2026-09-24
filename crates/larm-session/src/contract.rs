@@ -3,13 +3,33 @@ use std::{collections::HashMap, time::Duration};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
-pub const PROVIDERS: [(&str, &str); 4] = [
+pub const BASE_PROVIDERS: [(&str, &str); 4] = [
     ("tts", "openai.audio-speech.v1"),
     ("asr", "openai.audio-transcriptions.v1"),
     ("llm", "openai.chat-completions.v1"),
     ("embedding", "larm.embedding.v1"),
 ];
-pub const DEFAULT_PROFILE: &str = "saaa-conversation-gemma4";
+pub const BACKCHANNEL: (&str, &str) = ("backchannel", "openai.chat-completions.v1");
+pub const CANONICAL_PROFILE: &str = "saaa-conversation-ornith15";
+pub const LEGACY_PROFILE: &str = "saaa-qwen38";
+pub const PREVIOUS_DEFAULT_PROFILE: &str = "saaa-conversation-gemma4";
+pub const DEFAULT_PROFILE: &str = CANONICAL_PROFILE;
+
+pub fn required_providers(profile: &str) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = BASE_PROVIDERS.iter().map(|(name, _)| *name).collect();
+    if profile == CANONICAL_PROFILE {
+        names.push(BACKCHANNEL.0);
+    }
+    names
+}
+
+pub(crate) fn accepted_provider(name: &str) -> Option<&'static str> {
+    BASE_PROVIDERS
+        .iter()
+        .chain(std::iter::once(&BACKCHANNEL))
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, protocol)| *protocol)
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContextWindow {
     pub max_tokens: u64,
@@ -139,7 +159,7 @@ fn embedding_space(raw: &Value) -> Result<EmbeddingSpace, &'static str> {
         .ok_or("larm_invalid_embedding_space")?;
     Ok(EmbeddingSpace { dimension })
 }
-pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
+pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapshot, &'static str> {
     if value["id"] != id || value["status"] != "ready" {
         return Err("larm_invalid_claim");
     }
@@ -148,10 +168,10 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
     let mut providers = HashMap::new();
     for raw in value["providers"].as_array().ok_or("larm_invalid_claim")? {
         let name = string(raw, "name")?;
-        let Some((_, protocol)) = PROVIDERS.iter().find(|(n, _)| *n == name) else {
+        let Some(protocol) = accepted_provider(name) else {
             continue;
         };
-        if providers.contains_key(name) || raw["protocol"] != *protocol {
+        if providers.contains_key(name) || raw["protocol"] != protocol {
             return Err("larm_invalid_provider");
         }
         let token = string(&raw["credential"], "token")?;
@@ -162,7 +182,7 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
             .as_u64()
             .filter(|v| *v > 0 && *v <= 600_000)
             .ok_or("larm_invalid_health")?;
-        let context_window = if name == "llm" {
+        let context_window = if name == "llm" || name == "backchannel" {
             Some(context_window(raw)?)
         } else {
             None
@@ -194,10 +214,7 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
             },
         );
     }
-    if PROVIDERS
-        .iter()
-        .any(|(name, _)| !providers.contains_key(*name))
-    {
+    if required.iter().any(|name| !providers.contains_key(*name)) {
         return Err("larm_missing_provider");
     }
     Ok(Snapshot {

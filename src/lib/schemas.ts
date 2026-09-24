@@ -239,6 +239,7 @@ export const roleRoutingSettingsSchema = z
             location: z.enum(["local", "cloud"]),
             resourceGroup: z.string(),
             maxInputBytes: z.number(),
+            larmProvider: z.enum(["llm", "backchannel"]).optional(),
             capabilities: z.array(z.string()),
           })
           .strict(),

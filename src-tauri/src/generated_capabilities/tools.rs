@@ -18,11 +18,21 @@ use super::{
 use crate::runtime::agent_tools::AgentToolCall;
 use crate::{AppState, RunCancellation};
 
+/// Execution binding for one host-offered tool on this provider request. The reference is not
+/// looked up again by tool name.
+#[derive(Clone, Debug)]
+pub(crate) struct DirectExecution {
+    pub(crate) tool_name: String,
+    pub(crate) execution_ref: String,
+    pub(crate) conversation_id: String,
+}
+
 /// The tools offered to one provider request, together with the immutable generated-capability
 /// snapshot they were built from, so the definitions and the revision they name cannot diverge.
 pub(crate) struct AgentToolOffer {
     pub(crate) definitions: Vec<Value>,
     pub(crate) generated: GeneratedToolSnapshot,
+    pub(crate) direct: Option<DirectExecution>,
 }
 
 impl AgentToolOffer {
@@ -30,6 +40,7 @@ impl AgentToolOffer {
         Self {
             definitions: Vec::new(),
             generated: GeneratedToolSnapshot::empty(),
+            direct: None,
         }
     }
 }

@@ -34,6 +34,21 @@ impl Drop for UiQueue {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn test_mark_speech_playing(run_id: &str) {
+    reasoning_ack::mark_speech(&format!("{run_id}_ack"), true);
+}
+
+#[cfg(test)]
+pub(crate) fn test_clear_speech_playing(run_id: &str) {
+    reasoning_ack::mark_speech(&format!("{run_id}_ack"), false);
+}
+
+#[cfg(test)]
+pub(crate) fn test_clear_speech_at_tick(run_id: &str, tick: u32) {
+    reasoning_ack::test_clear_speech_at_tick(run_id, tick);
+}
+
 pub(crate) trait RuntimeEventSender: Send + Sync {
     fn send(&self, event: RuntimeEvent) -> tauri::Result<()>;
     fn wait_message_presented<'a>(
@@ -71,6 +86,26 @@ pub(crate) trait RuntimeEventSender: Send + Sync {
         _cancellation: Arc<crate::RunCancellation>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async {})
+    }
+    fn acknowledge_text<'a>(
+        &'a self,
+        _state: &'a crate::AppState,
+        _run_id: &'a str,
+        _conversation_id: &'a str,
+        _text: String,
+        _cancellation: Arc<crate::RunCancellation>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async {})
+    }
+    fn acknowledge_hold<'a>(
+        &'a self,
+        state: &'a crate::AppState,
+        run_id: &'a str,
+        conversation_id: &'a str,
+        text: String,
+        cancellation: Arc<crate::RunCancellation>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        self.acknowledge_text(state, run_id, conversation_id, text, cancellation)
     }
 }
 

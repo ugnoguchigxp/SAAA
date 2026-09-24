@@ -7,6 +7,7 @@ pub(super) async fn attempt(
     context: ModelStreamContext<'_>,
     harness: &crate::HarnessSettings,
     shared_larm_voice: bool,
+    larm_provider: &'static str,
 ) -> ProviderAttemptOutcome {
     match provider {
         ModelProviderSettings::OpenAiCompatible(provider) => {
@@ -43,6 +44,7 @@ pub(super) async fn attempt(
                 history,
                 timeout_ms,
                 context,
+                larm_provider,
             )
             .await
         }

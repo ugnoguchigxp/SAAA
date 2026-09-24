@@ -1,11 +1,16 @@
-//! One lease for the entire voice conversation. Read guards pin all four tokens;
+//! One lease for the entire voice conversation. Read guards pin all claimed tokens;
 //! renew/reclaim and release take the writer lock and cannot overtake inference.
+mod catalog;
 mod contract;
 mod error;
 mod http;
 pub mod http_api;
 use contract::Snapshot;
-pub use contract::{local_url, Capacity, ContextWindow, EmbeddingSpace, Provider, DEFAULT_PROFILE};
+pub use contract::{
+    local_url, required_providers, Capacity, ContextWindow, EmbeddingSpace, Provider,
+    BACKCHANNEL, BASE_PROVIDERS, CANONICAL_PROFILE, DEFAULT_PROFILE, LEGACY_PROFILE,
+    PREVIOUS_DEFAULT_PROFILE,
+};
 pub use error::ConnectError;
 use serde_json::json;
 use std::{
@@ -17,11 +22,19 @@ use std::{
 };
 use tokio::sync::{watch, OwnedRwLockReadGuard, RwLock};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfilePreference {
+    Auto,
+    Explicit(String),
+}
+
 pub struct Session {
     client: reqwest::Client,
     control_token: zeroize::Zeroizing<String>,
     connection: url::Url,
     id: String,
+    profile: String,
+    required: Vec<&'static str>,
     snapshot: Arc<RwLock<Option<Snapshot>>>,
     closed: AtomicBool,
     released: AtomicBool,
@@ -95,7 +108,7 @@ impl Session {
     ) -> Result<Arc<Self>, ConnectError> {
         Self::connect_with_profile_credential_and_key(
             base,
-            profile,
+            ProfilePreference::Explicit(profile.to_string()),
             token,
             format!("saaa-session-{}", uuid::Uuid::new_v4()),
             cancellation,
@@ -104,7 +117,7 @@ impl Session {
     }
     pub async fn connect_with_profile_credential_and_key(
         base: &str,
-        profile: &str,
+        preference: ProfilePreference,
         token: String,
         idempotency_key: String,
         cancellation: watch::Receiver<bool>,
@@ -116,13 +129,8 @@ impl Session {
         {
             return Err("credential_invalid".into());
         }
-        if profile.is_empty()
-            || profile.len() > 160
-            || !profile
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-        {
-            return Err("larm_invalid_profile".into());
+        if let ProfilePreference::Explicit(profile) = &preference {
+            validate_profile(profile)?;
         }
         if idempotency_key.is_empty()
             || idempotency_key.len() > 160
@@ -132,14 +140,13 @@ impl Session {
         {
             return Err("larm_invalid_idempotency_key".into());
         }
-        let profile = profile.to_string();
         let base = base.to_string();
         let (alive, abandoned) = watch::channel(false);
         let (send, receive) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let result = Self::connect_inner(
                 &base,
-                &profile,
+                preference,
                 token,
                 idempotency_key,
                 cancellation,
@@ -164,7 +171,7 @@ impl Session {
     }
     async fn connect_inner(
         base: &str,
-        profile: &str,
+        preference: ProfilePreference,
         token: String,
         idempotency_key: String,
         mut cancellation: watch::Receiver<bool>,
@@ -178,7 +185,6 @@ impl Session {
         if !local_url(&base) || base.path() != "/" {
             return Err("larm_invalid_control_url".into());
         }
-        base.set_path("/v1/agent-connections");
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -186,6 +192,20 @@ impl Session {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|_| "larm_client_failed")?;
+        let profile = match preference {
+            ProfilePreference::Explicit(profile) => profile,
+            ProfilePreference::Auto => {
+                let profiles = tokio::select! { biased;
+                    _ = cancelled(&mut cancellation) => return Err("larm_cancelled".into()),
+                    _ = cancelled(&mut abandoned) => return Err("larm_cancelled".into()),
+                    result = catalog::fetch(&client, &base, &token) => result?,
+                };
+                catalog::select_voice_profile(&profiles)?
+            }
+        };
+        validate_profile(&profile)?;
+        let required = contract::required_providers(&profile);
+        base.set_path("/v1/agent-connections");
         // Do not race creation against cancellation: receive the id, then release it.
         let created = http::json(
             authorize(
@@ -217,6 +237,8 @@ impl Session {
             control_token: zeroize::Zeroizing::new(token),
             connection: base,
             id: id.clone(),
+            profile: profile.clone(),
+            required: required.clone(),
             snapshot: Arc::new(RwLock::new(None)),
             closed: AtomicBool::new(false),
             released: AtomicBool::new(false),
@@ -298,11 +320,29 @@ impl Session {
             &[200],
         )
         .await?;
-        let snapshot = contract::parse(value, &self.id)?;
-        for (name, _) in contract::PROVIDERS {
-            self.health(&snapshot.providers[name]).await?;
+        let snapshot = contract::parse(value, &self.id, &self.required)?;
+        for provider in snapshot.providers.values() {
+            self.health(provider).await?;
         }
         Ok(snapshot)
+    }
+    pub fn profile_id(&self) -> &str {
+        &self.profile
+    }
+    pub async fn provider_names(&self) -> Vec<String> {
+        self.snapshot
+            .read()
+            .await
+            .as_ref()
+            .map(|snapshot| snapshot.providers.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+    pub async fn has_provider(&self, name: &str) -> bool {
+        self.snapshot
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.providers.contains_key(name))
     }
 
     pub async fn embed_query(
@@ -577,7 +617,18 @@ async fn cancelled(receiver: &mut watch::Receiver<bool>) {
         }
     }
 }
-fn authorize(
+fn validate_profile(profile: &str) -> Result<(), &'static str> {
+    if profile.is_empty()
+        || profile.len() > 160
+        || !profile
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    {
+        return Err("larm_invalid_profile");
+    }
+    Ok(())
+}
+pub(crate) fn authorize(
     call: reqwest::RequestBuilder,
     token: &str,
 ) -> Result<reqwest::RequestBuilder, &'static str> {

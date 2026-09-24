@@ -214,6 +214,7 @@ mod tests {
                 location: "local".into(),
                 resource_group: "test".into(),
                 max_input_bytes: 4096,
+                larm_provider: None,
                 capabilities: vec!["reason".into()],
             });
         settings.roles.reasoner = Some("local".into());

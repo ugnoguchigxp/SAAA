@@ -50,7 +50,7 @@ pub(crate) async fn execute_conversation_turn(
 }
 
 #[derive(Clone)]
-struct RoleCandidate {
+pub(crate) struct RoleCandidate {
     step_id: String,
     purpose: String,
     content: String,
@@ -64,7 +64,7 @@ struct ActiveRoleStep {
     config_fingerprint: String,
 }
 
-async fn execute_conversation_turn_with_candidates(
+pub(crate) async fn execute_conversation_turn_with_candidates(
     state: &AppState,
     input: &StartTurnInput,
     on_event: &dyn RuntimeEventSender,
@@ -88,9 +88,17 @@ async fn execute_conversation_turn_with_candidates(
         &role_dispatch,
         Some(conversation_inputs::conversation_inputs_roles::RoleDispatch::Provider { .. })
     );
+    let larm_provider = match &role_dispatch {
+        Some(conversation_inputs::conversation_inputs_roles::RoleDispatch::Provider {
+            larm_provider,
+            ..
+        }) => *larm_provider,
+        _ => "llm",
+    };
     let role_provider_max_input_bytes = match &role_dispatch {
         Some(conversation_inputs::conversation_inputs_roles::RoleDispatch::Provider {
             max_input_bytes,
+            ..
         }) => Some(*max_input_bytes as usize),
         _ => None,
     };
@@ -188,6 +196,7 @@ async fn execute_conversation_turn_with_candidates(
         active_provider_step.as_ref(),
         role_provider_step,
         role_provider_max_input_bytes,
+        larm_provider,
     )
     .await
 }

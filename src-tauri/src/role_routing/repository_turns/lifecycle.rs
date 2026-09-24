@@ -122,6 +122,16 @@ pub(crate) fn accept_provider_turn(
     message_id: &str,
     now_ms: i64,
 ) -> Result<(), String> {
+    accept_provider_turn_with_status(connection, run_id, message_id, now_ms, "succeeded")
+}
+
+pub(crate) fn accept_provider_turn_with_status(
+    connection: &Connection,
+    run_id: &str,
+    message_id: &str,
+    now_ms: i64,
+    step_status: &str,
+) -> Result<(), String> {
     let root: Option<(i64, i64, String)> = connection
         .query_row(
             "SELECT revision,cancel_requested,phase FROM rr_roots WHERE root_id=?1",
@@ -160,7 +170,7 @@ pub(crate) fn accept_provider_turn(
         connection,
         run_id,
         &step_id,
-        "succeeded",
+        step_status,
         now_ms,
     )? {
         return Err("Role-routing result step already completed".into());

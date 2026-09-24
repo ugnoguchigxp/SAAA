@@ -121,6 +121,7 @@ pub(super) async fn typed_memory_tools_are_routed_only_from_a_valid_typed_manife
         Duration::from_secs(1),
         &crate::generated_capabilities::publication::GeneratedToolSnapshot::empty(),
         &crate::RunCancellation::default(),
+        None,
     )
     .await;
     assert!(error.contains("invalid-memory-input"));
@@ -232,6 +233,7 @@ pub(super) async fn typed_memory_execution_cannot_exceed_the_provider_deadline()
         Duration::from_millis(20),
         &generated,
         &cancellation,
+        None,
     );
     let error = tokio::time::timeout(Duration::from_millis(250), execution)
         .await

@@ -33,8 +33,8 @@
       }
     },
     "initial-response": {
-      "acceptedAt": "2026-09-23T15:40:17.932Z",
-      "reason": "Refresh Chat Completions regression expectations for committed tool audit phases and interrupted partial output; quality check passed, desktop smoke was blocked by the stale freeze baseline",
+      "acceptedAt": "2026-09-23T23:57:07.460Z",
+      "reason": "artifact_webview uses the execution ref on that provider request. quality:check passed. desktop:smoke passed (IPC ready).",
       "files": {
         "src-tauri/src/persistence/app_commands.rs": "0e93155944cafd837e0eecffc129b327e74093e0876b63db00b305c6c946bdfd",
         "src-tauri/src/persistence/schema.rs": "591633043388875e2ed97008ce1c4a243b93aa22272f4a4d558f6d0a6e3e2a6b",
@@ -61,14 +61,14 @@
         "src-tauri/src/providers/chat_completions/generated_tools_tests.rs": "d6ae66c85fe21c19e3cbb1c4bc336f943efbac28af4f999f2e0929c45122442c",
         "src-tauri/src/providers/chat_completions/generation.rs": "a240f31744f5ec15efd79f6312946e64d8f47b845fcbaa26bb4beec07ec48bf0",
         "src-tauri/src/providers/chat_completions/json_tool_tests.rs": "dbe417fb4059104ce9142ea1dfa2af35d4f91e35b536b64209a3edaef6867f21",
-        "src-tauri/src/providers/chat_completions/mod.rs": "d88d398c70dc2956e45775e522a35d503fb1e7d3abf82c02cee97e0822268a66",
+        "src-tauri/src/providers/chat_completions/mod.rs": "152cf72a70c4b5c548607e1037e28518dc3b2ea620b8167d307838f52fb16fc9",
         "src-tauri/src/providers/chat_completions/response_helpers.rs": "90b9283fe42a78196a0c7a60bf3355372c681399e73f8a05f75aa7ee8d8488b1",
         "src-tauri/src/providers/chat_completions/sse.rs": "dcbc0d07cda04bb5873f7f1c39e05f0d8dfb34f6d2591b2912331ea460106ca2",
         "src-tauri/src/providers/chat_completions/test_helpers.rs": "cca64e78b04423c79e65b7cf54840b7e38c34def3676333ae5b0e75d00f2b154",
         "src-tauri/src/providers/chat_completions/tests.d/01.rs": "3e18d15f3910931c8e9e73ba09d2c8b6b32d0c68ebddfa3aee2e3044d12b8d48",
         "src-tauri/src/providers/chat_completions/tests.d/02.rs": "794c1c78e60461a720bcc69cba0a296f83216847bb0afdaf873edff22bf73ae6",
         "src-tauri/src/providers/chat_completions/tests.rs": "817561df6163d303801dce55b4dd80df4f1f8e3d142f70b51853c81b63bb6abc",
-        "src-tauri/src/providers/chat_completions/voice_progress.rs": "412ebaeb36ce60416d8f69aa7a00391bff72bf38d7a8b7cb624c4dc3ef7c0cb3",
+        "src-tauri/src/providers/chat_completions/voice_progress.rs": "a8296ac0c0b1022167594162587ee8a794a673838745432e271a5b1309224a61",
         "src-tauri/src/providers/chat_completions/world_body.rs": "38e712005642a646d1b69a61654b8873e0f2abdeab59c0685cc3bb2877de4b66",
         "src-tauri/src/providers/chat_completions/world_claim_tests.rs": "6610ddc7493b21aef0f70239f1cb13817255c2191c05da520dbb0ad4125fe2ea",
         "src-tauri/src/providers/chat_completions/world_eval_fixture.rs": "7c21d44d419df38d5071b131c2b48ee66dfde3a107e608d2794cbb1006da9525",

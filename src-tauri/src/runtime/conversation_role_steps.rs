@@ -271,7 +271,8 @@ pub(super) fn role_step_request(
                 original_request, draft.content, tool.content
             ))
         }
-        "respond" | "reconsider" | "frontend" => Ok(original_request.to_string()),
+        "frontend" => Ok(original_request.to_string()),
+        "respond" | "reconsider" => Ok(original_request.to_string()),
         _ => Err(TurnExecutionFailure::configuration(format!(
             "Unsupported role-routing step purpose: {purpose}"
         ))),

@@ -355,6 +355,7 @@ mod tests {
                 location: "local".into(),
                 resource_group: "local-inference".into(),
                 max_input_bytes: 65_536,
+                larm_provider: None,
                 capabilities: vec!["reason".into(), "tools".into()],
             },
             crate::role_routing::contracts::RoutingActor {
@@ -367,6 +368,7 @@ mod tests {
                 location: "local".into(),
                 resource_group: "harness-backchannel".into(),
                 max_input_bytes: 16_000,
+                larm_provider: None,
                 capabilities: vec!["social_reply".into(), "classify".into()],
             },
         ];
@@ -529,6 +531,7 @@ mod tests {
                 location: "local".into(),
                 resource_group: "local-inference".into(),
                 max_input_bytes: 65_536,
+                larm_provider: None,
                 capabilities: vec!["reason".into(), "tools".into()],
             },
             crate::role_routing::contracts::RoutingActor {
@@ -541,6 +544,7 @@ mod tests {
                 location: "local".into(),
                 resource_group: "harness-backchannel".into(),
                 max_input_bytes: 16_000,
+                larm_provider: None,
                 capabilities: vec!["social_reply".into(), "classify".into()],
             },
         ];

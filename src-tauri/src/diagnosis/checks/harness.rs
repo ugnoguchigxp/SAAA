@@ -66,12 +66,9 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
                 promote_response(&mut items, &readiness.message);
             }
             if legacy {
-                let profile = settings
-                    .harness
-                    .larm_profile
-                    .as_deref()
-                    .unwrap_or(saaa_larm_session::DEFAULT_PROFILE);
-                let embedding = probe_embedding(&settings.harness.address, profile).await;
+                let preference =
+                    crate::larm_voice::profile::preference(settings.harness.larm_profile.as_deref());
+                let embedding = probe_embedding(&settings.harness.address, preference).await;
                 items.retain(|item| item.id != "harness.embedding");
                 items.push(embedding);
             }
@@ -199,9 +196,12 @@ pub(super) fn items_from_resolution(resolution: &HarnessResolution) -> Vec<Diagn
     items
 }
 
-async fn probe_embedding(address: &str, profile: &str) -> DiagnosisItem {
+async fn probe_embedding(
+    address: &str,
+    preference: saaa_larm_session::ProfilePreference,
+) -> DiagnosisItem {
     let probed =
-        tokio::time::timeout(Duration::from_secs(8), request_embedding(address, profile)).await;
+        tokio::time::timeout(Duration::from_secs(8), request_embedding(address, preference)).await;
     let (status, message) = match probed {
         Ok(Ok(())) => (
             DiagnosisStatus::Ok,
@@ -224,14 +224,18 @@ async fn probe_embedding(address: &str, profile: &str) -> DiagnosisItem {
     )
 }
 
-async fn request_embedding(address: &str, profile: &str) -> Result<(), String> {
+async fn request_embedding(
+    address: &str,
+    preference: saaa_larm_session::ProfilePreference,
+) -> Result<(), String> {
     let credential = crate::providers::dynamic_lan::credential::load()
         .map_err(|error| error.code().to_string())?;
     let (_stop, cancel) = tokio::sync::watch::channel(false);
-    let session = saaa_larm_session::Session::connect_with_profile_and_credential(
+    let session = saaa_larm_session::Session::connect_with_profile_credential_and_key(
         address,
-        profile,
+        preference,
         credential.token().to_string(),
+        format!("saaa-session-{}", uuid::Uuid::new_v4()),
         cancel,
     )
     .await
