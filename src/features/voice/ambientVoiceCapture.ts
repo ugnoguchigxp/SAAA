@@ -8,10 +8,10 @@ import {
   MicrophoneCaptureError,
   requestMicrophoneStream,
 } from "../../lib/microphone";
-import { VoiceActivityDetector, type VoiceActivityObservation } from "../../lib/voiceActivity";
-import type { VoiceSessionEvent } from "../../lib/voiceSession";
-import type { CommitReason } from "../../lib/generated/voiceAsr";
-import { voiceSegmentCommitReason } from "./voiceSegmentBoundary";
+import { VoiceActivityDetector } from "../../lib/voiceActivity";
+import { tryStartNativeVoiceCapture } from "./ambientNativeVoiceCapture";
+import type { AmbientVoiceCaptureContext } from "./ambientVoiceCaptureContext";
+import { bindWorkletFrameHandler, observeCaptureFrame } from "./ambientWorkletVoiceCapture";
 
 function detector(settings: VoiceSettings, sampleRate: number): VoiceActivityDetector {
   const speechThresholdRms =
@@ -23,26 +23,11 @@ function detector(settings: VoiceSettings, sampleRate: number): VoiceActivityDet
   });
 }
 
-export async function attachAmbientVoiceCapture(context: {
-  settings: VoiceSettings;
-  disposed: MutableRefObject<boolean>;
-  listeningEnabled: MutableRefObject<boolean>;
-  captureAttempt: MutableRefObject<number>;
-  stream: MutableRefObject<MediaStream | null>;
-  audioContext: MutableRefObject<AudioContext | null>;
-  source: MutableRefObject<MediaStreamAudioSourceNode | null>;
-  node: MutableRefObject<AudioWorkletNode | null>;
-  flushResolver: MutableRefObject<(() => void) | null>;
-  activityDetector: MutableRefObject<VoiceActivityDetector | null>;
-  captureLease: MutableRefObject<(() => void) | null>;
-  applyEvent: (event: VoiceSessionEvent) => unknown;
-  finishSegment: (reason: CommitReason) => void;
-  packetFrame: (frame: Float32Array) => void;
-  packetCount: () => number;
-  clearTranscript: () => void;
-  onActivity?: (observation: VoiceActivityObservation) => void;
-}): Promise<void> {
+export async function attachAmbientVoiceCapture(
+  context: AmbientVoiceCaptureContext,
+): Promise<void> {
   if (context.disposed.current || context.stream.current || context.captureLease.current) return;
+  if (context.nativeCapture?.current) return;
   if (!context.listeningEnabled.current) return;
   const captureAttempt = ++context.captureAttempt.current;
   let stream: MediaStream | null = null;
@@ -78,11 +63,28 @@ export async function attachAmbientVoiceCapture(context: {
     clearOwnedReferences();
     releaseOwnedCapture();
   };
+  const handleFrame = (frame: Float32Array) => observeCaptureFrame({ ...context, frame });
   try {
     context.applyEvent({ type: "captureStarting" });
     releaseCapture = acquireAudioCapture("chat");
     context.captureLease.current = releaseCapture;
-    const audio = microphoneCaptureConstraints(context.settings.inputDeviceId);
+    const nativeStarted = await tryStartNativeVoiceCapture({
+      settings: context.settings,
+      nativeCapture: context.nativeCapture,
+      nativeStop: context.nativeStop,
+      activityDetector: context.activityDetector,
+      createDetector: (sampleRate) => detector(context.settings, sampleRate),
+      stale,
+      handleFrame,
+      disposeOwnedCapture,
+      applyEvent: context.applyEvent,
+      clearTranscript: context.clearTranscript,
+    });
+    if (nativeStarted) return;
+    const audio = microphoneCaptureConstraints(
+      context.settings.inputDeviceId,
+      context.settings.aecEnabled,
+    );
     stream = await requestMicrophoneStream(audio);
     if (stale()) {
       await disposeOwnedCapture();
@@ -109,23 +111,12 @@ export async function attachAmbientVoiceCapture(context: {
     context.node.current = node;
     activityDetector = detector(context.settings, activeContext.sampleRate);
     context.activityDetector.current = activityDetector;
-    node.port.onmessage = (event: MessageEvent<Float32Array | { type: "flushed" }>) => {
-      if (context.node.current !== node) return;
-      if (!(event.data instanceof Float32Array)) {
-        if (event.data.type === "flushed") context.flushResolver.current?.();
-        return;
-      }
-      try {
-        // ASR receives every frame before VAD; VAD only decides commit boundaries.
-        context.packetFrame(event.data);
-        const observation = context.activityDetector.current?.observe(event.data);
-        if (observation) context.onActivity?.(observation);
-        const reason = voiceSegmentCommitReason(observation, context.packetCount());
-        if (reason) context.finishSegment(reason);
-      } finally {
-        event.data.fill(0);
-      }
-    };
+    bindWorkletFrameHandler({
+      ...context,
+      node,
+      currentNode: context.node,
+      flushResolver: context.flushResolver,
+    });
     source.connect(node);
     node.connect(activeContext.destination);
     await ensureMicrophoneAudioContextRunning(activeContext);

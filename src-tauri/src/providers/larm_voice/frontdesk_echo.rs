@@ -1,14 +1,16 @@
 //! Drops microphone copies of native TTS. Browser echoCancellation has no far-end
 //! reference when playback happens outside the WebView.
-pub(crate) fn is_self_speech_echo(heard: &str, spoken: &str) -> bool {
+pub(crate) fn is_self_speech_echo(heard: &str, spoken: &str, aec_active: bool) -> bool {
     let heard = normalize(heard);
     let spoken = normalize(spoken);
     let heard_len = heard.chars().count();
-    if heard_len < 12 || spoken.chars().count() < 12 {
+    let min_shared = if aec_active { 24 } else { 12 };
+    let min_ratio = if aec_active { 75 } else { 55 };
+    if heard_len < min_shared || spoken.chars().count() < min_shared {
         return false;
     }
     let shared = longest_common_substring_len(&heard, &spoken);
-    shared >= 12 && shared * 100 / heard_len >= 55
+    shared >= min_shared && shared * 100 / heard_len >= min_ratio
 }
 
 fn normalize(text: &str) -> String {
@@ -68,13 +70,18 @@ mod tests {
     fn tts_mishearing_is_self_speech() {
         let heard = "よう、ミュージさん、今日は何かお手伝いできることはありますか？";
         let spoken = "おはよう、ゆうじさん。今日は何かお手伝いできることはありますか？";
-        assert!(is_self_speech_echo(heard, spoken));
-        assert!(is_self_speech_echo(spoken, OPENING));
+        assert!(is_self_speech_echo(heard, spoken, false));
+        assert!(is_self_speech_echo(spoken, OPENING, false));
+        assert!(!is_self_speech_echo(heard, spoken, true));
     }
 
     #[test]
     fn a_short_greeting_is_not_self_speech() {
-        assert!(!is_self_speech_echo("おはよう。", OPENING));
-        assert!(!is_self_speech_echo("おはよう、ゆうじさん。", OPENING));
+        assert!(!is_self_speech_echo("おはよう。", OPENING, false));
+        assert!(!is_self_speech_echo(
+            "おはよう、ゆうじさん。",
+            OPENING,
+            false
+        ));
     }
 }

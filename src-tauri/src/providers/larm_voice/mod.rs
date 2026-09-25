@@ -9,10 +9,10 @@ use tokio::sync::{watch, Mutex, OnceCell};
 pub(crate) mod audio;
 mod decision;
 pub(crate) mod frontdesk;
-pub(crate) mod profile;
 pub(crate) mod frontdesk_decision;
 pub(crate) mod frontdesk_echo;
 pub(crate) mod frontdesk_repository;
+pub(crate) mod profile;
 mod response;
 pub(crate) mod speech_priority;
 pub(crate) use response::{render as render_response, ResponseKind};
@@ -118,11 +118,7 @@ async fn initialize(owner: &Owner) -> Result<Arc<Ready>, StartupError> {
     let control_token = "test-control-token".to_string();
     let session = Session::connect_with_profile_credential_and_key(
         &owner.base,
-        if owner.profile == profile::AUTO_LABEL {
-            saaa_larm_session::ProfilePreference::Auto
-        } else {
-            saaa_larm_session::ProfilePreference::Explicit(owner.profile.clone())
-        },
+        profile::from_label(&owner.profile),
         control_token,
         owner.lease_key.clone(),
         owner.cancel.subscribe(),

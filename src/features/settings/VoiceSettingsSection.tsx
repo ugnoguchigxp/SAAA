@@ -5,6 +5,7 @@ import { enumerateAudioInputDevices, microphoneErrorMessage } from "../../lib/mi
 import { ASR_LANGUAGES, type AsrLanguageCode } from "../../lib/asrLanguages";
 import { Field, Metric } from "./SettingsFields";
 import { VoiceProfileCard } from "./VoiceProfileCard";
+import { VoiceProcessingSettings } from "./VoiceProcessingSettings";
 import { localizeUiMessage } from "../../i18n/presentation";
 import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
 
@@ -192,6 +193,8 @@ export function VoiceSettingsSection({
           {t("voice.autoSpeak")}
         </label>
       </section>
+
+      <VoiceProcessingSettings voice={voice} onChange={onChange} />
 
       <VoiceProfileCard
         voice={voice}

@@ -14,9 +14,6 @@ pub(super) struct AgentProfileCatalog {
 #[derive(Debug, Deserialize)]
 pub(super) struct CatalogAgentProfile {
     pub id: String,
-    /// Only the legacy v1 contract places a budget at profile level.
-    #[serde(rename = "contextWindow")]
-    pub legacy_profile_context_window: Option<ProviderContextWindow>,
     pub providers: Vec<CatalogProvider>,
 }
 
@@ -43,55 +40,34 @@ pub(super) struct ProviderContextWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::dynamic_lan::validate::select_default_llm_profile;
     use serde_json::json;
 
-    fn v3_catalog() -> serde_json::Value {
-        json!({
-            "contractVersion":"agent-connection.v3", "defaultAgentProfile":"coding-default",
-            "audiences":["saaa-desktop"], "profiles":[
-                {"id":"asr-qwen", "providers":[{"name":"asr","capability":"speech.stt",
-                    "protocol":"openai.audio-transcriptions.v1","model":"qwen-asr"}]},
-                {"id":"coding-default", "providers":[{"name":"llm","capability":"llm.coding",
-                    "supportedCapabilities":["llm.coding","llm.reasoning"],
-                    "protocol":"openai.chat-completions.v1","model":"qwen3.8",
-                    "contextWindow":{"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976}}]}
-            ]
-        })
-    }
-
     #[test]
-    fn reads_provider_budget_without_requiring_budgets_for_asr() {
-        let catalog: AgentProfileCatalog = serde_json::from_value(v3_catalog()).unwrap();
-        let selected = select_default_llm_profile(&catalog).unwrap();
-        assert_eq!(selected.model, "qwen3.8");
-        assert_eq!(selected.context_window.max_tokens, 230400);
-        assert_eq!(selected.context_window.safety_margin_tokens, 1976);
-    }
-
-    #[test]
-    fn v3_rejects_profile_level_budget_instead_of_inventing_a_default() {
-        let mut wire = v3_catalog();
-        let budget = wire["profiles"][1]["providers"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("contextWindow")
+    fn v3_catalog_keeps_provider_context_windows() {
+        let catalog: AgentProfileCatalog = serde_json::from_value(json!({
+            "contractVersion":"agent-connection.v3",
+            "profiles":[{
+                "id":"saaa-conversation-ornith15",
+                "providers":[
+                    {"name":"asr","capability":"speech.stt","protocol":"openai.audio-transcriptions.v1","model":"qwen3-asr-1.7b"},
+                    {"name":"llm","capability":"llm.general","protocol":"openai.chat-completions.v1","model":"ornith-1.5-35b",
+                        "contextWindow":{"maxTokens":131072,"outputReserveTokens":4096,"safetyMarginTokens":1976}}
+                ]
+            }],
+            "audiences":["saaa-desktop"]
+        }))
+        .unwrap();
+        assert_eq!(catalog.contract_version, "agent-connection.v3");
+        let llm = catalog.profiles[0]
+            .providers
+            .iter()
+            .find(|provider| provider.name == "llm")
             .unwrap();
-        wire["profiles"][1]["contextWindow"] = budget;
-        let catalog = serde_json::from_value(wire).unwrap();
-        let error = select_default_llm_profile(&catalog).unwrap_err();
-        assert_eq!(error.code(), Some("harness-llm-context-window-missing"));
-    }
-
-    #[test]
-    fn rejects_invalid_selected_budget_with_actionable_code() {
-        let mut wire = v3_catalog();
-        wire["profiles"][1]["providers"][0]["contextWindow"]["maxTokens"] = json!(0);
-        let catalog = serde_json::from_value(wire).unwrap();
-        assert_eq!(
-            select_default_llm_profile(&catalog).unwrap_err().code(),
-            Some("harness-llm-context-window-invalid")
-        );
+        assert_eq!(llm.context_window.unwrap().max_tokens, 131_072);
+        assert!(catalog.profiles[0]
+            .providers
+            .iter()
+            .any(|provider| provider.name == "asr" && provider.context_window.is_none()));
     }
 
     #[test]

@@ -67,23 +67,9 @@ pub(crate) async fn render_session_inner(
                 if crate::situation::speech_holds_runtime(&context.situation) {
                     break;
                 }
-                let mut child = crate::voice::cloud_tts::spawn_audio_player(&chunk.path)?;
                 crate::runtime::event_hub::performance::record_tts_boundary_to_player_spawn(
                     chunk.boundary_at.elapsed(),
                 );
-                {
-                    let mut slot = context
-                        .child
-                        .lock()
-                        .map_err(|_| "Streaming speech child lock unavailable".to_string())?;
-                    if context.cancellation.is_cancelled() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        let _ = fs::remove_file(&chunk.path);
-                        break;
-                    }
-                    *slot = Some(child);
-                }
                 if !playback_started {
                     context
                         .situation
@@ -99,7 +85,7 @@ pub(crate) async fn render_session_inner(
                 let child_slot = context.child.clone();
                 let cancellation = context.cancellation.clone();
                 playback = Some(tauri::async_runtime::spawn_blocking(move || {
-                    let status = wait_for_child(&child_slot, &cancellation);
+                    let status = play_chunk_audio(&chunk.path, &cancellation, &child_slot);
                     (chunk, status)
                 }));
             }
@@ -398,6 +384,48 @@ pub(crate) fn wave_duration_ms(path: &Path) -> Result<u64, String> {
             .saturating_add(chunk_size + (chunk_size % 2));
     }
     Err("Rendered speech audio did not contain a bounded data chunk".to_string())
+}
+pub(super) fn play_chunk_audio(
+    path: &Path,
+    cancellation: &RunCancellation,
+    child_slot: &Arc<Mutex<Option<Child>>>,
+) -> Result<std::process::ExitStatus, String> {
+    let mut started = None;
+    match crate::voice::audio_backend::global().play_wav_blocking(path, cancellation, &mut started)
+    {
+        Ok(true) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                return Ok(std::process::ExitStatus::from_raw(0));
+            }
+            #[cfg(not(unix))]
+            {
+                return spawn_and_wait(path, cancellation, child_slot);
+            }
+        }
+        Ok(false) => spawn_and_wait(path, cancellation, child_slot),
+        Err(error) => Err(error),
+    }
+}
+fn spawn_and_wait(
+    path: &Path,
+    cancellation: &RunCancellation,
+    child_slot: &Arc<Mutex<Option<Child>>>,
+) -> Result<std::process::ExitStatus, String> {
+    let mut child = crate::voice::cloud_tts::spawn_audio_player(path)?;
+    {
+        let mut slot = child_slot
+            .lock()
+            .map_err(|_| "Streaming speech child lock unavailable".to_string())?;
+        if cancellation.is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Speech cancelled".into());
+        }
+        *slot = Some(child);
+    }
+    wait_for_child(child_slot, cancellation)
 }
 pub(crate) fn wait_for_child(
     child_slot: &Arc<Mutex<Option<Child>>>,

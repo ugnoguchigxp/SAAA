@@ -10,8 +10,9 @@ pub(crate) use advance::{
 };
 pub(crate) use finish::record_provider_turn_finish;
 pub(crate) use lifecycle::{
-    accept_provider_turn, accept_provider_turn_with_status, cancel_all_for_disable, disable_drain_in_progress,
-    disabled_runtime_run_ids, record_actor_activity, record_step_usage,
+    accept_provider_turn, accept_provider_turn_with_status, accept_resolved_frontend,
+    cancel_all_for_disable, disable_drain_in_progress, disabled_runtime_run_ids,
+    record_actor_activity, record_step_usage,
 };
 pub(crate) use receipts::record_input_receipt;
 #[cfg(test)]

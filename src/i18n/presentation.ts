@@ -30,6 +30,8 @@ const messageKeys = {
   settingsAgentConnectionTokenInvalid: "settings.connection.agentConnectionTokenInvalid",
   settingsAgentConnectionAuthorizationRejected:
     "settings.connection.agentConnectionAuthorizationRejected",
+  settingsAgentConnectionCatalogMismatch:
+    "settings.connection.agentConnectionCatalogMismatch",
   settingsAgentSessionEventStreamMissing: "errors.settings.agentSessionEventStreamMissing",
 } as const;
 
@@ -63,6 +65,7 @@ const legacyMessageNames: Record<string, UiMessageName> = {
   "LARM_API_TOKEN is invalid.": "settingsAgentConnectionTokenInvalid",
   "dynamic_lan rejected the connection authorization.":
     "settingsAgentConnectionAuthorizationRejected",
+  larm_catalog_claim_mismatch: "settingsAgentConnectionCatalogMismatch",
   "Agent Session creation did not advertise a supported event stream URL":
     "settingsAgentSessionEventStreamMissing",
 };

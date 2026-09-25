@@ -35,6 +35,7 @@ pub(crate) async fn stream_voice_aware_dynamic_lan_provider(
     } else {
         super::stream_dynamic_lan_provider(
             provider,
+            settings.larm_profile.as_deref(),
             history,
             timeout_ms.min(crate::providers::dynamic_lan::MAX_REQUEST_TIMEOUT_MS),
             context.cancellation.clone(),

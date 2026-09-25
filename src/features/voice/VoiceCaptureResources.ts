@@ -27,6 +27,8 @@ export class VoiceCaptureResources {
   readonly voiceFinalDeliveryRef = { current: new VoiceFinalDeliveryQueue() };
   readonly disposedRef = { current: false };
   readonly listeningEnabledRef = { current: false };
+  readonly nativeCaptureRef = { current: false };
+  readonly nativeStopRef = { current: null as (() => Promise<void>) | null };
 
   detachVoiceCapture = async (flush: boolean, stopSession = true) => {
     const attempt = ++this.voiceCaptureAttemptRef.current;
@@ -67,9 +69,13 @@ export class VoiceCaptureResources {
     this.voiceNodeRef.current = null;
     this.voiceSourceRef.current = null;
     this.voiceStreamRef.current = null;
+    const stopNative = this.nativeStopRef.current;
+    this.nativeStopRef.current = null;
+    this.nativeCaptureRef.current = false;
     this.voiceActivityDetectorRef.current = null;
     this.voiceAsrPacketizerRef.current.reset();
     lease?.();
+    if (stopNative) await stopNative().catch(() => undefined);
     if (context) await context.close().catch(() => undefined);
     if (sender && stopSession) {
       const stopped = await sender.enqueueStop(false).then(

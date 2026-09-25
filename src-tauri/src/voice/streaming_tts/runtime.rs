@@ -23,6 +23,7 @@ use super::chunker::{SelectReason, SentenceAccumulator, MAX_SOURCE_CHARS};
 mod render_session_inner;
 #[path = "runtime/streaming_speech_runtime.rs"]
 mod streaming_speech_runtime;
+use render_session_inner::play_chunk_audio;
 pub(super) use render_session_inner::{
     adaptive_render_concurrency, finalize_rendered_chunk, render_future, render_session_inner,
     render_slots_used, resolve_render_route, wait_for_child, wave_duration_ms,

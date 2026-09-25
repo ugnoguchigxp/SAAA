@@ -203,7 +203,7 @@ pub(crate) fn migrate_v35_to_v36_larm_conversation_profile(
             roles["roles"]["frontend"] = Value::Null;
         }
     }
-    providers["harness"]["larmProfile"] = Value::String(saaa_larm_session::DEFAULT_PROFILE.into());
+    providers["harness"]["larmProfile"] = Value::String("saaa-conversation-ornith15".into());
     let now = crate::now_iso();
     connection.execute(
         "UPDATE settings_documents SET value_json=?1, updated_at=?2
@@ -572,7 +572,7 @@ mod tests {
         assert_eq!(providers["harness"]["address"], "http://192.168.0.130:9810");
         assert_eq!(
             providers["harness"]["larmProfile"],
-            saaa_larm_session::DEFAULT_PROFILE
+            "saaa-conversation-ornith15"
         );
         let roles: String = c
             .query_row(

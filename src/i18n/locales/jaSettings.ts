@@ -133,6 +133,10 @@ export const jaSettings = {
         "設定済みのLARM_API_TOKENが無効か、Agent Connection側で拒否されました。安全なcredential設定を確認してください。",
       agentConnectionAuthorizationRejected:
         "Agent Connectionが接続を拒否しました。正しいLARM_API_TOKENを安全に設定してください。",
+      agentConnectionCatalogMismatch:
+        "LARM の Profile 情報と、実際に割り当てられたモデルが一致しません。LARM の再起動後に再接続してください。",
+      larmProfileHint:
+        "既定は SAAA です。SAAA-w-Image と SAAA-w-music も入力できます。以前の Profile ID は SAAA として扱われます。",
       sourcesTitle: "サービスの接続元",
       sourcesDescription:
         "LLM・ASR・TTSはそれぞれHarnessまたは個別プロバイダーを選べます。暗黙の切り替えは行いません。",

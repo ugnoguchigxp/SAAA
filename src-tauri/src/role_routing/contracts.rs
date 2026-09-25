@@ -144,7 +144,7 @@ impl Default for RoleRoutingSettings {
             actors: vec![
                 RoutingActor {
                     id: "larm-frontdesk".into(),
-                    label: "LARM 受付".into(),
+                    label: "LARM 受付（backchannel）".into(),
                     aliases: vec![],
                     transport: "provider".into(),
                     provider_id: Some(crate::DYNAMIC_LAN_PROVIDER_ID.into()),
@@ -157,7 +157,7 @@ impl Default for RoleRoutingSettings {
                 },
                 RoutingActor {
                     id: "larm-reasoner".into(),
-                    label: "LARM 思考".into(),
+                    label: "LARM 思考（llm）".into(),
                     aliases: vec![],
                     transport: "provider".into(),
                     provider_id: Some(crate::DYNAMIC_LAN_PROVIDER_ID.into()),

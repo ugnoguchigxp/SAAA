@@ -4,8 +4,36 @@ use std::env;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::mpsc;
-const PROFILE_CAPABILITY: &str = "llm.reasoning";
+const PROFILE_ID: &str = "saaa-conversation-ornith15";
+const LLM_MODEL: &str = "ornith-1.5-35b";
+const PROFILE_CAPABILITY: &str = "llm.general";
 const TEST_REVISION: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+fn provider_mut<'a>(value: &'a mut Value, name: &str) -> &'a mut Value {
+    value["providers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|provider| provider["name"] == name)
+        .unwrap()
+}
+fn saaa_selector_catalog() -> String {
+    json!({
+        "contractVersion": "agent-connection.v3",
+        "catalogRevision": "rev-fixture",
+        "requestedProfile": "SAAA",
+        "profiles": [{
+            "id": PROFILE_ID,
+            "providers": [
+                {"name":"llm","capability":PROFILE_CAPABILITY,"protocol":"openai.chat-completions.v1","endpoint":"/v1/chat/completions","model":LLM_MODEL,"contextWindow":{"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024}},
+                {"name":"backchannel","capability":"llm.backchannel.classifier","protocol":"openai.chat-completions.v1","endpoint":"/v1/chat/completions","model":"qwen3.5-2b-fast-response","contextWindow":{"maxTokens":65536,"outputReserveTokens":4096,"safetyMarginTokens":1976}},
+                {"name":"asr","capability":"speech.stt","protocol":"openai.audio-transcriptions.v1","endpoint":"/v1/audio/transcriptions","model":"qwen3-asr-1.7b"},
+                {"name":"tts","capability":"speech.tts","protocol":"openai.audio-speech.v1","endpoint":"/v1/audio/speech","model":"voicevox-core"},
+                {"name":"embedding","capability":"embedding","protocol":"larm.embedding.v1","endpoint":"/v1/embed","model":"multilingual-e5-small"}
+            ],
+            "services": []
+        }]
+    }).to_string()
+}
 fn test_timestamps() -> (String, String) {
         let created = chrono::Utc::now() - chrono::Duration::seconds(1);
         let expires = created + chrono::Duration::seconds(CONNECTION_TTL_SECONDS.into());
@@ -24,7 +52,7 @@ fn connection_state_json(
             "allocationId": "alloc_test",
             "bootEpoch": "epoch_test",
             "catalogRevision": TEST_REVISION,
-            "agentProfile": AGENT_PROFILE,
+            "agentProfile": PROFILE_ID,
             "profileRevision": TEST_REVISION,
             "audience": audience,
             "audienceRevision": TEST_REVISION,
@@ -34,7 +62,7 @@ fn connection_state_json(
                 "capability": PROFILE_CAPABILITY,
                 "route": "llm-agent-35b",
                 "protocol": "openai.chat-completions.v1",
-                "publicModel": AGENT_PROFILE,
+                "publicModel": LLM_MODEL,
                 "readiness": readiness,
                 "claimable": status == "ready"
             }],
@@ -52,10 +80,12 @@ fn test_identity(id: &str, created_at: &str, expires_at: &str) -> ConnectionIden
             profile_revision: TEST_REVISION.to_string(),
             audience_revision: TEST_REVISION.to_string(),
             profile: SelectedLlmProfile {
-                id: AGENT_PROFILE.to_string(),
+                id: PROFILE_ID.to_string(),
                 capability: PROFILE_CAPABILITY.to_string(),
-                model: AGENT_PROFILE.to_string(),
+                model: LLM_MODEL.to_string(),
+                protocol: "openai.chat-completions.v1".into(),
                 context_window: test_context_window(),
+                compare_catalog: true,
             },
             created_at: chrono::DateTime::parse_from_rfc3339(created_at)
                 .expect("created timestamp"),
@@ -79,7 +109,7 @@ fn claim_json(host: &str, port: u16, audience: &str, expires_at: &str) -> Value 
                 "host": host,
                 "port": port,
                 "baseUrl": base_url,
-                "model": AGENT_PROFILE,
+                "model": LLM_MODEL,
                 "health": {
                     "url": format!("http://{host}:{port}/v1/agent-connections/aconn_test/providers/llm/health"),
                     "kind": "semantic-inference",
@@ -94,7 +124,7 @@ fn claim_json(host: &str, port: u16, audience: &str, expires_at: &str) -> Value 
                     "kind": "openai-provider-v1",
                     "fields": {
                         "baseURL": base_url,
-                        "model": AGENT_PROFILE
+                        "model": LLM_MODEL
                     },
                     "secretFields": { "apiKey": "credential.token" }
                 }
@@ -103,7 +133,7 @@ fn claim_json(host: &str, port: u16, audience: &str, expires_at: &str) -> Value 
     }
 fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str) -> Value {
         let mut claim = claim_json(host, port, audience, expires_at);
-        let provider = claim["providers"][0]
+        let provider = provider_mut(&mut claim, "llm")
             .as_object_mut()
             .expect("provider object");
         provider.remove("credential");
@@ -164,129 +194,6 @@ fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str)
         }
     }
 #[test]
-    fn accepts_the_legacy_profile_when_no_default_is_advertised() {
-        let profile = || CatalogAgentProfile {
-            id: AGENT_PROFILE.to_string(),
-            legacy_profile_context_window: Some(test_context_window()),
-            providers: vec![CatalogProvider {
-                context_window: None,
-                name: "llm".to_string(),
-                capability: PROFILE_CAPABILITY.to_string(),
-                supported_capabilities: Vec::new(),
-                protocol: "openai.chat-completions.v1".to_string(),
-                model: AGENT_PROFILE.to_string(),
-            }],
-        };
-        let profiles = AgentProfileCatalog {
-            contract_version: "agent-connection.v1".to_string(),
-            default_agent_profile: None,
-            profiles: vec![profile()],
-            audiences: vec!["saaa-desktop".to_string()],
-        };
-        assert_eq!(
-            select_default_llm_profile(&profiles).expect("legacy profile remains compatible"),
-            SelectedLlmProfile {
-                id: AGENT_PROFILE.to_string(),
-                capability: PROFILE_CAPABILITY.to_string(),
-                model: AGENT_PROFILE.to_string(),
-                context_window: test_context_window(),
-            }
-        );
-
-        let duplicate = AgentProfileCatalog {
-            contract_version: profiles.contract_version.clone(),
-            default_agent_profile: None,
-            profiles: vec![profile(), profile()],
-            audiences: profiles.audiences.clone(),
-        };
-        assert!(select_default_llm_profile(&duplicate).is_err());
-    }
-#[test]
-    fn selects_the_advertised_default_compatible_profile() {
-        let profiles = serde_json::from_value::<AgentProfileCatalog>(json!({
-            "contractVersion": "agent-connection.v1",
-            "defaultAgentProfile": "coding-default",
-            "profiles": [{
-                "id": "coding-default",
-                "providers": [{
-                    "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
-                    "capability": "llm.coding",
-                    "supportedCapabilities": ["llm.coding", "llm.general", "llm.reasoning"],
-                    "protocol": "openai.chat-completions.v1",
-                    "model": "coding-default"
-                }]
-            }],
-            "audiences": [AUDIENCE]
-        }))
-        .expect("current agent profile descriptor decodes");
-
-        assert_eq!(
-            select_default_llm_profile(&profiles).expect("compatible default profile is selected"),
-            SelectedLlmProfile {
-                id: "coding-default".to_string(),
-                capability: "llm.coding".to_string(),
-                model: "coding-default".to_string(),
-                context_window: test_context_window(),
-            }
-        );
-    }
-#[test]
-    fn selected_profile_can_bind_a_different_public_model() {
-        let profiles = serde_json::from_value::<AgentProfileCatalog>(json!({
-            "contractVersion": "agent-connection.v1",
-            "profiles": [{
-                "id": AGENT_PROFILE,
-                "providers": [{
-                    "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
-                    "capability": PROFILE_CAPABILITY,
-                    "protocol": "openai.chat-completions.v1",
-                    "model": "coding-default"
-                }]
-            }],
-            "audiences": [AUDIENCE]
-        }))
-        .expect("compatibility alias descriptor decodes");
-
-        assert_eq!(
-            select_default_llm_profile(&profiles).expect("compatibility alias is selected"),
-            SelectedLlmProfile {
-                id: AGENT_PROFILE.to_string(),
-                capability: PROFILE_CAPABILITY.to_string(),
-                model: "coding-default".to_string(),
-                context_window: test_context_window(),
-            }
-        );
-    }
-#[test]
-    fn current_v3_profile_catalog_is_accepted() {
-        let profiles: AgentProfileCatalog = serde_json::from_value(json!({
-            "contractVersion": "agent-connection.v3",
-            "defaultAgentProfile": "coding-default",
-            "profiles": [{
-                "id": "coding-default",
-                "providers": [{
-                    "name": "llm", "contextWindow": {"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976},
-                    "capability": "llm.coding",
-                    "supportedCapabilities": [
-                        "llm.coding",
-                        "llm.general",
-                        "llm.reasoning"
-                    ],
-                    "protocol": "openai.chat-completions.v1",
-                    "model": "coding-default"
-                }]
-            }],
-            "audiences": [AUDIENCE]
-        }))
-        .expect("v3 catalog deserializes");
-
-        let selected = select_default_llm_profile(&profiles).expect("v3 catalog is compatible");
-        assert_eq!(selected.id, "coding-default");
-        assert_eq!(selected.model, "coding-default");
-        assert_eq!(selected.capability, "llm.coding");
-        assert_eq!(selected.context_window.max_tokens, 230400);
-    }
-#[test]
     fn requires_the_fixed_saaa_desktop_audience() {
         let audiences = vec!["same-host".to_string(), "saaa-desktop".to_string()];
         assert_eq!(select_audience(&audiences).expect("audience"), AUDIENCE);
@@ -300,35 +207,6 @@ fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str)
         assert!(is_json_content_type("application/json; charset=utf-8"));
         assert!(!is_json_content_type("application/jsonp"));
         assert!(!is_json_content_type("application/problem+json"));
-    }
-#[test]
-    fn validates_profile_context_budget() {
-        let profiles = |max_tokens, output_reserve_tokens, safety_margin_tokens| {
-            serde_json::from_value::<AgentProfileCatalog>(json!({
-                "contractVersion": "agent-connection.v1",
-                "profiles": [{
-                    "id": AGENT_PROFILE,
-                    "contextWindow": {
-                        "maxTokens": max_tokens,
-                        "outputReserveTokens": output_reserve_tokens,
-                        "safetyMarginTokens": safety_margin_tokens
-                    },
-                    "providers": [{
-                        "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
-                        "capability": PROFILE_CAPABILITY,
-                        "protocol": "openai.chat-completions.v1",
-                        "model": AGENT_PROFILE
-                    }]
-                }],
-                "audiences": [AUDIENCE]
-            }))
-            .unwrap()
-        };
-        let selected = select_default_llm_profile(&profiles(32_768, 4_096, 1_024)).unwrap();
-        assert_eq!(selected.context_window, test_context_window());
-        assert!(select_default_llm_profile(&profiles(0, 4_096, 1_024)).is_err());
-        assert!(select_default_llm_profile(&profiles(4_096, 4_096, 1)).is_err());
-        assert!(select_default_llm_profile(&profiles(4_096, 3_000, 2_000)).is_err());
     }
 #[test]
     fn validates_provider_capacity_without_treating_completion_as_guaranteed() {
@@ -419,7 +297,7 @@ fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str)
         let (created_at, expires_at) = test_timestamps();
         let identity = test_identity("aconn_test", &created_at, &expires_at);
         let mut value = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
-        value["providers"][0]["streaming"] = json!({"url":"ws://other.local/ignored"});
+        provider_mut(&mut value, "llm")["streaming"] = json!({"url":"ws://other.local/ignored"});
         assert!(validate_claim(
             serde_json::from_value(value.clone()).unwrap(),
             &identity,
@@ -427,7 +305,7 @@ fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str)
             false
         )
         .is_ok());
-        value["providers"][0]["protocol"] = json!("saaa.llm-stream.v1");
+        provider_mut(&mut value, "llm")["protocol"] = json!("saaa.llm-stream.v1");
         assert!(validate_claim(
             serde_json::from_value(value).unwrap(),
             &identity,
@@ -441,8 +319,8 @@ fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str)
         let (created_at, expires_at) = test_timestamps();
         let identity = test_identity("aconn_test", &created_at, &expires_at);
         let mut value = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
-        value["providers"][0]["credential"] = json!({ "type": "none" });
-        value["providers"][0]["configuration"]
+        provider_mut(&mut value, "llm")["credential"] = json!({ "type": "none" });
+        provider_mut(&mut value, "llm")["configuration"]
             .as_object_mut()
             .expect("configuration object")
             .remove("secretFields");
@@ -451,7 +329,7 @@ fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str)
             .expect("explicit anonymous claim is accepted");
         assert_eq!(descriptor.credential.unwrap().r#type, "none");
 
-        value["providers"][0]["configuration"]["secretFields"] =
+        provider_mut(&mut value, "llm")["configuration"]["secretFields"] =
             json!({ "apiKey": "credential.token" });
         let inconsistent = serde_json::from_value::<ConnectionClaim>(value).unwrap();
         assert!(validate_claim(inconsistent, &identity, AUDIENCE, false).is_err());

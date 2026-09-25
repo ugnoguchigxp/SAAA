@@ -1,6 +1,7 @@
 use super::*;
 pub(crate) async fn resolve(
     provider: &DynamicLanProviderSettings,
+    stored_profile: Option<&str>,
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
 ) -> Result<
@@ -12,9 +13,17 @@ pub(crate) async fn resolve(
 > {
     let local_cancel = Arc::new(RunCancellation::default());
     let provider = provider.clone();
+    let stored_profile = stored_profile.map(str::to_string);
     let task_cancel = local_cancel.clone();
-    let mut task =
-        tokio::spawn(async move { resolve_connection(&provider, timeout_ms, task_cancel).await });
+    let mut task = tokio::spawn(async move {
+        resolve_connection(
+            &provider,
+            stored_profile.as_deref(),
+            timeout_ms,
+            task_cancel,
+        )
+        .await
+    });
     let timed_out = tokio::select! { biased;
         _ = cancellation.cancelled() => false,
         _ = tokio::time::sleep(Duration::from_millis(timeout_ms)) => true,

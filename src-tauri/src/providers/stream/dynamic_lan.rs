@@ -8,6 +8,7 @@ use crate::{DynamicLanProviderSettings, OpenAiCompatibleProviderSettings, RunCan
 
 pub(crate) async fn stream_dynamic_lan_provider(
     provider: &DynamicLanProviderSettings,
+    stored_profile: Option<&str>,
     history: &[ConversationMessage],
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
@@ -23,6 +24,7 @@ pub(crate) async fn stream_dynamic_lan_provider(
         });
     let (connection, prior_cleanup) = match resolve_dynamic_lan_connection_for_request(
         provider,
+        stored_profile,
         timeout_ms,
         cancellation.clone(),
     )
@@ -178,6 +180,7 @@ pub(crate) use initialization::resolve as resolve_dynamic_lan_connection_for_req
 
 async fn resolve_connection(
     provider: &DynamicLanProviderSettings,
+    stored_profile: Option<&str>,
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
 ) -> Result<
@@ -191,6 +194,7 @@ async fn resolve_connection(
     for attempt in 0..2 {
         let mut connection = match crate::providers::dynamic_lan::DynamicLanConnection::resolve(
             &provider.host,
+            stored_profile,
             cancellation.clone(),
         )
         .await

@@ -19,6 +19,21 @@ pub async fn check_frontdesk(base: &str) -> Result<String, String> {
     )
     .await
     .map_err(|e| e.to_string())?;
+    let summary = session.provider_summary().await;
+    for name in ["llm", "backchannel"] {
+        if let Some(provider) = summary.iter().find(|provider| provider.name == name) {
+            let max_tokens = provider
+                .context_window
+                .map(|window| window.max_tokens)
+                .unwrap_or(0);
+            eprintln!(
+                "stage=larm-binding; selector={:?}; catalog_revision={:?}; provider={name}; model={}; max_tokens={max_tokens}",
+                session.selector(),
+                session.catalog_revision(),
+                provider.model
+            );
+        }
+    }
     let result = async {
         let ready = crate::larm_voice::Ready {session:session.clone()};
         let mut history = Vec::new();
@@ -115,6 +130,7 @@ pub async fn check_response(host: &str) -> Result<String, String> {
     eprintln!("stage=harness-llm-roundtrip; status=started; timeout_ms=240000");
     let outcome = crate::providers::stream::stream_dynamic_lan_provider(
         &provider,
+        None,
         &history,
         240_000,
         cancellation.clone(),

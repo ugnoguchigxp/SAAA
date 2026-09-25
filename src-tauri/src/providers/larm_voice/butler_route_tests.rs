@@ -16,6 +16,12 @@ impl RuntimeEventSender for Sink {
                 self.deltas.lock().unwrap().push(text);
                 self.order.lock().unwrap().push("delta");
             }
+            RuntimeEvent::Started { .. } => {
+                self.order.lock().unwrap().push("thinking");
+            }
+            RuntimeEvent::MessageCommitted { .. } => {
+                self.order.lock().unwrap().push("committed");
+            }
             RuntimeEvent::MessageCompleted { .. } => {
                 self.order.lock().unwrap().push("answer");
             }
@@ -214,36 +220,63 @@ async fn voice_turn_runs_frontend_then_reasoner() {
             .is_some_and(|messages| messages.iter().any(|message| message["content"] == crate::role_routing::frontend::INSTRUCTION))
     });
     let backchannel = backchannel.expect("backchannel request");
+    assert_eq!(backchannel["model"], "qwen3.5-2b-fast-response");
     assert_eq!(backchannel["stream"], true);
-    assert_eq!(backchannel["chat_template_kwargs"]["enable_thinking"], false);
-    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["確認します。"]);
+    assert_eq!(
+        backchannel["chat_template_kwargs"],
+        json!({"enable_thinking": false})
+    );
+    let reasoner = turn
+        .bodies
+        .iter()
+        .find(|body| body["model"] == "ornith-1.5-35b")
+        .expect("reasoner request");
+    assert_eq!(reasoner["chat_template_kwargs"]["enable_thinking"], false);
+    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["少し考えます。"]);
+    assert!(turn.sink.order.lock().unwrap().contains(&"committed"));
     assert_eq!(turn.message, "ornith-answer");
     assert!(turn.hits.contains(&"backchannel".into()));
     assert!(turn.hits.contains(&"llm".into()));
 }
 
 #[tokio::test]
-async fn nod_still_runs_reasoner() {
-    let turn = run_turn("run_butler_nod", "voice", "frontend-nod", "なるほど").await;
-    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["はい。"]);
-    assert_eq!(turn.message, "ornith-answer");
-    assert!(turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
-    assert_eq!(turn.steps[1].3, "succeeded");
+async fn greeting_finishes_without_reasoner() {
+    let turn = run_turn("run_butler_greet", "voice", "frontend-greeting", "おはようございます").await;
+    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["おはようございます。"]);
+    assert_eq!(turn.message, "おはようございます。");
+    let order = turn.sink.order.lock().unwrap().clone();
+    let thinking_at = order.iter().position(|event| *event == "thinking").expect("thinking");
+    let committed_at = order.iter().position(|event| *event == "committed").expect("committed");
+    assert!(thinking_at < committed_at, "order: {order:?}");
+    assert!(!turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
+    assert_eq!(turn.steps[0].3, "succeeded");
+    assert_eq!(turn.steps[1].3, "cancelled");
 }
 
 #[tokio::test]
-async fn thanks_still_runs_reasoner() {
+async fn nod_finishes_without_reasoner() {
+    let turn = run_turn("run_butler_nod", "voice", "frontend-nod", "なるほど").await;
+    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["はい。"]);
+    assert_eq!(turn.message, "はい。");
+    assert!(!turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
+    assert_eq!(turn.steps[0].3, "succeeded");
+    assert_eq!(turn.steps[1].3, "cancelled");
+}
+
+#[tokio::test]
+async fn thanks_finishes_without_reasoner() {
     let turn = run_turn("run_butler_thanks", "voice", "frontend-thanks", "ありがとう").await;
     assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["どういたしまして。"]);
-    assert_eq!(turn.message, "ornith-answer");
-    assert!(turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
-    assert_eq!(turn.steps[1].3, "succeeded");
+    assert_eq!(turn.message, "どういたしまして。");
+    assert!(!turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
+    assert_eq!(turn.steps[0].3, "succeeded");
+    assert_eq!(turn.steps[1].3, "cancelled");
 }
 
 #[tokio::test]
 async fn low_confidence_ack_still_runs_reasoner() {
     let turn = run_turn("run_butler_low", "voice", "frontend-low", "なるほど").await;
-    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["はい。"]);
+    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["少し考えます。"]);
     assert_eq!(turn.message, "ornith-answer");
     assert!(turn.bodies.len() >= 2, "bodies: {:?}", turn.bodies);
     assert_eq!(turn.steps[1].3, "succeeded");
@@ -292,6 +325,12 @@ async fn text_turn_skips_frontend_provider() {
     assert_eq!(turn.message, "fixture");
     assert!(turn.sink.acks.lock().unwrap().is_empty());
     assert_eq!(turn.hits, ["llm".to_string()], "hits: {:?}", turn.hits);
+    assert!(
+        turn.bodies.iter().any(|body| body["model"] == "ornith-1.5-35b"),
+        "bodies: {:?}",
+        turn.bodies
+    );
+    assert!(turn.hits.iter().all(|hit| hit != "backchannel"));
     assert_eq!(turn.steps[0].2, "larm-frontdesk");
     assert_eq!(turn.steps[1].2, "larm-reasoner");
 }
@@ -323,7 +362,7 @@ async fn frontend_output_is_not_forwarded_to_reasoner() {
 #[tokio::test]
 async fn ack_is_spoken_through_outer_event_hub() {
     let turn = run_turn("run_butler_ack", "voice", "ready", "明日の予定を確認して").await;
-    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["確認します。"]);
+    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["少し考えます。"]);
 }
 
 #[tokio::test]

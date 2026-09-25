@@ -10,17 +10,40 @@ pub const BASE_PROVIDERS: [(&str, &str); 4] = [
     ("embedding", "larm.embedding.v1"),
 ];
 pub const BACKCHANNEL: (&str, &str) = ("backchannel", "openai.chat-completions.v1");
-pub const CANONICAL_PROFILE: &str = "saaa-conversation-ornith15";
-pub const LEGACY_PROFILE: &str = "saaa-qwen38";
-pub const PREVIOUS_DEFAULT_PROFILE: &str = "saaa-conversation-gemma4";
-pub const DEFAULT_PROFILE: &str = CANONICAL_PROFILE;
+pub const DEFAULT_SELECTOR: &str = "SAAA";
+/// Profile ids SAAA shipped as defaults before LARM offered selectors. Stored values resolve to `SAAA`.
+pub const LEGACY_PROFILE_IDS: [&str; 3] = [
+    "saaa-conversation-ornith15",
+    "saaa-conversation-gemma4",
+    "saaa-qwen38",
+];
 
-pub fn required_providers(profile: &str) -> Vec<&'static str> {
-    let mut names: Vec<&'static str> = BASE_PROVIDERS.iter().map(|(name, _)| *name).collect();
-    if profile == CANONICAL_PROFILE {
-        names.push(BACKCHANNEL.0);
+pub fn required_providers() -> Vec<&'static str> {
+    BASE_PROVIDERS
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(std::iter::once(BACKCHANNEL.0))
+        .collect()
+}
+
+pub(crate) fn verify_against_catalog(
+    snapshot: &Snapshot,
+    catalog: &crate::catalog::CatalogProfile,
+) -> Result<(), &'static str> {
+    for (name, claimed) in &snapshot.providers {
+        let declared = catalog
+            .provider(name)
+            .ok_or("larm_catalog_claim_mismatch")?;
+        if declared.model != claimed.model || declared.protocol != claimed.protocol {
+            return Err("larm_catalog_claim_mismatch");
+        }
+        if matches!(name.as_str(), "llm" | "backchannel")
+            && declared.context_window != claimed.context_window
+        {
+            return Err("larm_catalog_claim_mismatch");
+        }
     }
-    names
+    Ok(())
 }
 
 pub(crate) fn accepted_provider(name: &str) -> Option<&'static str> {
@@ -121,7 +144,7 @@ fn endpoint(value: &str) -> Result<url::Url, &'static str> {
     }
     Ok(url)
 }
-fn context_window(raw: &Value) -> Result<ContextWindow, &'static str> {
+pub(crate) fn context_window(raw: &Value) -> Result<ContextWindow, &'static str> {
     let value = raw
         .get("contextWindow")
         .ok_or("larm_missing_context_window")?;

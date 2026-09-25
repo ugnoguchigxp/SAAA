@@ -9,6 +9,20 @@
     "type": "final",
     "utteranceId": "utterance-fixture"
   },
+  "routingRoot": {
+    "activeSlot": "reasoning",
+    "cancelRequested": false,
+    "decisionReasonCodes": [
+      "rules",
+      "location_fallback"
+    ],
+    "lastEventSeq": 4,
+    "phase": "responding",
+    "revision": 0,
+    "rootId": "root-fixture",
+    "runtimeRunId": "run-fixture",
+    "selectedRecipeId": "20-respond-away"
+  },
   "runtime": {
     "providerId": "provider-fixture",
     "route": "conversation.respond",
@@ -63,13 +77,13 @@
         "updatedAt": "0",
         "valueJson": {
           "harness": {
-            "address": "http://gnosis.local:9810",
-            "larmProfile": "saaa-conversation-gemma4"
+            "address": "http://192.168.0.130:9810",
+            "larmProfile": "SAAA"
           },
           "providers": [
             {
               "enabled": true,
-              "host": "gnosis.local",
+              "host": "192.168.0.130",
               "id": "lan-llm-dynamic",
               "kind": "dynamic-lan",
               "label": "Provider Harness LLM",
@@ -93,7 +107,39 @@
         "schemaVersion": 15,
         "updatedAt": "0",
         "valueJson": {
-          "actors": [],
+          "actors": [
+            {
+              "aliases": [],
+              "capabilities": [
+                "social_reply"
+              ],
+              "id": "larm-frontdesk",
+              "label": "LARM 受付（backchannel）",
+              "larmProvider": "backchannel",
+              "location": "local",
+              "maxInputBytes": 16000,
+              "model": null,
+              "providerId": "lan-llm-dynamic",
+              "resourceGroup": "larm-backchannel",
+              "transport": "provider"
+            },
+            {
+              "aliases": [],
+              "capabilities": [
+                "reason",
+                "tools"
+              ],
+              "id": "larm-reasoner",
+              "label": "LARM 思考（llm）",
+              "larmProvider": "llm",
+              "location": "local",
+              "maxInputBytes": 65536,
+              "model": null,
+              "providerId": "lan-llm-dynamic",
+              "resourceGroup": "larm-llm",
+              "transport": "provider"
+            }
+          ],
           "adaptiveImprovement": {
             "enabled": false,
             "notification": false,
@@ -101,7 +147,7 @@
             "providerRecipe": false,
             "tool": false
           },
-          "enabled": false,
+          "enabled": true,
           "learning": {
             "allowLocalLabeler": false,
             "batchSize": 100,
@@ -124,12 +170,22 @@
             "stepTimeoutMs": 120000
           },
           "premiumApproval": "per_request",
-          "recipes": [],
+          "recipes": [
+            {
+              "action": "respond",
+              "enabled": true,
+              "id": "00-butler-respond",
+              "roles": [
+                "frontend",
+                "reasoner"
+              ]
+            }
+          ],
           "roles": {
             "advanced": null,
-            "frontend": null,
+            "frontend": "larm-frontdesk",
             "premium": null,
-            "reasoner": null,
+            "reasoner": "larm-reasoner",
             "reviewer": null,
             "toolSpecialist": null
           },
@@ -229,15 +285,19 @@
         "schemaVersion": 15,
         "updatedAt": "0",
         "valueJson": {
+          "aecEnabled": true,
           "allowedLanguages": [
             "ja"
           ],
           "autoSpeak": true,
+          "bargeInEnabled": true,
           "inputDeviceId": "default",
           "listeningEnabled": false,
+          "otherAudioDucking": "min",
           "outputDeviceId": "default",
           "silenceTimeoutMs": 1500,
-          "vadSensitivity": "medium"
+          "vadSensitivity": "medium",
+          "vpioOnBluetooth": false
         }
       }
     ],
@@ -253,16 +313,5 @@
       "threshold": 0.550000011920929,
       "totalDurationMs": 0
     }
-  },
-  "routingRoot": {
-    "activeSlot": "reasoning",
-    "cancelRequested": false,
-    "decisionReasonCodes": ["rules", "location_fallback"],
-    "lastEventSeq": 4,
-    "phase": "responding",
-    "revision": 0,
-    "rootId": "root-fixture",
-    "runtimeRunId": "run-fixture",
-    "selectedRecipeId": "20-respond-away"
   }
 }

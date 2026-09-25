@@ -54,7 +54,7 @@ describe("butler role routing", () => {
       "other",
       "larm-reasoner",
     ]);
-    expect(applied?.actors[0].label).toBe("LARM 受付");
+    expect(applied?.actors[0].label).toBe("LARM 受付（backchannel）");
     expect(applied?.recipes.map((recipe) => recipe.id)).toEqual([
       "00-butler-respond",
       "reasoner-response",

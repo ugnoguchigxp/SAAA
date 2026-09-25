@@ -679,7 +679,7 @@ enum ReasonerWait {
     TimedOut(crate::CleanupOutcome),
 }
 
-const FILLER: &str = "まだ確認しています。";
+const FILLER: &str = "はい。";
 
 async fn wait_for_reasoner(
     provider: &ModelProviderSettings,
@@ -789,15 +789,41 @@ async fn complete_frontend_step(
     input: &StartTurnInput,
     on_event: &dyn RuntimeEventSender,
     cancellation: Arc<RunCancellation>,
-    mut role_candidates: Vec<RoleCandidate>,
+    role_candidates: Vec<RoleCandidate>,
     active_provider_step: Option<&ActiveRoleStep>,
     shared_larm_voice: bool,
     larm_provider: &'static str,
 ) -> Result<ConversationMessage, TurnExecutionFailure> {
+    let _ = on_event.send(crate::ipc_contract::RuntimeEvent::Started {
+        run_id: input.run_id.clone(),
+        route: "conversation.respond".to_string(),
+        provider_id: frontend_provider_id(state),
+    });
     let (content, ack) = if shared_larm_voice {
         frontend_model_output(state, input, &cancellation, larm_provider).await
     } else {
         (String::new(), None)
+    };
+    let committed_ack = match ack.as_deref() {
+        Some(text) => {
+            let message = state.sqlite_writer.write(|connection| {
+                crate::runtime::butler_loop::commit_preface(
+                    connection,
+                    &input.conversation_id,
+                    &input.run_id,
+                    text,
+                )
+                .map_err(|error| error.to_string())
+            })?;
+            message.map(|message| {
+                let _ = on_event.send(crate::ipc_contract::RuntimeEvent::MessageCommitted {
+                    run_id: input.run_id.clone(),
+                    message: message.clone(),
+                });
+                message
+            })
+        }
+        None => None,
     };
     let turn = continue_after_frontend(
         state,
@@ -806,6 +832,7 @@ async fn complete_frontend_step(
         cancellation.clone(),
         role_candidates,
         active_provider_step,
+        committed_ack,
         content,
     );
     if let Some(text) = ack {
@@ -824,6 +851,30 @@ async fn complete_frontend_step(
     turn.await
 }
 
+fn frontend_provider_id(state: &AppState) -> String {
+    state
+        .sqlite_readers
+        .read(|connection| {
+            let settings = crate::persistence::load_role_routing_settings(connection)?;
+            let actor_id = settings.roles.frontend.unwrap_or_default();
+            Ok(settings
+                .actors
+                .into_iter()
+                .find(|actor| actor.id == actor_id)
+                .and_then(|actor| actor.provider_id)
+                .unwrap_or_else(|| "larm-frontdesk".to_string()))
+        })
+        .unwrap_or_else(|_| "larm-frontdesk".to_string())
+}
+
+fn host_reply_without_reasoner(content: &str) -> Option<String> {
+    let parsed = crate::role_routing::frontend::parse(content).ok()?;
+    if !crate::role_routing::frontend::resolves_without_reasoner(&parsed) {
+        return None;
+    }
+    crate::role_routing::frontend::spoken_line(&parsed)
+}
+
 async fn continue_after_frontend(
     state: &AppState,
     input: &StartTurnInput,
@@ -831,12 +882,46 @@ async fn continue_after_frontend(
     cancellation: Arc<RunCancellation>,
     mut role_candidates: Vec<RoleCandidate>,
     active_provider_step: Option<&ActiveRoleStep>,
+    committed_ack: Option<ConversationMessage>,
     content: String,
 ) -> Result<ConversationMessage, TurnExecutionFailure> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0);
+    if let Some(text) = host_reply_without_reasoner(&content) {
+        if let Some(message) = committed_ack {
+            crate::providers::session_store::seal_committed_assistant(
+                state,
+                input,
+                &message,
+                |connection, message| {
+                    crate::role_routing::repository::accept_resolved_frontend(
+                        connection,
+                        &input.run_id,
+                        &message.id,
+                        now_ms,
+                    )
+                },
+            )
+            .map_err(TurnExecutionFailure::from)?;
+            return Ok(message);
+        }
+        return persist_conversation_success_with_state(
+            state,
+            input,
+            &text,
+            |connection, message| {
+                crate::role_routing::repository::accept_resolved_frontend(
+                    connection,
+                    &input.run_id,
+                    &message.id,
+                    now_ms,
+                )
+            },
+        )
+        .map_err(Into::into);
+    }
     if state.sqlite_writer.write(|connection| {
         crate::role_routing::repository::advance_provider_step(
             connection,
@@ -912,25 +997,11 @@ async fn frontend_model_output(
     let Ok(parsed) = crate::role_routing::frontend::parse(&raw) else {
         return (String::new(), None);
     };
-    let ack = crate::role_routing::frontend::ack_text(parsed.ack, false)
-        .filter(|text| text.chars().count() <= usize::from(max_ack_chars))
-        .map(str::to_string);
+    let ack = crate::role_routing::frontend::spoken_line(&parsed)
+        .filter(|text| text.chars().count() <= usize::from(max_ack_chars));
     let recorded = serde_json::json!({
-        "ack": match parsed.ack {
-            crate::role_routing::frontend::Ack::None => "none",
-            crate::role_routing::frontend::Ack::Nod => "nod",
-            crate::role_routing::frontend::Ack::Greeting => "greeting",
-            crate::role_routing::frontend::Ack::Thanks => "thanks",
-            crate::role_routing::frontend::Ack::Working => "working",
-        },
-        "intent": match parsed.intent {
-            crate::role_routing::frontend::Intent::Social => "social",
-            crate::role_routing::frontend::Intent::Acknowledgement => "acknowledgement",
-            crate::role_routing::frontend::Intent::Request => "request",
-            crate::role_routing::frontend::Intent::Unclear => "unclear",
-        },
-        "resolvesTurn": parsed.resolves_turn,
-        "confidence": if parsed.high_confidence { "high" } else { "low" },
+        "resolvesTurn": parsed.resolves_turn && ack.is_some(),
+        "reply": ack.clone().unwrap_or_default(),
     })
     .to_string();
     (recorded, ack)
@@ -958,7 +1029,7 @@ async fn frontend_completion(
     let body = serde_json::json!({
         "model": provider.model,
         "stream": true,
-        "max_tokens": 64,
+        "max_tokens": 128,
         "temperature": 0.0,
         "chat_template_kwargs": {"enable_thinking": false},
         "response_format": crate::role_routing::frontend::response_format(),

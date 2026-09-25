@@ -49,9 +49,20 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
             None
         }
     };
-    let resolution =
-        crate::providers::service_harness::resolve_with_legacy_llm(&settings.harness.address);
-    let (resolution, legacy_asr) = tokio::join!(resolution, legacy_asr);
+    let stored_profile = settings.harness.larm_profile.as_deref();
+    let preference = crate::larm_voice::profile::preference(stored_profile);
+    let advertised = async {
+        if legacy {
+            advertised_llms(&settings.harness.address, &preference).await
+        } else {
+            None
+        }
+    };
+    let resolution = crate::providers::service_harness::resolve_with_legacy_llm(
+        &settings.harness.address,
+        stored_profile,
+    );
+    let (resolution, legacy_asr, advertised) = tokio::join!(resolution, legacy_asr, advertised);
     let mut items = Vec::new();
     match resolution {
         Ok(resolution) => {
@@ -62,24 +73,80 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
             );
             items.push(readiness.clone());
             items.extend(items_from_resolution(&resolution));
+            if let Some(detail) = advertised.as_deref() {
+                if let Some(llm) = items.iter_mut().find(|item| item.id == "harness.llm") {
+                    llm.message = detail.to_string();
+                }
+            }
             if readiness.status == DiagnosisStatus::Ok {
                 promote_response(&mut items, &readiness.message);
             }
             if legacy {
-                let preference =
-                    crate::larm_voice::profile::preference(settings.harness.larm_profile.as_deref());
-                let embedding = probe_embedding(&settings.harness.address, preference).await;
+                let (embedding, binding) =
+                    probe_embedding(&settings.harness.address, preference).await;
                 items.retain(|item| item.id != "harness.embedding");
                 items.push(embedding);
+                items.extend(binding);
             }
         }
-        Err(error) => push_failure(&mut items, legacy, &error),
+        Err(error) => {
+            let message = match advertised.as_deref() {
+                Some(detail) => format!("{detail}\n{error}"),
+                None => error,
+            };
+            push_failure(&mut items, legacy, &message);
+        }
     }
     if let Some(legacy_asr) = legacy_asr {
         items.retain(|item| item.id != "harness.asr");
         items.push(legacy_asr);
     }
     items
+}
+
+fn advertised_detail(catalog: &saaa_larm_session::catalog::CatalogProfile) -> Option<String> {
+    let lines = ["llm", "backchannel"]
+        .into_iter()
+        .filter_map(|name| {
+            catalog
+                .provider(name)
+                .map(|provider| format!("{name}: {} · {}", provider.model, provider.endpoint))
+        })
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+async fn advertised_llms(
+    address: &str,
+    preference: &saaa_larm_session::ProfilePreference,
+) -> Option<String> {
+    let saaa_larm_session::ProfilePreference::Variant(variant) = preference else {
+        return None;
+    };
+    let host = crate::providers::service_harness::legacy_dynamic_lan_host(address)
+        .ok()
+        .flatten()?;
+    let base = crate::providers::dynamic_lan::control_base_url(&host).ok()?;
+    let credential = crate::providers::dynamic_lan::credential::load().ok()?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .ok()?;
+    let catalog = tokio::time::timeout(
+        Duration::from_secs(8),
+        saaa_larm_session::catalog::fetch(&client, &base, credential.token(), variant.selector()),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    advertised_detail(&catalog)
 }
 
 fn push_failure(items: &mut Vec<DiagnosisItem>, legacy: bool, message: &str) {
@@ -199,35 +266,68 @@ pub(super) fn items_from_resolution(resolution: &HarnessResolution) -> Vec<Diagn
 async fn probe_embedding(
     address: &str,
     preference: saaa_larm_session::ProfilePreference,
-) -> DiagnosisItem {
-    let probed =
-        tokio::time::timeout(Duration::from_secs(8), request_embedding(address, preference)).await;
-    let (status, message) = match probed {
-        Ok(Ok(())) => (
+) -> (DiagnosisItem, Vec<DiagnosisItem>) {
+    let probed = tokio::time::timeout(
+        Duration::from_secs(8),
+        request_embedding(address, preference),
+    )
+    .await;
+    let (status, message, binding) = match probed {
+        Ok(Ok(binding)) => (
             DiagnosisStatus::Ok,
             "Embedding request returned a vector".to_string(),
+            binding,
         ),
-        Ok(Err(error)) => (DiagnosisStatus::Fail, error),
+        Ok(Err(error)) => (DiagnosisStatus::Fail, error, Vec::new()),
         Err(_) => (
             DiagnosisStatus::Fail,
             "Embedding did not respond within 8s".to_string(),
+            Vec::new(),
         ),
     };
-    item(
-        "harness.embedding",
-        "harness",
-        "Harness embedding",
-        status,
-        DiagnosisSeverity::Degraded,
-        &message,
-        None,
+    (
+        item(
+            "harness.embedding",
+            "harness",
+            "Harness embedding",
+            status,
+            DiagnosisSeverity::Degraded,
+            &message,
+            None,
+        ),
+        binding,
     )
+}
+
+fn binding_items(session: &saaa_larm_session::Session) -> Vec<DiagnosisItem> {
+    let selector = session.selector().unwrap_or("explicit");
+    let revision = session.catalog_revision().unwrap_or("none");
+    vec![
+        item(
+            "harness.larm.selector",
+            "harness",
+            "LARM selector",
+            DiagnosisStatus::Ok,
+            DiagnosisSeverity::Info,
+            selector,
+            None,
+        ),
+        item(
+            "harness.larm.catalog-revision",
+            "harness",
+            "LARM catalog revision",
+            DiagnosisStatus::Ok,
+            DiagnosisSeverity::Info,
+            revision,
+            None,
+        ),
+    ]
 }
 
 async fn request_embedding(
     address: &str,
     preference: saaa_larm_session::ProfilePreference,
-) -> Result<(), String> {
+) -> Result<Vec<DiagnosisItem>, String> {
     let credential = crate::providers::dynamic_lan::credential::load()
         .map_err(|error| error.code().to_string())?;
     let (_stop, cancel) = tokio::sync::watch::channel(false);
@@ -240,11 +340,34 @@ async fn request_embedding(
     )
     .await
     .map_err(|error| error.to_string())?;
+    let mut binding = binding_items(&session);
+    let summary = session.provider_summary().await;
+    for name in ["llm", "backchannel"] {
+        let Some(provider) = summary.iter().find(|provider| provider.name == name) else {
+            continue;
+        };
+        let max_tokens = provider
+            .context_window
+            .map(|window| window.max_tokens.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        binding.push(item(
+            &format!("harness.larm.{name}"),
+            "harness",
+            &format!("LARM {name}"),
+            DiagnosisStatus::Ok,
+            DiagnosisSeverity::Info,
+            &format!(
+                "model={} endpoint={} maxTokens={max_tokens}",
+                provider.model, provider.endpoint
+            ),
+            None,
+        ));
+    }
     let embedded = session.embed_query(&["診断".to_string()]).await;
     let _ = session.close().await;
     let vectors = embedded?;
     if vectors.first().is_some_and(|vector| !vector.is_empty()) {
-        Ok(())
+        Ok(binding)
     } else {
         Err("Embedding response was empty".to_string())
     }
@@ -400,6 +523,40 @@ mod tests {
                 .find(|item| item.id == "harness.llm")
                 .map(|item| item.status),
             Some(DiagnosisStatus::Ok)
+        );
+    }
+
+    #[test]
+    fn advertised_detail_shows_model_and_endpoint() {
+        let catalog = saaa_larm_session::catalog::CatalogProfile {
+            revision: "rev".into(),
+            selector: "SAAA".into(),
+            id: "saaa-conversation-ornith15".into(),
+            providers: vec![
+                saaa_larm_session::catalog::CatalogProvider {
+                    name: "llm".into(),
+                    capability: "llm.general".into(),
+                    protocol: "openai.chat-completions.v1".into(),
+                    endpoint: "/v1/chat/completions".into(),
+                    model: "ornith-1.5-35b".into(),
+                    context_window: None,
+                },
+                saaa_larm_session::catalog::CatalogProvider {
+                    name: "backchannel".into(),
+                    capability: "llm.backchannel.classifier".into(),
+                    protocol: "openai.chat-completions.v1".into(),
+                    endpoint: "/v1/chat/completions".into(),
+                    model: "qwen3.5-2b-fast-response".into(),
+                    context_window: None,
+                },
+            ],
+            services: Vec::new(),
+        };
+        assert_eq!(
+            advertised_detail(&catalog).as_deref(),
+            Some(
+                "llm: ornith-1.5-35b · /v1/chat/completions\nbackchannel: qwen3.5-2b-fast-response · /v1/chat/completions"
+            )
         );
     }
 

@@ -7,6 +7,52 @@ mod fixture;
 use fixture::Fake;
 include!("butler_route_tests.rs");
 #[tokio::test]
+async fn voice_session_restart_keeps_media_variant() {
+    let _environment = crate::test_environment::larm_lock().lock().await;
+    let h = Harness::new();
+    let (fake, server) = Fake::start("butler", "ready", h.fixture.clock.clone()).await;
+    h.state
+        .sqlite_writer
+        .write(|connection| {
+            let mut providers = crate::persistence::load_model_providers(connection)?;
+            providers.harness.address = fake.base.clone();
+            providers.harness.larm_profile = Some("SAAA-w-Image".into());
+            let providers_json =
+                serde_json::to_string(&providers).map_err(|error| error.to_string())?;
+            connection
+                .execute(
+                    "UPDATE settings_documents SET value_json=?1 WHERE namespace='providers.model' AND key='default'",
+                    [providers_json],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .unwrap();
+    let profile = profile::label(&profile::preference(Some("SAAA-w-Image")));
+    for round in 0..2 {
+        let (cancel, _) = watch::channel(false);
+        *OWNER.lock().await = Some(Arc::new(Owner {
+            id: format!("media-variant-{round}"),
+            conversation: crate::PRIMARY_CONVERSATION_ID.into(),
+            base: fake.base.clone(),
+            profile: profile.clone(),
+            cancel,
+            ready: OnceCell::new(),
+            started: AtomicBool::new(false),
+            lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
+            sqlite_writer: h.state.sqlite_writer.clone(),
+        }));
+        current(crate::PRIMARY_CONVERSATION_ID).await.unwrap();
+        end(&format!("media-variant-{round}")).await.unwrap();
+    }
+    assert_eq!(
+        fake.catalog_queries.lock().unwrap().as_slice(),
+        ["profile=SAAA-w-Image", "profile=SAAA-w-Image"]
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn wr_t13_shared_voice_lease_wait_refreshes_actual_http_frame() {
     matrix_case("shared-larm", "initial", false).await;
 }

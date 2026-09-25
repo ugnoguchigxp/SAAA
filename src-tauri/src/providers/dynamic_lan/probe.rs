@@ -56,6 +56,7 @@ pub(crate) async fn reachable_at(base: Url, timeout: Duration) -> bool {
 pub(crate) async fn probe(provider: &crate::DynamicLanProviderSettings) -> Result<String, String> {
     let connection = crate::providers::dynamic_lan::DynamicLanConnection::resolve(
         &provider.host,
+        None,
         Arc::new(RunCancellation::default()),
     )
     .await

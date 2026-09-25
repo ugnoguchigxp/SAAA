@@ -3,6 +3,7 @@
 作成日: 2026-09-24
 状態: 計画確定、未着手
 置き換え対象: `docs/plans/ornith15-butler-migration.md`（音声セッション内の受付経路 `larm_voice/frontdesk*` を前提にしていたため破棄。Profile 選択などの `larm-session` 部分だけ本計画の Phase 1 で引き継ぐ）
+追記（2026-09-25）: LARM の profile selector（`SAAA` / `SAAA-w-Image` / `SAAA-w-music`）への対応と、2 つの LLM を catalog どおりに揃える作業は、第 4 版に改訂した `docs/plans/ornith15-butler-migration.md` で行う。
 
 ## 0. 実装者への指示
 

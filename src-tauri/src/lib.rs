@@ -76,6 +76,10 @@ pub(crate) use runtime::turn_types::*;
 pub(crate) use runtime::turns::{execute_turn, send_runtime_terminal_event};
 pub(crate) use situation::spawn_situation_monitor;
 pub(crate) use util::{database_error, new_id, now_iso, validate_identifier};
+use voice::audio_backend::commands::{
+    audio_backend_status, interrupt_native_voice_playback, start_native_voice_capture,
+    stop_native_voice_capture,
+};
 use voice::streaming_asr::{
     append_voice_asr_audio, commit_voice_asr_utterance, start_voice_asr_session,
     stop_voice_asr_session, AsrSessionManager,
@@ -99,6 +103,10 @@ pub(crate) use window_shutdown_grace::{
     DEFAULT_AGENT_NAME, DEFAULT_DYNAMIC_LAN_HOST, DEFAULT_USER_NAME, DYNAMIC_LAN_PROVIDER_ID,
     PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE,
 };
+
+pub fn run_vpio_probe() -> i32 {
+    voice::audio_backend::run_probe()
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

@@ -30,8 +30,13 @@ name = "harness_llm_diagnostic"
 path = "src/bin/harness_llm_diagnostic.rs"
 required-features = ["provider-diagnostics"]
 
+[[bin]]
+name = "vpio_probe"
+path = "src/bin/vpio_probe.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1"
 
 [dependencies]
 saaa-personal-state-core = { path = "../crates/personal-state-core" }

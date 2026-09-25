@@ -20,7 +20,7 @@ export const jaVoice = {
     automatic: "自動",
     localVad: "ローカルVAD",
     permissionHelp:
-      "マイクボタンまたはこのスイッチをオンにした時だけ、初回のmacOSマイク許可を求めます。取り込み中の場面や応答の読み上げ中は自動的に一時停止し、終了後に再開します。",
+      "マイクボタンまたはこのスイッチをオンにした時だけ、初回のmacOSマイク許可を求めます。VoiceProcessing の AEC を使うときは読み上げ中も取り込みを続け、割り込み発話ができます。他アプリの音量は Min 相当まで下がることがあり、0 にする公開 API はありません。",
     audioDevices: "オーディオデバイス",
     inputDevice: "入力デバイス",
     unavailableDevice: "以前の選択（利用不可）",
@@ -38,6 +38,17 @@ export const jaVoice = {
       "ASRは言語を自動判定します。ここに登録していない言語、または判定できない音声は会話へ送りません。",
     languagesAria: "使用する言語",
     autoSpeak: "応答を音声で再生する",
+    processingTitle: "エコー抑制",
+    aecEnabled: "SAAAの読み上げをマイクから取り除く（macOS VoiceProcessing）",
+    aecHelp:
+      "TTS とマイクを同じ VoiceProcessingIO に通すと、SAAA 自身の声を引き算できます。他アプリの音は確実には消えません。他アプリの音量低下は Min まで下げられ、0 にはできません。",
+    duckingLevel: "他アプリの音量低下",
+    duckingMin: "最小（推奨）",
+    duckingDefault: "標準",
+    duckingMid: "中",
+    duckingMax: "最大",
+    vpioOnBluetooth: "Bluetoothヘッドセットでも VoiceProcessing を使う（音質が下がります）",
+    bargeInEnabled: "読み上げ中の発話で割り込む",
     profile: {
       title: "自分の声プロファイル",
       loadingRuntime: "端末内の話者照合を読み込んでいます…",

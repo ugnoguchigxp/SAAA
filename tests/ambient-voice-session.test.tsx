@@ -54,6 +54,10 @@ const voiceSettings: VoiceSettings = {
   silenceTimeoutMs: 1_500,
   allowedLanguages: ["ja"],
   autoSpeak: true,
+  aecEnabled: true,
+  otherAudioDucking: "min" as const,
+  vpioOnBluetooth: false,
+  bargeInEnabled: true,
 };
 
 const voicePolicy: ConversationVoicePolicySnapshot = {

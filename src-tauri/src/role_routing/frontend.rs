@@ -1,95 +1,59 @@
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Ack {
-    None,
-    Nod,
-    Greeting,
-    Thanks,
-    Working,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Intent {
-    Social,
-    Acknowledgement,
-    Request,
-    Unclear,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FrontendResult {
-    pub ack: Ack,
-    pub intent: Intent,
     pub resolves_turn: bool,
-    pub high_confidence: bool,
+    pub reply: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Raw {
-    ack: String,
-    intent: String,
     resolves_turn: bool,
-    confidence: String,
+    reply: String,
 }
 
-pub(crate) const INSTRUCTION: &str = "あなたは音声受付。返すのは JSON だけ。文章は書かない。\
-相槌・同意なら ack は nod、intent は acknowledgement。\
-挨拶だけなら ack は greeting、intent は social。\
-お礼だけなら ack は thanks、intent は social。\
-依頼・質問なら ack は working、intent は request。\
-判断できないなら ack は none、intent は unclear。\
-resolvesTurn は、挨拶・お礼・相槌だけで返事が完結するときだけ true。\
-自信がなければ confidence は low。";
+pub(crate) const INSTRUCTION: &str = "あなたは音声受付。返すのは JSON だけ。\
+簡単に自分で返せるときは resolvesTurn を true にし、reply に相手の言い方に合わせた返事を一文だけ書く。\
+調べたり考えたりする必要があるときは resolvesTurn を false にし、reply は「少し考えます。」にする。その続きは思考担当が答える。\
+自信がないときも resolvesTurn は false、reply は「少し考えます。」。";
 
 pub(crate) fn parse(raw: &str) -> Result<FrontendResult, &'static str> {
-    let raw: Raw = serde_json::from_str(raw.trim()).map_err(|_| "frontend_invalid")?;
-    let ack = match raw.ack.as_str() {
-        "none" => Ack::None,
-        "nod" => Ack::Nod,
-        "greeting" => Ack::Greeting,
-        "thanks" => Ack::Thanks,
-        "working" => Ack::Working,
-        _ => return Err("frontend_invalid"),
+    let raw = raw.trim();
+    if let Some(result) = parse_object(raw) {
+        return Ok(result);
+    }
+    let Some(start) = raw.find('{') else {
+        return Err("frontend_invalid");
     };
-    let intent = match raw.intent.as_str() {
-        "social" => Intent::Social,
-        "acknowledgement" => Intent::Acknowledgement,
-        "request" => Intent::Request,
-        "unclear" => Intent::Unclear,
-        _ => return Err("frontend_invalid"),
+    let Some(end) = raw.rfind('}') else {
+        return Err("frontend_invalid");
     };
-    let high_confidence = match raw.confidence.as_str() {
-        "high" => true,
-        "low" => false,
-        _ => return Err("frontend_invalid"),
-    };
-    Ok(FrontendResult {
-        ack,
-        intent,
+    if end < start {
+        return Err("frontend_invalid");
+    }
+    parse_object(&raw[start..=end]).ok_or("frontend_invalid")
+}
+
+fn parse_object(raw: &str) -> Option<FrontendResult> {
+    let raw: Raw = serde_json::from_str(raw).ok()?;
+    Some(FrontendResult {
         resolves_turn: raw.resolves_turn,
-        high_confidence,
+        reply: raw.reply,
     })
 }
 
-pub(crate) fn resolves_without_reasoner(result: &FrontendResult, already_greeted: bool) -> bool {
-    result.resolves_turn
-        && result.high_confidence
-        && matches!(result.intent, Intent::Social | Intent::Acknowledgement)
-        && matches!(result.ack, Ack::Nod | Ack::Greeting | Ack::Thanks)
-        && ack_text(result.ack, already_greeted).is_some()
+pub(crate) fn resolves_without_reasoner(result: &FrontendResult) -> bool {
+    result.resolves_turn && spoken_line(result).is_some()
 }
 
-pub(crate) fn ack_text(ack: Ack, already_greeted: bool) -> Option<&'static str> {
-    match ack {
-        Ack::None => None,
-        Ack::Nod => Some("はい。"),
-        Ack::Greeting if already_greeted => None,
-        Ack::Greeting => Some("こんにちは。"),
-        Ack::Thanks => Some("どういたしまして。"),
-        Ack::Working => Some("確認します。"),
+/// The receptionist's own sentence. Empty or multi-line text is not spoken.
+pub(crate) fn spoken_line(result: &FrontendResult) -> Option<String> {
+    let text = result.reply.trim();
+    if text.is_empty() || text.contains('\n') || text.chars().count() > 80 {
+        return None;
     }
+    Some(text.to_string())
 }
 
 #[cfg(test)]
@@ -135,12 +99,10 @@ pub(crate) fn response_format() -> serde_json::Value {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                    "ack": {"type": "string", "enum": ["none", "nod", "greeting", "thanks", "working"]},
-                    "intent": {"type": "string", "enum": ["social", "acknowledgement", "request", "unclear"]},
                     "resolvesTurn": {"type": "boolean"},
-                    "confidence": {"type": "string", "enum": ["high", "low"]}
+                    "reply": {"type": "string"}
                 },
-                "required": ["ack", "intent", "resolvesTurn", "confidence"]
+                "required": ["resolvesTurn", "reply"]
             }
         }
     })
@@ -152,63 +114,45 @@ mod tests {
 
     #[test]
     fn parse_accepts_exact_schema() {
-        let parsed = parse(
-            r#"{"ack":"working","intent":"request","resolvesTurn":false,"confidence":"high"}"#,
-        )
-        .expect("schema");
-        assert_eq!(parsed.ack, Ack::Working);
-        assert_eq!(parsed.intent, Intent::Request);
+        let parsed = parse(r#"{"resolvesTurn":false,"reply":"少し考えます。"}"#).expect("schema");
         assert!(!parsed.resolves_turn);
-        assert!(parsed.high_confidence);
+        assert_eq!(parsed.reply, "少し考えます。");
     }
 
     #[test]
     fn parse_rejects_extra_fields_and_free_text() {
-        assert!(parse(
-            r#"{"ack":"nod","intent":"acknowledgement","resolvesTurn":true,"confidence":"high","extra":1}"#
-        )
-        .is_err());
+        assert!(parse(r#"{"resolvesTurn":true,"reply":"はい。","extra":1}"#).is_err());
         assert!(parse("はい、承知しました").is_err());
     }
 
     #[test]
-    fn ack_text_is_host_owned() {
-        assert_eq!(ack_text(Ack::Nod, false), Some("はい。"));
-        assert_eq!(ack_text(Ack::Greeting, false), Some("こんにちは。"));
-        assert_eq!(ack_text(Ack::Greeting, true), None);
-        assert_eq!(ack_text(Ack::Thanks, false), Some("どういたしまして。"));
-        assert_eq!(ack_text(Ack::Working, false), Some("確認します。"));
-        assert_eq!(ack_text(Ack::None, false), None);
-    }
-
-    #[test]
-    #[test]
-    fn social_ack_resolves_only_when_the_phrase_exists() {
-        let nod = parse(
-            r#"{"ack":"nod","intent":"acknowledgement","resolvesTurn":true,"confidence":"high"}"#,
+    fn simple_reply_finishes_and_handoff_keeps_the_model_sentence() {
+        let simple =
+            parse(r#"{"resolvesTurn":true,"reply":"おはようございます。"}"#).expect("simple");
+        assert_eq!(
+            spoken_line(&simple).as_deref(),
+            Some("おはようございます。")
+        );
+        assert!(resolves_without_reasoner(&simple));
+        let handoff = parse(r#"{"resolvesTurn":false,"reply":"少し考えます。"}"#).expect("handoff");
+        assert_eq!(spoken_line(&handoff).as_deref(), Some("少し考えます。"));
+        assert!(!resolves_without_reasoner(&handoff));
+        let empty = parse(r#"{"resolvesTurn":true,"reply":"  "}"#).expect("empty");
+        assert_eq!(spoken_line(&empty), None);
+        assert!(!resolves_without_reasoner(&empty));
+        let wrapped = parse(
+            "考えます。\n```json\n{\"resolvesTurn\":true,\"reply\":\"おはようございます。\"}\n```",
         )
-        .expect("nod");
-        assert!(resolves_without_reasoner(&nod, false));
-        let request = parse(
-            r#"{"ack":"working","intent":"request","resolvesTurn":true,"confidence":"high"}"#,
-        )
-        .expect("request");
-        assert!(!resolves_without_reasoner(&request, false));
-        let eager = parse(
-            r#"{"ack":"working","intent":"social","resolvesTurn":true,"confidence":"high"}"#,
-        )
-        .expect("eager");
-        assert!(!resolves_without_reasoner(&eager, false));
-        let low = parse(
-            r#"{"ack":"thanks","intent":"social","resolvesTurn":true,"confidence":"low"}"#,
-        )
-        .expect("low");
-        assert!(!resolves_without_reasoner(&low, false));
-        let greeted = parse(
-            r#"{"ack":"greeting","intent":"social","resolvesTurn":true,"confidence":"high"}"#,
-        )
-        .expect("greeting");
-        assert!(!resolves_without_reasoner(&greeted, true));
+        .expect("wrapped");
+        assert_eq!(
+            spoken_line(&wrapped).as_deref(),
+            Some("おはようございます。")
+        );
+        let long = "あ".repeat(81);
+        let too_long =
+            parse(&format!(r#"{{"resolvesTurn":true,"reply":"{long}"}}"#)).expect("long");
+        assert_eq!(spoken_line(&too_long), None);
+        assert!(!resolves_without_reasoner(&too_long));
     }
 
     #[test]

@@ -17,6 +17,8 @@ struct Fake {
     leases: AtomicUsize,
     claim_names: Mutex<Option<Vec<String>>>,
     omit_backchannel_window: AtomicBool,
+    llm_model: Mutex<Option<String>>,
+    backchannel_max_tokens: Mutex<Option<u64>>,
     bad_claim: AtomicBool,
     pending: AtomicBool,
     stale_health: AtomicBool,
@@ -35,26 +37,29 @@ impl Fake {
         let generation = self.generation.load(Ordering::SeqCst);
         let profile = self.profile.lock().unwrap().clone();
         let names = self.claim_names.lock().unwrap().clone().unwrap_or_else(|| {
-            let mut names: Vec<String> = contract::BASE_PROVIDERS
-                .iter()
-                .map(|(name, _)| (*name).to_string())
-                .collect();
-            if profile == contract::CANONICAL_PROFILE {
-                names.push(contract::BACKCHANNEL.0.to_string());
-            }
-            names
+            contract::required_providers()
+                .into_iter()
+                .map(str::to_string)
+                .collect()
         });
         let mut providers = names.into_iter().rev().map(|name| {
             let protocol = contract::accepted_provider(&name).unwrap_or("unknown");
             json!({
             "name":name,"protocol":protocol,
             "baseUrl":format!("{}/{name}/v1",self.base),
-            "model": if name == "llm" && profile == contract::LEGACY_PROFILE { "gemma-4-fixture".to_string() } else { format!("claimed-{name}-{generation}") },
+            "model": if name == "llm" {
+                self.llm_model.lock().unwrap().clone().unwrap_or_else(|| if profile == "saaa-qwen38" { "gemma-4-fixture".to_string() } else { format!("claimed-{name}") })
+            } else { format!("claimed-{name}") },
             "configuration":{"fields":{"baseURL":"http://localhost/ignored","model":"ignored"}},
             "credential":{"token":format!("token-{name}-{generation}")},
             "health":{"url":format!("{}/{name}/health",self.base),"maxAgeMs":10000},
             "contextWindow": if name == "llm" || (name == "backchannel" && !self.omit_backchannel_window.load(Ordering::SeqCst)) {
-                json!({"maxTokens":GEMMA4_KV_TOKENS,"outputReserveTokens":4096,"safetyMarginTokens":1976})
+                let max = if name == "backchannel" {
+                    self.backchannel_max_tokens.lock().unwrap().unwrap_or(GEMMA4_KV_TOKENS)
+                } else {
+                    GEMMA4_KV_TOKENS
+                };
+                json!({"maxTokens":max,"outputReserveTokens":4096,"safetyMarginTokens":1976})
             } else { Value::Null },
             "embeddingSpace": if name == "embedding" { json!({"dimension":384}) } else { Value::Null }
         })}).collect::<Vec<_>>();
@@ -66,7 +71,11 @@ impl Fake {
             }
         }
         if self.bad_claim.load(Ordering::SeqCst) {
-            providers[0]["protocol"] = json!("invalid-protocol");
+            let llm = providers
+                .iter_mut()
+                .find(|provider| provider["name"] == "llm")
+                .unwrap();
+            llm["protocol"] = json!("invalid-protocol");
         }
         let mut value = self.state("ready");
         value["allocationId"] = json!(format!("allocation-{generation}"));
@@ -77,7 +86,10 @@ impl Fake {
 async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
     let path = request.uri().path().to_string();
     let method = request.method().to_string();
-    fake.log.lock().unwrap().push(format!("{method} {path}"));
+    fake.log
+        .lock()
+        .unwrap()
+        .push(format!("{method} {}", request.uri()));
     if path == "/v3/agent-profiles" {
         fake.catalog_gets.fetch_add(1, Ordering::SeqCst);
         return match fake.catalog.lock().unwrap().clone() {
@@ -210,11 +222,16 @@ async fn fixture() -> (Arc<Fake>, tokio::task::JoinHandle<()>) {
         wrong_renew_id: AtomicBool::new(false),
         released: AtomicBool::new(false),
         profile: Mutex::new(String::new()),
-        catalog: Mutex::new(None),
+        catalog: Mutex::new(Some(catalog(&[(
+            "saaa-conversation-ornith15",
+            FIVE,
+        )]))),
         catalog_gets: AtomicUsize::new(0),
         leases: AtomicUsize::new(0),
         claim_names: Mutex::new(None),
         omit_backchannel_window: AtomicBool::new(false),
+        llm_model: Mutex::new(None),
+        backchannel_max_tokens: Mutex::new(None),
     });
     let app = Router::new().fallback(handle).with_state(fake.clone());
     let server = tokio::spawn(async move {
@@ -237,7 +254,7 @@ async fn maps_reordered_providers_and_caches_health_then_releases_once() {
     let session = Session::connect(&fake.base, receiver).await.unwrap();
     for name in contract::BASE_PROVIDERS.iter().map(|(name, _)| *name) {
         let lease = session.acquire(name).await.unwrap();
-        assert_eq!(lease.provider().model, format!("claimed-{name}-0"));
+        assert_eq!(lease.provider().model, format!("claimed-{name}"));
         assert_eq!(lease.provider().token(), format!("token-{name}-0"));
         assert_eq!(lease.allocation_id(), "allocation-0");
         match name {
@@ -470,13 +487,25 @@ async fn health_failure_is_confined_to_the_requested_capability() {
 async fn rejects_duplicate_missing_and_nonlocal_provider_contracts() {
     let (fake, server) = fixture().await;
     let mut value = fake.claim();
-    value["providers"][1] = value["providers"][0].clone();
-    assert!(contract::parse(value, "session-1", &contract::required_providers("")).is_err());
+    let providers = value["providers"].as_array_mut().unwrap();
+    let llm = providers
+        .iter()
+        .find(|provider| provider["name"] == "llm")
+        .unwrap()
+        .clone();
+    providers.push(llm);
+    assert!(contract::parse(value, "session-1", &contract::required_providers()).is_err());
     let mut value = fake.claim();
-    value["providers"][0]["baseUrl"] = json!("https://example.com/v1");
-    assert!(contract::parse(value, "session-1", &contract::required_providers("")).is_err());
+    let llm = value["providers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|provider| provider["name"] == "llm")
+        .unwrap();
+    llm["baseUrl"] = json!("https://example.com/v1");
+    assert!(contract::parse(value, "session-1", &contract::required_providers()).is_err());
     assert!(local_url(
-        &url::Url::parse("http://gnosis.local:9810").unwrap()
+        &url::Url::parse("http://192.168.0.130:9810").unwrap()
     ));
     server.abort();
 }
@@ -574,7 +603,12 @@ async fn claim_requires_the_complete_saaa_provider_set() {
         .unwrap()
         .retain(|p| p["name"] == "llm");
     assert_eq!(
-        contract::parse(value, "session-1", &contract::required_providers(contract::PREVIOUS_DEFAULT_PROFILE)).err(),
+        contract::parse(
+            value,
+            "session-1",
+            &contract::required_providers()
+        )
+        .err(),
         Some("larm_missing_provider")
     );
     server.abort();
@@ -594,7 +628,12 @@ async fn chat_context_window_is_mandatory_and_validated_but_audio_does_not_requi
         .unwrap()
         .remove("contextWindow");
     assert_eq!(
-        contract::parse(missing, "session-1", &contract::required_providers(contract::PREVIOUS_DEFAULT_PROFILE)).err(),
+        contract::parse(
+            missing,
+            "session-1",
+            &contract::required_providers()
+        )
+        .err(),
         Some("larm_missing_context_window")
     );
 
@@ -607,7 +646,12 @@ async fn chat_context_window_is_mandatory_and_validated_but_audio_does_not_requi
         .unwrap();
     chat["contextWindow"]["safetyMarginTokens"] = json!(230400);
     assert_eq!(
-        contract::parse(invalid, "session-1", &contract::required_providers(contract::PREVIOUS_DEFAULT_PROFILE)).err(),
+        contract::parse(
+            invalid,
+            "session-1",
+            &contract::required_providers()
+        )
+        .err(),
         Some("larm_invalid_context_window")
     );
     server.abort();
@@ -625,7 +669,12 @@ async fn embedding_space_is_mandatory_and_validated() {
         .unwrap();
     embedding.as_object_mut().unwrap().remove("embeddingSpace");
     assert_eq!(
-        contract::parse(missing, "session-1", &contract::required_providers(contract::PREVIOUS_DEFAULT_PROFILE)).err(),
+        contract::parse(
+            missing,
+            "session-1",
+            &contract::required_providers()
+        )
+        .err(),
         Some("larm_missing_embedding_space")
     );
 
@@ -638,7 +687,12 @@ async fn embedding_space_is_mandatory_and_validated() {
         .unwrap();
     embedding["embeddingSpace"]["dimension"] = json!(0);
     assert_eq!(
-        contract::parse(invalid, "session-1", &contract::required_providers(contract::PREVIOUS_DEFAULT_PROFILE)).err(),
+        contract::parse(
+            invalid,
+            "session-1",
+            &contract::required_providers()
+        )
+        .err(),
         Some("larm_invalid_embedding_space")
     );
     server.abort();
@@ -664,23 +718,62 @@ async fn audio_request_budget_cannot_outlive_the_pinned_credential() {
     server.abort();
 }
 
+fn provider_decl(name: &str, model: &str, max_tokens: Option<u64>) -> Value {
+    let mut value = json!({
+        "name": name,
+        "capability": match name {
+            "llm" => "llm.general",
+            "backchannel" => "llm.backchannel.classifier",
+            "asr" => "speech.stt",
+            "tts" => "speech.tts",
+            _ => "embedding",
+        },
+        "protocol": contract::accepted_provider(name).unwrap_or("unknown"),
+        "endpoint": format!("/v1/{name}"),
+        "model": model,
+    });
+    if let Some(max_tokens) = max_tokens {
+        value["contextWindow"] = json!({
+            "maxTokens": max_tokens,
+            "outputReserveTokens": 4096,
+            "safetyMarginTokens": 1976
+        });
+    }
+    value
+}
+
 fn catalog(entries: &[(&str, &[&str])]) -> Value {
+    let profiles = entries
+        .iter()
+        .map(|(id, names)| {
+            let providers = names
+                .iter()
+                .map(|name| {
+                    let window = matches!(*name, "llm" | "backchannel").then_some(GEMMA4_KV_TOKENS);
+                    provider_decl(name, &format!("claimed-{name}"), window)
+                })
+                .collect::<Vec<_>>();
+            json!({ "id": id, "providers": providers, "services": [] })
+        })
+        .collect::<Vec<_>>();
     json!({
         "contractVersion": "agent-connection.v3",
-        "profiles": entries.iter().map(|(id, names)| json!({
-            "id": id,
-            "providers": names.iter().map(|name| json!({"name": name})).collect::<Vec<_>>()
-        })).collect::<Vec<_>>()
+        "catalogRevision": "rev-fixture",
+        "requestedProfile": "SAAA",
+        "profiles": profiles
     })
 }
 const FIVE: &[&str] = &["llm", "backchannel", "asr", "tts", "embedding"];
 const FOUR: &[&str] = &["llm", "asr", "tts", "embedding"];
 
-async fn connect_auto(fake: &Fake) -> Result<Arc<Session>, ConnectError> {
+async fn connect_variant(
+    fake: &Fake,
+    variant: ProfileVariant,
+) -> Result<Arc<Session>, ConnectError> {
     let (_stop, receiver) = watch::channel(false);
     Session::connect_with_profile_credential_and_key(
         &fake.base,
-        ProfilePreference::Auto,
+        ProfilePreference::Variant(variant),
         "test-control-token".into(),
         format!("saaa-session-{}", uuid::Uuid::new_v4()),
         receiver,
@@ -688,71 +781,106 @@ async fn connect_auto(fake: &Fake) -> Result<Arc<Session>, ConnectError> {
     .await
 }
 
+fn selector_catalog(selector: &str, services: &[&str]) -> Value {
+    let mut response = catalog(&[("saaa-conversation-ornith15", FIVE)]);
+    response["requestedProfile"] = json!(selector);
+    response["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .for_each(|profile| {
+            profile["services"] = json!(services
+                .iter()
+                .map(|name| json!({
+                    "name": name,
+                    "capability": format!("media.{name}.generate"),
+                    "protocol": "larm.media.v1",
+                    "endpoint": format!("/v1/{name}/generations"),
+                    "model": name
+                }))
+                .collect::<Vec<_>>());
+        });
+    response
+}
+
 #[tokio::test]
-async fn auto_selects_canonical_ornith15_profile() {
+async fn variant_queries_selector_and_creates_returned_id() {
+    for variant in ProfileVariant::ALL {
+        let (fake, server) = fixture().await;
+        let selector = variant.selector();
+        *fake.catalog.lock().unwrap() = Some(selector_catalog(selector, variant_services(variant)));
+        let session = connect_variant(&fake, variant).await.unwrap();
+        assert_eq!(session.profile_id(), "saaa-conversation-ornith15");
+        assert!(fake.log.lock().unwrap().iter().any(|line| {
+            line == &format!("GET /v3/agent-profiles?profile={selector}")
+        }));
+        session.close().await.unwrap();
+        server.abort();
+    }
+}
+
+fn variant_services(variant: ProfileVariant) -> &'static [&'static str] {
+    match variant {
+        ProfileVariant::Conversation => &[],
+        ProfileVariant::Image => &["image"],
+        ProfileVariant::Music => &["music"],
+    }
+}
+
+#[tokio::test]
+async fn selector_mismatch_is_rejected() {
     let (fake, server) = fixture().await;
-    *fake.catalog.lock().unwrap() = Some(catalog(&[
-        (contract::CANONICAL_PROFILE, FIVE),
-        (contract::LEGACY_PROFILE, FOUR),
-        (contract::PREVIOUS_DEFAULT_PROFILE, FOUR),
-    ]));
-    let session = connect_auto(&fake).await.unwrap();
-    assert_eq!(session.profile_id(), contract::CANONICAL_PROFILE);
-    session.close().await.unwrap();
+    let mut response = selector_catalog("SAAA", &[]);
+    response["requestedProfile"] = json!("contextStill");
+    *fake.catalog.lock().unwrap() = Some(response);
+    let error = connect_variant(&fake, ProfileVariant::Conversation)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "larm_catalog_invalid");
+    assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
     server.abort();
 }
 
 #[tokio::test]
-async fn auto_falls_back_to_legacy_only_when_canonical_absent() {
+async fn multiple_profiles_are_rejected() {
     let (fake, server) = fixture().await;
-    *fake.catalog.lock().unwrap() = Some(catalog(&[
-        (contract::LEGACY_PROFILE, FOUR),
-        (contract::PREVIOUS_DEFAULT_PROFILE, FOUR),
-    ]));
-    let session = connect_auto(&fake).await.unwrap();
-    assert_eq!(session.profile_id(), contract::LEGACY_PROFILE);
-    session.close().await.unwrap();
+    *fake.catalog.lock().unwrap() = Some(catalog(&[("first", FIVE), ("second", FIVE)]));
+    let error = connect_variant(&fake, ProfileVariant::Conversation)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "larm_catalog_invalid");
+    assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
     server.abort();
 }
 
 #[tokio::test]
-async fn auto_skips_profile_missing_required_providers() {
+async fn missing_backchannel_in_catalog_is_rejected() {
     let (fake, server) = fixture().await;
-    *fake.catalog.lock().unwrap() = Some(catalog(&[
-        (contract::CANONICAL_PROFILE, &["llm", "backchannel", "asr", "tts"]),
-        (contract::LEGACY_PROFILE, FOUR),
-    ]));
-    let session = connect_auto(&fake).await.unwrap();
-    assert_eq!(session.profile_id(), contract::LEGACY_PROFILE);
-    session.close().await.unwrap();
-    server.abort();
-}
-
-#[tokio::test]
-async fn auto_uses_previous_default_when_only_it_exists() {
-    let (fake, server) = fixture().await;
-    *fake.catalog.lock().unwrap() =
-        Some(catalog(&[(contract::PREVIOUS_DEFAULT_PROFILE, FOUR)]));
-    let session = connect_auto(&fake).await.unwrap();
-    assert_eq!(session.profile_id(), contract::PREVIOUS_DEFAULT_PROFILE);
-    session.close().await.unwrap();
-    server.abort();
-}
-
-#[tokio::test]
-async fn auto_fails_without_any_candidate() {
-    let (fake, server) = fixture().await;
-    *fake.catalog.lock().unwrap() = Some(catalog(&[("other", FOUR)]));
-    let error = connect_auto(&fake).await.err().unwrap();
+    *fake.catalog.lock().unwrap() = Some(catalog(&[("saaa-conversation-ornith15", FOUR)]));
+    let error = connect_variant(&fake, ProfileVariant::Conversation)
+        .await
+        .err()
+        .unwrap();
     assert_eq!(error.to_string(), "larm_profile_unavailable");
     assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
-    assert!(!fake
-        .log
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|line| line.starts_with("POST /v1/agent-connections")));
     server.abort();
+}
+
+#[tokio::test]
+async fn variant_service_mismatch_is_rejected() {
+    for (variant, services) in [
+        (ProfileVariant::Image, &[][..]),
+        (ProfileVariant::Conversation, &["image"][..]),
+    ] {
+        let (fake, server) = fixture().await;
+        *fake.catalog.lock().unwrap() = Some(selector_catalog(variant.selector(), services));
+        let error = connect_variant(&fake, variant).await.err().unwrap();
+        assert_eq!(error.to_string(), "larm_profile_unavailable");
+        assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
 }
 
 #[tokio::test]
@@ -778,10 +906,9 @@ async fn explicit_profile_skips_catalog() {
 async fn legacy_profile_model_comes_from_claim() {
     let (fake, server) = fixture().await;
     let (_stop, receiver) = watch::channel(false);
-    let session =
-        Session::connect_with_profile(&fake.base, contract::LEGACY_PROFILE, receiver)
-            .await
-            .unwrap();
+    let session = Session::connect_with_profile(&fake.base, "saaa-qwen38", receiver)
+        .await
+        .unwrap();
     let lease = session.acquire("llm").await.unwrap();
     assert_eq!(lease.provider().model, "gemma-4-fixture");
     drop(lease);
@@ -846,14 +973,30 @@ async fn canonical_requires_backchannel() {
 }
 
 #[tokio::test]
-async fn legacy_backchannel_is_optional() {
+async fn explicit_profile_requires_backchannel() {
     let (fake, server) = fixture().await;
+    *fake.claim_names.lock().unwrap() = Some(FOUR.iter().map(|name| (*name).to_string()).collect());
     let (_stop, receiver) = watch::channel(false);
-    let session = Session::connect_with_profile(&fake.base, contract::LEGACY_PROFILE, receiver)
-        .await
-        .unwrap();
-    assert!(!session.has_provider("backchannel").await);
-    session.close().await.unwrap();
+    let error = Session::connect_with_profile_credential_and_key(
+        &fake.base,
+        ProfilePreference::Explicit("custom-x".into()),
+        "test-control-token".into(),
+        format!("saaa-session-{}", uuid::Uuid::new_v4()),
+        receiver,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert_eq!(error.to_string(), "larm_missing_provider");
+    assert_eq!(
+        fake.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|line| line.starts_with("DELETE"))
+            .count(),
+        1
+    );
     server.abort();
 }
 
@@ -861,15 +1004,9 @@ async fn legacy_backchannel_is_optional() {
 async fn backchannel_requires_context_window() {
     let (fake, server) = fixture().await;
     fake.omit_backchannel_window.store(true, Ordering::SeqCst);
-    *fake.profile.lock().unwrap() = contract::CANONICAL_PROFILE.into();
     let value = fake.claim();
     assert_eq!(
-        contract::parse(
-            value,
-            "session-1",
-            &contract::required_providers(contract::CANONICAL_PROFILE)
-        )
-        .err(),
+        contract::parse(value, "session-1", &contract::required_providers()).err(),
         Some("larm_missing_context_window")
     );
     server.abort();
@@ -888,5 +1025,186 @@ async fn renew_reclaims_all_five_and_release_leaves_no_lease() {
     session.close().await.unwrap();
     session.close().await.unwrap();
     assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+fn machine_catalog() -> Value {
+    let names = [
+        ("llm", "ornith-1.5-35b", "llm.general", Some(131_072u64)),
+        (
+            "backchannel",
+            "qwen3.5-2b-fast-response",
+            "llm.backchannel.classifier",
+            Some(65_536),
+        ),
+        ("asr", "qwen3-asr-1.7b", "speech.stt", None),
+        ("tts", "voicevox-core", "speech.tts", None),
+        (
+            "embedding",
+            "multilingual-e5-small",
+            "embedding",
+            None,
+        ),
+    ];
+    let providers = names
+        .iter()
+        .map(|(name, model, capability, window)| {
+            let mut provider = provider_decl(name, model, *window);
+            provider["capability"] = json!(capability);
+            provider["endpoint"] = json!(if *name == "embedding" {
+                "/v1/embed"
+            } else if *name == "llm" || *name == "backchannel" {
+                "/v1/chat/completions"
+            } else if *name == "asr" {
+                "/v1/audio/transcriptions"
+            } else {
+                "/v1/audio/speech"
+            });
+            provider
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "contractVersion": "agent-connection.v3",
+        "catalogRevision": "rev-machine",
+        "requestedProfile": "SAAA",
+        "profiles": [{
+            "id": "saaa-conversation-ornith15",
+            "providers": providers,
+            "services": []
+        }]
+    })
+}
+
+#[tokio::test]
+async fn catalog_reads_llm_and_backchannel_details() {
+    let (fake, server) = fixture().await;
+    *fake.catalog.lock().unwrap() = Some(machine_catalog());
+    let client = reqwest::Client::new();
+    let base = url::Url::parse(&format!("{}/", fake.base)).unwrap();
+    let profile = catalog::fetch(&client, &base, "test-control-token", "SAAA")
+        .await
+        .unwrap();
+    let llm = profile.provider("llm").unwrap();
+    assert_eq!(llm.model, "ornith-1.5-35b");
+    assert_eq!(llm.capability, "llm.general");
+    assert_eq!(llm.protocol, "openai.chat-completions.v1");
+    assert_eq!(llm.endpoint, "/v1/chat/completions");
+    let window = llm.context_window.unwrap();
+    assert_eq!(
+        (window.max_tokens, window.output_reserve_tokens, window.safety_margin_tokens),
+        (131_072, 4096, 1976)
+    );
+    let backchannel = profile.provider("backchannel").unwrap();
+    assert_eq!(backchannel.model, "qwen3.5-2b-fast-response");
+    assert_eq!(backchannel.capability, "llm.backchannel.classifier");
+    assert_eq!(backchannel.protocol, "openai.chat-completions.v1");
+    assert_eq!(backchannel.endpoint, "/v1/chat/completions");
+    assert_eq!(backchannel.context_window.unwrap().max_tokens, 65_536);
+    server.abort();
+}
+
+#[tokio::test]
+async fn catalog_missing_model_is_invalid() {
+    let (fake, server) = fixture().await;
+    let mut response = machine_catalog();
+    let backchannel = response["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .flat_map(|profile| profile["providers"].as_array_mut().unwrap())
+        .find(|provider| provider["name"] == "backchannel")
+        .unwrap();
+    backchannel.as_object_mut().unwrap().remove("model");
+    *fake.catalog.lock().unwrap() = Some(response);
+    let client = reqwest::Client::new();
+    let base = url::Url::parse(&format!("{}/", fake.base)).unwrap();
+    let error = catalog::fetch(&client, &base, "test-control-token", "SAAA")
+        .await
+        .unwrap_err();
+    assert_eq!(error, "larm_catalog_invalid");
+    server.abort();
+}
+
+#[tokio::test]
+async fn claim_model_mismatch_is_rejected_and_released() {
+    let (fake, server) = fixture().await;
+    *fake.llm_model.lock().unwrap() = Some("gemma4-e4b".into());
+    let error = connect_variant(&fake, ProfileVariant::Conversation)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "larm_catalog_claim_mismatch");
+    assert_eq!(
+        fake.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|line| line.starts_with("DELETE"))
+            .count(),
+        1
+    );
+    assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn claim_context_window_mismatch_is_rejected() {
+    let (fake, server) = fixture().await;
+    let mut response = catalog(&[("saaa-conversation-ornith15", FIVE)]);
+    let backchannel = response["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .flat_map(|profile| profile["providers"].as_array_mut().unwrap())
+        .find(|provider| provider["name"] == "backchannel")
+        .unwrap();
+    backchannel["contextWindow"]["maxTokens"] = json!(65_536);
+    *fake.catalog.lock().unwrap() = Some(response);
+    *fake.backchannel_max_tokens.lock().unwrap() = Some(230_400);
+    let error = connect_variant(&fake, ProfileVariant::Conversation)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "larm_catalog_claim_mismatch");
+    server.abort();
+}
+
+#[tokio::test]
+async fn renew_reclaim_is_verified_against_catalog() {
+    let (fake, server) = fixture().await;
+    let session = connect_variant(&fake, ProfileVariant::Conversation)
+        .await
+        .unwrap();
+    *fake.llm_model.lock().unwrap() = Some("gemma4-e4b".into());
+    session.snapshot.write().await.as_mut().unwrap().expires_at =
+        chrono::Utc::now() + chrono::Duration::seconds(60);
+    assert!(session.renew_if_due().await.is_err());
+    assert!(session.acquire("llm").await.is_err());
+    assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn provider_summary_exposes_models_without_tokens() {
+    let (fake, server) = fixture().await;
+    let session = connect_variant(&fake, ProfileVariant::Conversation)
+        .await
+        .unwrap();
+    let summary = session.provider_summary().await;
+    assert_eq!(summary.len(), 5);
+    assert_eq!(session.selector(), Some("SAAA"));
+    assert_eq!(session.catalog_revision(), Some("rev-fixture"));
+    let rendered = format!("{summary:?}");
+    assert!(!rendered.contains("token-"));
+    assert!(!rendered.contains("Bearer"));
+    assert!(summary.iter().any(|provider| {
+        provider.name == "llm"
+            && provider.model == "claimed-llm"
+            && provider.endpoint == "/v1/llm"
+    }));
+    assert!(summary.iter().any(|provider| {
+        provider.name == "backchannel" && provider.context_window.unwrap().max_tokens == GEMMA4_KV_TOKENS
+    }));
+    session.close().await.unwrap();
     server.abort();
 }

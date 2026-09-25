@@ -206,6 +206,7 @@ export function ServiceConnectionsSection({
                 })
               }
             />
+            <p className="settings-help">{t("settings.connection.larmProfileHint")}</p>
           </Field>
           <Field label={t("settings.providers.voice")}>
             <input

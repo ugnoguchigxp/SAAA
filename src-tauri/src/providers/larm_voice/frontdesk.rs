@@ -88,10 +88,13 @@ pub(crate) async fn receive_lfm_utterance(
     let previous_assistant = state
         .sqlite_readers
         .read(|connection| repository::latest_assistant(connection, &conversation_id))?;
-    if previous_assistant
-        .as_deref()
-        .is_some_and(|spoken| super::frontdesk_echo::is_self_speech_echo(text.trim(), spoken))
-    {
+    if previous_assistant.as_deref().is_some_and(|spoken| {
+        super::frontdesk_echo::is_self_speech_echo(
+            text.trim(),
+            spoken,
+            crate::voice::audio_backend::aec_is_active(),
+        )
+    }) {
         record(
             &state,
             &conversation_id,

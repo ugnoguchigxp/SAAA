@@ -347,6 +347,54 @@ pub(crate) fn persist_conversation_success_with_state(
     })
 }
 
+/// Closes a turn whose assistant text is already stored. Used when the receptionist
+/// phrase was committed before the run finished, so it is not inserted a second time.
+pub(crate) fn seal_committed_assistant(
+    state: &AppState,
+    input: &StartTurnInput,
+    message: &ConversationMessage,
+    adopt: impl FnOnce(&rusqlite::Connection, &ConversationMessage) -> Result<(), String>,
+) -> Result<(), String> {
+    state.sqlite_writer.write(|connection| {
+        let transaction = connection.transaction().map_err(database_error)?;
+        crate::memory::personal_state::generation::allow_run(&transaction, &input.run_id)?;
+        crate::runtime::butler_loop::append_event(
+            &transaction,
+            &input.conversation_id,
+            Some(&input.run_id),
+            "message_completed",
+            Some(&message.id),
+            None,
+            &message.created_at,
+        )
+        .map_err(database_error)?;
+        crate::runtime::context::scope::attach_output(&transaction, &input.run_id, &message.id)?;
+        adopt(&transaction, message)?;
+        transaction.execute("INSERT OR IGNORE INTO personal_artifacts(generation_id,message_id) SELECT id,?2 FROM personal_generations WHERE run_id=?1 AND output_allowed=1 AND status='succeeded' ORDER BY rowid DESC LIMIT 1",params![input.run_id,message.id]).map_err(database_error)?;
+        transaction
+            .execute(
+                "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+                params![message.created_at, input.conversation_id],
+            )
+            .map_err(database_error)?;
+        let changed = transaction
+            .execute(
+                "UPDATE runtime_runs
+             SET status = 'completed', error_message = NULL, completed_at = ?1
+             WHERE id = ?2 AND status = 'running'",
+                params![now_iso(), input.run_id],
+            )
+            .map_err(database_error)?;
+        if changed != 1 {
+            return Err("Runtime run was already finalized".to_string());
+        }
+        crate::runtime::butler_loop::finish_work(&transaction, &input.run_id, "completed")
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tool_result_outcome_tests {
     use super::tool_result_outcome;

@@ -1,9 +1,10 @@
 impl DynamicLanConnection {
     pub(crate) async fn resolve(
         host: &str,
+        stored_profile: Option<&str>,
         cancellation: Arc<RunCancellation>,
     ) -> Result<Self, DynamicLanError> {
-        Self::resolve_at(control_base_url(host)?, cancellation).await
+        Self::resolve_with_profile(control_base_url(host)?, stored_profile, cancellation).await
     }
 
     #[cfg(test)]
@@ -16,6 +17,14 @@ impl DynamicLanConnection {
 
     async fn resolve_at(
         control_base: Url,
+        cancellation: Arc<RunCancellation>,
+    ) -> Result<Self, DynamicLanError> {
+        Self::resolve_with_profile(control_base, None, cancellation).await
+    }
+
+    async fn resolve_with_profile(
+        control_base: Url,
+        stored_profile: Option<&str>,
         cancellation: Arc<RunCancellation>,
     ) -> Result<Self, DynamicLanError> {
         let control_credential = Some(control_credential()?);
@@ -36,6 +45,7 @@ impl DynamicLanConnection {
                 client.clone(),
                 control_base.clone(),
                 control_credential.clone(),
+                stored_profile,
                 cancellation.clone(),
             )
             .await
@@ -66,24 +76,44 @@ impl DynamicLanConnection {
         client: reqwest::Client,
         control_base: Url,
         control_credential: Option<HeaderValue>,
+        stored_profile: Option<&str>,
         cancellation: Arc<RunCancellation>,
     ) -> Result<Self, DynamicLanError> {
         let control_is_loopback = url_is_loopback(&control_base);
-        let profiles = send_json_response::<AgentProfileCatalog>(
-            &client,
-            Method::GET,
-            control_base
-                .join("v3/agent-profiles")
-                .map_err(contract_error)?,
-            control_credential.as_ref(),
-            None,
-            None,
-            &cancellation,
-        )
-        .await?;
-        validate_config_revision(profiles.config_revision.as_deref())?;
-        let selected_profile = select_default_llm_profile(&profiles.value)?;
-        let audience = select_audience(&profiles.value.audiences)?.to_string();
+        let token = control_token()?;
+        let preference = crate::larm_voice::profile::preference(stored_profile);
+        let selected_profile = match preference {
+            saaa_larm_session::ProfilePreference::Variant(variant) => {
+                let catalog = saaa_larm_session::catalog::fetch(
+                    &client,
+                    &control_base,
+                    &token,
+                    variant.selector(),
+                )
+                .await
+                .map_err(|code| {
+                    DynamicLanError::with_code(
+                        ErrorKind::Contract,
+                        "LARM profile catalog was rejected.",
+                        code,
+                    )
+                })?;
+                selected_llm_from_catalog(&catalog)?
+            }
+            saaa_larm_session::ProfilePreference::Explicit(id) => SelectedLlmProfile {
+                id,
+                capability: String::new(),
+                model: String::new(),
+                protocol: "openai.chat-completions.v1".into(),
+                context_window: ProviderContextWindow {
+                    max_tokens: 1,
+                    output_reserve_tokens: 1,
+                    safety_margin_tokens: 1,
+                },
+                compare_catalog: false,
+            },
+        };
+        let audience = AUDIENCE.to_string();
 
         let idempotency_key = format!("saaa-{}", Uuid::new_v4().simple());
         let create_body = json!({
@@ -288,7 +318,9 @@ impl DynamicLanConnection {
             }
         };
 
-        let context_window = identity.profile.context_window;
+        let context_window = descriptor
+            .context_window
+            .unwrap_or(identity.profile.context_window);
         Ok(Self {
             client,
             control_base,

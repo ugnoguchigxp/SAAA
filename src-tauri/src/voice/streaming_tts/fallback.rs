@@ -136,22 +136,18 @@ pub(super) async fn play_one(
             }
             // Mark before spawning: once playback can start it must never be retried.
             output.store(true, Ordering::Release);
-            let child = crate::voice::cloud_tts::spawn_audio_player(&chunk.path)?;
-            *context
-                .child
-                .lock()
-                .map_err(|_| "Speech child lock unavailable")? = Some(child);
             on_started();
             let slot = context.child.clone();
             let cancellation = context.cancellation.clone();
-            let result = tauri::async_runtime::spawn_blocking(move || {
-                let result = wait_for_child(&slot, &cancellation);
+            let path = chunk.path.clone();
+            let status = tauri::async_runtime::spawn_blocking(move || {
+                let result = play_chunk_audio(&path, &cancellation, &slot);
                 drop(chunk);
                 result
             })
             .await
             .map_err(|_| "Speech worker stopped")??;
-            if result.success() {
+            if status.success() {
                 Ok(())
             } else {
                 Err("TTS playback failed".into())

@@ -14,6 +14,7 @@ import {
   startVoiceAsrSession,
   stopVoiceAsrSession,
 } from "../../lib/voiceAsrRuntime";
+import { interruptNativeVoicePlayback } from "../../lib/audioBackend";
 import { attachAmbientVoiceCapture, resetVoiceActivityDetector } from "./ambientVoiceCapture";
 import { VoiceAsrPacketSender } from "./voiceAsrPacketSender";
 import { projectVoiceAsrEvent } from "./voiceAsrProjection";
@@ -54,6 +55,8 @@ export function createAmbientVoiceCaptureActions(input: {
   voiceActivityUpdatedAtRef: MutableRefObject<number>;
   pendingVoiceDeliveriesRef: MutableRefObject<number>;
   conversationSessionRef: MutableRefObject<ConversationSession>;
+  ttsStartedAtRef: MutableRefObject<number>;
+  stopSpeech: () => Promise<void>;
 }) {
   const {
     voiceStreamRef,
@@ -73,6 +76,8 @@ export function createAmbientVoiceCaptureActions(input: {
     voiceAsrPacketCountRef,
     voiceAsrProjectionRef,
     voiceFinalDeliveryRef,
+    nativeCaptureRef,
+    nativeStopRef,
     disposedRef,
     listeningEnabledRef,
     detachVoiceCapture,
@@ -100,6 +105,8 @@ export function createAmbientVoiceCaptureActions(input: {
     voiceActivityUpdatedAtRef,
     pendingVoiceDeliveriesRef,
     conversationSessionRef,
+    ttsStartedAtRef,
+    stopSpeech,
   } = input;
 
   async function attachVoiceCapture() {
@@ -109,6 +116,7 @@ export function createAmbientVoiceCaptureActions(input: {
       !settings ||
       !selectedConversationIdRef.current ||
       voiceStreamRef.current ||
+      nativeCaptureRef.current ||
       suspensionReasonRef.current
     )
       return;
@@ -195,12 +203,27 @@ export function createAmbientVoiceCaptureActions(input: {
           voiceActivityLevelRef.current = level;
           setVoiceActivityLevel(level);
         },
+        nativeCapture: nativeCaptureRef,
+        nativeStop: nativeStopRef,
+        bargeInEnabled: settings.bargeInEnabled,
+        speechIsPlaying: () => Boolean(conversationSessionRef.current.speechRunId),
+        ttsStartedAtMs: () => ttsStartedAtRef.current,
+        interruptSpeech: () => {
+          void interruptNativeVoicePlayback();
+          void stopSpeech();
+        },
       });
       auditCaptureStarted(
         sessionId,
         selectedConversationIdRef.current,
         voiceSessionRef.current.capture,
       );
+      // applyEvent inside the capture attach moves the ref to "recording". The early
+      // return above narrowed the type before that write, so read it again.
+      const capture = voiceSessionRef.current.capture as VoiceSession["capture"];
+      if (suspensionReasonRef.current && capture === "recording") {
+        await suspendVoice(suspensionReasonRef.current);
+      }
     } catch (cause) {
       auditCaptureFailed(sessionId, voiceAsrConversationsRef.current.get(sessionId) ?? null, cause);
       acceptedVoiceAsrSessionsRef.current.delete(sessionId);
@@ -220,7 +243,13 @@ export function createAmbientVoiceCaptureActions(input: {
       suspensionReasonRef.current = reason;
       return true;
     }
-    if (!voiceStreamRef.current && voiceSessionRef.current.capture !== "starting") return false;
+    // Speech can arrive while the utterance commit or the ASR session start is still
+    // in flight. Detaching there cancels the start. Hold the pause until that work finishes.
+    if (voiceSessionRef.current.finalizing || voiceSessionRef.current.capture === "starting") {
+      suspensionReasonRef.current = reason;
+      return true;
+    }
+    if (!voiceStreamRef.current && !nativeCaptureRef.current) return false;
     suspensionReasonRef.current = reason;
     auditCaptureSuspended(voiceAsrSessionIdRef.current, selectedConversationIdRef.current, reason);
     applyVoiceEvent({ type: "captureSuspended" });
@@ -230,6 +259,10 @@ export function createAmbientVoiceCaptureActions(input: {
 
   async function suspendVoiceForSpeech(speechRunId: string): Promise<boolean> {
     speechResumeTokenRef.current = speechRunId;
+    ttsStartedAtRef.current = performance.now();
+    if (nativeCaptureRef.current && voiceSettingsRef.current?.bargeInEnabled !== false) {
+      return true;
+    }
     return suspendVoice("speech");
   }
 
@@ -308,6 +341,12 @@ export function createAmbientVoiceCaptureActions(input: {
     } finally {
       const pending = voiceSessionRef.current.pendingFinalize;
       applyVoiceEvent({ type: "finalizeCompleted" });
+      if (
+        suspensionReasonRef.current &&
+        voiceSessionRef.current.capture === "recording"
+      ) {
+        await suspendVoice(suspensionReasonRef.current);
+      }
       if (pending) {
         void finishVoiceCapture(pending === "continue");
       } else if (

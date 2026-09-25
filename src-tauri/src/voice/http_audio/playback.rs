@@ -1,6 +1,6 @@
 use super::decode::Format;
+use super::playback_started::Started;
 use crate::RunCancellation;
-use rodio::Source;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -28,6 +28,15 @@ impl Playback {
         let stop = stopped.clone();
         std::thread::spawn(move || {
             let result = (|| {
+                if crate::voice::audio_backend::global().is_capturing() {
+                    return super::playback_vpio::play_through_vpio(
+                        &mut receiver,
+                        &cancellation,
+                        situation.as_ref(),
+                        &stop,
+                        on_started,
+                    );
+                }
                 let (_stream, handle) = rodio::OutputStream::try_default()
                     .map_err(|_| "Could not open the audio output device".to_string())?;
                 let sink = rodio::Sink::try_new(&handle)
@@ -85,42 +94,14 @@ impl Playback {
 impl Drop for Playback {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::Release);
-    }
-}
-struct Started {
-    source: rodio::buffer::SamplesBuffer<i16>,
-    callback: Option<Box<dyn FnOnce() + Send>>,
-}
-impl Iterator for Started {
-    type Item = i16;
-    fn next(&mut self) -> Option<i16> {
-        let sample = self.source.next();
-        if sample.is_some() {
-            if let Some(callback) = self.callback.take() {
-                callback();
-            }
-        }
-        sample
-    }
-}
-impl Source for Started {
-    fn current_frame_len(&self) -> Option<usize> {
-        self.source.current_frame_len()
-    }
-    fn channels(&self) -> u16 {
-        self.source.channels()
-    }
-    fn sample_rate(&self) -> u32 {
-        self.source.sample_rate()
-    }
-    fn total_duration(&self) -> Option<Duration> {
-        self.source.total_duration()
+        crate::voice::audio_backend::global().interrupt_playback();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rodio::Source;
     use std::sync::atomic::AtomicBool;
     impl Playback {
         #[cfg(test)]

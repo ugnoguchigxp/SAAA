@@ -187,6 +187,7 @@
   color: #b7c6d6;
   font-size: 13px;
   line-height: 1.45;
+  white-space: pre-line;
 }
 
 .diagnosis-stage-success {

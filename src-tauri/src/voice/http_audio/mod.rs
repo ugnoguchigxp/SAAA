@@ -6,6 +6,8 @@ pub(crate) mod decode;
 #[cfg(all(test, not(coverage)))]
 mod live;
 mod playback;
+mod playback_started;
+mod playback_vpio;
 mod timeout_tests;
 
 mod requests;

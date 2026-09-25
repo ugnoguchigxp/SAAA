@@ -2,10 +2,27 @@ use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(coverage)");
+    compile_macos_vpio();
     stage_codex_runtime();
     stage_role_routing_codex_sidecar();
     stage_web_fetch_runtime();
     tauri_build::build()
+}
+
+fn compile_macos_vpio() {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("target OS");
+    if target_os != "macos" {
+        return;
+    }
+    println!("cargo:rerun-if-changed=native/macos_vpio.c");
+    println!("cargo:rerun-if-changed=native/macos_vpio.h");
+    cc::Build::new()
+        .file("native/macos_vpio.c")
+        .flag("-Wno-unused-parameter")
+        .compile("saaa_macos_vpio");
+    println!("cargo:rustc-link-lib=framework=AudioToolbox");
+    println!("cargo:rustc-link-lib=framework=AudioUnit");
+    println!("cargo:rustc-link-lib=framework=CoreAudio");
 }
 
 fn stage_codex_runtime() {

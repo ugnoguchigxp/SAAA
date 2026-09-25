@@ -25,6 +25,7 @@ import {
 import { resetVoiceActivityDetector } from "./ambientVoiceCapture";
 import { initialVoiceAsrProjection } from "./voiceAsrProjection";
 import { microphoneCaptureConstraints, requestMicrophoneStream } from "../../lib/microphone";
+import { audioBackendStatus, nativeCapturePreferred } from "../../lib/audioBackend";
 import { withTimeout } from "../../lib/promiseTimeout";
 import {
   auditVoicePreflightFailed,
@@ -71,6 +72,7 @@ export function useAmbientVoiceSession({
   const voiceToggleGenerationRef = useRef(0);
   const suspensionReasonRef = useRef<SuspensionReason | null>(null);
   const speechResumeTokenRef = useRef<string | null>(null);
+  const ttsStartedAtRef = useRef(0);
   const [resources] = useState(() => new VoiceCaptureResources());
   const {
     voiceStreamRef,
@@ -80,6 +82,7 @@ export function useAmbientVoiceSession({
     voiceAsrConversationsRef,
     voiceAsrProjectionRef,
     voiceFinalDeliveryRef,
+    nativeCaptureRef,
     disposedRef,
     listeningEnabledRef,
     detachVoiceCapture,
@@ -142,6 +145,8 @@ export function useAmbientVoiceSession({
       voiceActivityUpdatedAtRef,
       pendingVoiceDeliveriesRef,
       conversationSessionRef,
+      ttsStartedAtRef,
+      stopSpeech,
     });
   const attachVoiceCaptureCommitted = useCommittedCallback(attachVoiceCapture);
   useEffect(() => {
@@ -217,7 +222,7 @@ export function useAmbientVoiceSession({
         situationHold: voicePolicy?.speechReasonCode === "situation_hold",
         speechRunId: conversationSessionRef.current.speechRunId,
         capture: voiceSessionRef.current.capture,
-        hasStream: Boolean(voiceStreamRef.current),
+        hasStream: Boolean(voiceStreamRef.current || nativeCaptureRef.current),
         actionInProgress: voiceSession.actionInProgress,
       })
     )
@@ -283,15 +288,30 @@ export function useAmbientVoiceSession({
         )
           return;
       }
-      const permissionStream = await withTimeout(
-        requestMicrophoneStream(
-          microphoneCaptureConstraints(voiceSettingsRef.current.inputDeviceId),
-        ),
-        30_000,
-        "microphone-startup-timeout",
-        (lateStream) => lateStream.getTracks().forEach((track) => track.stop()),
-      );
-      permissionStream.getTracks().forEach((track) => track.stop());
+      let skipGetUserMedia = false;
+      try {
+        const status = await audioBackendStatus();
+        skipGetUserMedia = nativeCapturePreferred(
+          status,
+          voiceSettingsRef.current.aecEnabled,
+        );
+      } catch {
+        skipGetUserMedia = false;
+      }
+      if (!skipGetUserMedia) {
+        const permissionStream = await withTimeout(
+          requestMicrophoneStream(
+            microphoneCaptureConstraints(
+              voiceSettingsRef.current.inputDeviceId,
+              voiceSettingsRef.current.aecEnabled,
+            ),
+          ),
+          30_000,
+          "microphone-startup-timeout",
+          (lateStream) => lateStream.getTracks().forEach((track) => track.stop()),
+        );
+        permissionStream.getTracks().forEach((track) => track.stop());
+      }
       if (generation !== voiceToggleGenerationRef.current || !listeningEnabledRef.current) return;
       await persistListeningEnabled(true);
       persistedEnabled = true;

@@ -53,7 +53,7 @@ use tauri::Manager;
 pub(crate) const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 pub(crate) const DYNAMIC_LAN_PROVIDER_ID: &str = "lan-llm-dynamic";
 pub(crate) const QWEN_DIRECT_PROVIDER_ID: &str = "lan-qwen-direct";
-pub(crate) const DEFAULT_DYNAMIC_LAN_HOST: &str = "gnosis.local";
+pub(crate) const DEFAULT_DYNAMIC_LAN_HOST: &str = "192.168.0.130";
 pub(crate) const DEFAULT_AGENT_NAME: &str = "SAAA";
 pub(crate) const DEFAULT_USER_NAME: &str = "";
 pub(crate) const PRIMARY_CONVERSATION_ID: &str = "conversation_primary";
@@ -202,7 +202,7 @@ pub(super) async fn test_model_provider(
 pub(super) async fn resolve_service_harness(
     address: String,
 ) -> Result<crate::providers::service_harness::HarnessResolution, String> {
-    crate::providers::service_harness::resolve_with_legacy_llm(&address).await
+    crate::providers::service_harness::resolve_with_legacy_llm(&address, None).await
 }
 #[tauri::command]
 pub(super) fn set_provider_api_key(

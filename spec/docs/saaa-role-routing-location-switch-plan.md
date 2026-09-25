@@ -112,7 +112,7 @@ pub(crate) async fn reachable(host: &str, timeout: std::time::Duration) -> bool
 1. `src-tauri/src/providers/dynamic_lan/urls.rs` の `control_base_url(host)` と、`mod.d/02.rs` の `resolve_once` が state 取得に使っている URL 組立て関数を再利用する(関数名は `urls.rs` を開いて確認。`state` を含む名前)。
 2. `reqwest::Client::builder().connect_timeout(timeout).timeout(timeout).no_proxy().redirect(none)` で GET。
 3. 認証ヘッダは `resolve_at` と同じ `control_credential()` を付ける(`auth.rs`)。付けないと 401 になり到達しているのに false になる。
-4. `2xx` なら true。それ以外(タイムアウト、DNS 失敗、`gnosis.local` 解決不能、5xx)は false。エラー種別のログは `tracing::debug!` に留める。
+4. `2xx` なら true。それ以外(タイムアウト、DNS 失敗、5xx)は false。エラー種別のログは `tracing::debug!` に留める。
 
 テスト: `mod.d/04.rs` の fixture(`resolve_world_fixture` が使う `Url` ベース)に合わせ、`reachable_at(base: Url, ...)` を `#[cfg(test)]` で公開し、モックサーバーで 200 → true、接続拒否 → false を確認する。
 

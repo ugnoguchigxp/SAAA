@@ -31,13 +31,18 @@ export class MicrophoneCaptureError extends Error {
   }
 }
 
-export function microphoneCaptureConstraints(inputDeviceId = "default"): MediaTrackConstraints {
-  return {
+export function microphoneCaptureConstraints(
+  inputDeviceId = "default",
+  echoCancellation = true,
+): MediaTrackConstraints {
+  const audio: MediaTrackConstraints = {
     autoGainControl: false,
     echoCancellation: true,
     noiseSuppression: false,
     ...(inputDeviceId === "default" ? {} : { deviceId: { exact: inputDeviceId } }),
   };
+  if (!echoCancellation) audio.echoCancellation = false;
+  return audio;
 }
 
 export async function requestMicrophoneStream(

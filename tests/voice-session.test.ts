@@ -26,7 +26,7 @@ describe("voice session state machine", () => {
     expect(voiceCaptureState(recording, true)).toBe("listening");
     expect(voiceSessionBusy(recording)).toBe(true);
     const suspended = transitionVoiceSession(recording, { type: "captureSuspended" });
-    expect(voiceCaptureState(suspended, true)).toBe("preparing");
+    expect(voiceCaptureState(suspended, true)).toBe("listening");
     expect(voiceSessionBusy(suspended)).toBe(true);
     const starting = transitionVoiceSession(initialVoiceSession, { type: "captureStarting" });
     expect(transitionVoiceSession(starting, { type: "captureSuspended" }).capture).toBe(

@@ -1,5 +1,4 @@
 pub(crate) const CONTROL_PORT: u16 = 9810;
-pub(crate) const AGENT_PROFILE: &str = "saaa-qwen38";
 pub(crate) const AUDIENCE: &str = "saaa-desktop";
 const API_TOKEN_ENV: &str = "LARM_API_TOKEN";
 const CLIENT_ID: &str = "saaa-desktop";
@@ -71,7 +70,9 @@ struct SelectedLlmProfile {
     id: String,
     capability: String,
     model: String,
+    protocol: String,
     context_window: ProviderContextWindow,
+    compare_catalog: bool,
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,6 +133,8 @@ struct ProviderDescriptor {
     port: u16,
     base_url: String,
     model: String,
+    #[serde(default)]
+    context_window: Option<ProviderContextWindow>,
     health: ProviderHealthDescriptor,
     #[serde(default)]
     credential: Option<ProviderCredential>,

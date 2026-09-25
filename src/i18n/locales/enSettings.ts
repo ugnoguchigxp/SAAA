@@ -134,6 +134,10 @@ export const enSettings = {
         "The configured LARM_API_TOKEN is invalid or was rejected by Agent Connection. Check the secure credential configuration.",
       agentConnectionAuthorizationRejected:
         "Agent Connection rejected the request. Securely configure a valid LARM_API_TOKEN.",
+      agentConnectionCatalogMismatch:
+        "The LARM profile does not match the model that was actually assigned. Reconnect after restarting LARM.",
+      larmProfileHint:
+        "The default is SAAA. SAAA-w-Image and SAAA-w-music can also be entered. Older profile IDs are treated as SAAA.",
       sourcesTitle: "Service sources",
       sourcesDescription:
         "Choose the Harness or an individual provider for each of LLM, ASR, and TTS. No implicit switching occurs.",

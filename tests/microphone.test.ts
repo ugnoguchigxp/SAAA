@@ -32,6 +32,11 @@ describe("microphone capture", () => {
       noiseSuppression: false,
       deviceId: { exact: "microphone-a" },
     });
+    expect(microphoneCaptureConstraints("default", false)).toEqual({
+      autoGainControl: false,
+      echoCancellation: false,
+      noiseSuppression: false,
+    });
   });
 
   test("reports a build/API problem before requesting permission", async () => {

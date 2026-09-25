@@ -20,7 +20,7 @@ export const enVoice = {
     automatic: "Automatic",
     localVad: "Local VAD",
     permissionHelp:
-      "SAAA asks for macOS microphone permission only when you enable this switch or press the microphone button. Listening pauses during a busy scene and response playback, then resumes automatically.",
+      "SAAA asks for macOS microphone permission only when you enable this switch or press the microphone button. With VoiceProcessing AEC, listening stays open during speech so you can interrupt. Other apps may still be ducked slightly (Min); macOS has no public way to set ducking to zero.",
     audioDevices: "Audio devices",
     inputDevice: "Input device",
     unavailableDevice: "Previously selected (unavailable)",
@@ -38,6 +38,17 @@ export const enVoice = {
       "ASR detects the language automatically. Audio in unselected or undetectable languages is not sent to conversations.",
     languagesAria: "Allowed languages",
     autoSpeak: "Play responses as speech",
+    processingTitle: "Echo cancellation",
+    aecEnabled: "Cancel SAAA speech in the microphone (macOS VoiceProcessing)",
+    aecHelp:
+      "TTS and the microphone share one VoiceProcessingIO unit so SAAA’s own speech can be subtracted. Other apps cannot be cancelled reliably. Ducking can only be reduced to Min, not zero.",
+    duckingLevel: "Other-app ducking",
+    duckingMin: "Min (recommended)",
+    duckingDefault: "Default",
+    duckingMid: "Medium",
+    duckingMax: "Maximum",
+    vpioOnBluetooth: "Use VoiceProcessing on Bluetooth headsets (lowers output quality)",
+    bargeInEnabled: "Allow interrupting spoken replies",
     profile: {
       title: "My voice profile",
       loadingRuntime: "Loading local speaker verification…",

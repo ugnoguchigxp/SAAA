@@ -244,7 +244,11 @@ pub(crate) fn migrated_voice_document(value: &Value, require_fresh_consent: bool
         "vadSensitivity": value.get("vadSensitivity").and_then(Value::as_str).unwrap_or("medium"),
         "silenceTimeoutMs": value.get("silenceTimeoutMs").and_then(Value::as_u64).unwrap_or(1500),
         "allowedLanguages": value.get("allowedLanguages").cloned().unwrap_or_else(|| json!([crate::voice::language::DEFAULT_LANGUAGE_CODE])),
-        "autoSpeak": value.get("autoSpeak").and_then(Value::as_bool).unwrap_or(true)
+        "autoSpeak": value.get("autoSpeak").and_then(Value::as_bool).unwrap_or(true),
+        "aecEnabled": value.get("aecEnabled").and_then(Value::as_bool).unwrap_or(true),
+        "otherAudioDucking": value.get("otherAudioDucking").and_then(Value::as_str).unwrap_or("min"),
+        "vpioOnBluetooth": value.get("vpioOnBluetooth").and_then(Value::as_bool).unwrap_or(false),
+        "bargeInEnabled": value.get("bargeInEnabled").and_then(Value::as_bool).unwrap_or(true)
     })
 }
 pub(crate) fn migrate_security_document(value: &mut Value) {

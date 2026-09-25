@@ -42,7 +42,7 @@
   </ul>
   <h2 id="larm-session-contract">LARM接続契約（2026-09-12受領）</h2>
   <p>
-    今後の接続実装は以下を正とする。接続先は<code>http://gnosis.local:9810</code>。
+    今後の接続実装は以下を正とする。接続先は<code>http://192.168.0.130:9810</code>。
     ユーザー提供のLARMリリース識別子は<code>be5e86272165f4e13e69f4da204b1425486c6070</code>。 4
     Provider同時readyと解放後のtoken失効はLARM側の報告であり、SAAA側の実接続検証は未実施。
   </p>
@@ -150,7 +150,7 @@
   <h2 id="larm-mode-setup">LARMモードの起動と所有期間</h2>
   <pre><code class="language-bash">SAAA_CONVERSATION_REASONING_MODE=larm bun run start</code></pre>
   <p>
-    接続先の既定値はgnosis.local:9810。必要なら<code>SAAA_LARM_CONTROL_URL</code>でローカルの制御APIを指定する。
+    接続先の既定値は192.168.0.130:9810。必要なら<code>SAAA_LARM_CONTROL_URL</code>でローカルの制御APIを指定する。
     接続URL・モデル・Provider
     tokenを個別に環境変数へ設定する必要はない。モデルと認証はclaim値のみを使う。
     新モードはopt-inで、既定のoffと既存のテキスト会話経路は維持する。
@@ -192,7 +192,7 @@
   <p>
     検証: 接続管理fixture 11件、LARM
     claimからMCP回答までの結合テスト、音声ownerの競合・再試行7件、終了待機3件を追加。
-    2026-09-12の実接続試行はgnosis.localの名前解決で失敗し、Connection作成に到達していない。
+    2026-09-12の実接続試行はConnection作成に到達していない。
     再試行は<code>cargo test --manifest-path crates/larm-session/Cargo.toml --test live -- --ignored --nocapture</code>。 このテストは4
     Providerへの要求、TTS音声のASRへの再入力、release後401を確認し、要求失敗時もreleaseを実行する。
     スピーカー・マイクの音響遅延を測るテストではない。
@@ -337,7 +337,7 @@ bun run desktop:smoke</code></pre>
     接続管理11件、共有契約3件、Service
     6件と各crateのClippyを確認した。build、desktop:smoke、spec:checkも成功。
     buildには既存の500kB超chunk警告が残る。ビルドとcheckの並行実行では成果物が競合したため、最終checkは単独で再実行している。
-    確認した範囲で未修正のコード指摘はない。gnosis.localの名前解決、実ProviderのJSON
+    確認した範囲で未修正のコード指摘はない。実ProviderのJSON
     Schema対応、実音響・長時間運転は引き続き実機での検証対象。
   </p>
   <ul>

@@ -12,13 +12,13 @@ import providerCases from "./fixtures/provider-validation.json";
 describe("settings regressions", () => {
   test("defaults LARM to the LAN Gemma conversation profile", () => {
     expect(defaultSettingsDraft.providers.harness).toEqual({
-      address: "http://gnosis.local:9810",
-      larmProfile: "saaa-conversation-gemma4",
+      address: "http://192.168.0.130:9810",
+      larmProfile: "SAAA",
     });
     const dynamicLan = defaultSettingsDraft.providers.providers.find(
       (provider) => provider.kind === "dynamic-lan",
     );
-    expect(dynamicLan?.host).toBe("gnosis.local");
+    expect(dynamicLan?.host).toBe("192.168.0.130");
   });
 
   test("matches the shared provider endpoint contract", () => {

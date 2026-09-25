@@ -14,7 +14,7 @@ pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
             let mut cached = SESSION.lock().await;
             if cached.is_none() {
                 let base = std::env::var("SAAA_LARM_CONTROL_URL")
-                    .unwrap_or_else(|_| "http://gnosis.local:9810".into());
+                    .unwrap_or_else(|_| "http://192.168.0.130:9810".into());
                 let (_alive, rx) = watch::channel(false);
                 // Keep the sender alive for the entire creation handshake.
                 let credential = crate::providers::dynamic_lan::credential::load()

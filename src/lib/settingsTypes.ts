@@ -153,6 +153,8 @@ export type VoiceSettings = {
   silenceTimeoutMs: number;
   allowedLanguages: AsrLanguageCode[];
   autoSpeak: boolean;
+  aecEnabled: boolean; otherAudioDucking: "default" | "min" | "mid" | "max";
+  vpioOnBluetooth: boolean; bargeInEnabled: boolean;
 };
 
 export type SecuritySettings = { localOnlyWhenSelected: boolean; diagnosticsRedaction: boolean };

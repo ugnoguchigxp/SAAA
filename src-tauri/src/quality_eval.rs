@@ -169,6 +169,9 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
                 document.value_json["agentName"] = json!("SAAA Eval Agent");
                 document.value_json["userName"] = json!("");
             }
+            ("routing.roles", "default") => {
+                document.value_json["enabled"] = json!(false);
+            }
             ("routing.tasks", "default") => {
                 document.value_json["conversationRespond"] = json!({
                     "source": "provider",

@@ -3,8 +3,8 @@ import { DEFAULT_CONVERSATION_TIMEOUT_MS } from "../../lib/conversationTimeout";
 import { defaultRoleRouting } from "./settingsRoleRouting";
 
 export const DEFAULT_AGENT_NAME = "SAAA";
-const DEFAULT_DYNAMIC_LAN_HOST = "gnosis.local";
-export const DEFAULT_LARM_PROFILE = "saaa-conversation-gemma4";
+const DEFAULT_DYNAMIC_LAN_HOST = "192.168.0.130";
+export const DEFAULT_LARM_PROFILE = "SAAA";
 const DYNAMIC_LAN_PROVIDER_ID = "lan-llm-dynamic";
 
 export const defaultSettingsDraft: SettingsDraft = {
@@ -72,6 +72,10 @@ export const defaultSettingsDraft: SettingsDraft = {
     silenceTimeoutMs: 1_500,
     allowedLanguages: ["ja"],
     autoSpeak: true,
+    aecEnabled: true,
+    otherAudioDucking: "min",
+    vpioOnBluetooth: false,
+    bargeInEnabled: true,
   },
   security: {
     localOnlyWhenSelected: true,

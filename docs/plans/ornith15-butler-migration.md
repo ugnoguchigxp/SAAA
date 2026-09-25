@@ -1,648 +1,398 @@
-# Ornith 1.5 35B + Qwen 3.5 2B 執事エージェント移行 実装計画
+# Ornith 1.5 35B + Qwen 3.5 2B 執事応答 実装計画（LARM selector 対応版）
 
-> **この計画は破棄済み。** 受付を `larm_voice/frontdesk*` に実装する前提だったが、その経路は現在の UI から到達しない（音声は通常ターンとして Role Routing を通る）。後継は `docs/plans/saaa-butler-role-routing.md`。
-
-作成日: 2026-09-24（LARM 対応完了報告を反映した第 3 版）
+作成日: 2026-09-24（第 3 版）／改訂: 2026-09-25（第 4 版。LARM の profile selector に合わせて全面改訂）
 状態: 計画確定、未着手
+関連: `docs/plans/saaa-butler-role-routing.md`（Role Routing による受付 → 思考の実装。Stage 1 は実装済み。本計画はその上で「LARM から借りる 2 つの LLM を正しく揃える」部分を担当する）
 
 ## 0. 実装者への指示
 
-- Phase 1 から順に実装する。各 Phase の手順を上から順に行い、チェックポイントのコマンドが通るまで次の Phase に進まない。
+- Phase を順番に実装する。各 Phase のチェックポイントが通るまで次に進まない。
 - 「決定事項」の値と名前はそのまま使う。書かれていない設計判断が必要になったら、実装を止めて質問する。
 - 「やらないこと」に書かれた操作はしない。
-- 作業ツリーには本件と関係のない未コミット変更（`tool_selection/**`、`artifact_preview/**`、`chat_completions/mod.rs`、`voice_progress.rs` など）がある。それらの差分は触らない。Phase ごとにブランチを切り、この文書に列挙したファイルだけを stage する（`git add -p` で自分の hunk だけを選ぶ）。
-- 行番号は 2026-09-24 時点のもの。ずれていたら、示した関数名や文字列で検索する。
+- 作業ツリーには本件と関係のない未コミット変更がある。触らない。コミットは Phase ごとに、この文書に列挙したファイルだけを `git add -p` で選ぶ。
+- 行番号は 2026-09-25 時点。ずれていたら関数名や文字列で検索する。
+- **完了の根拠は、会話ターンの入口（`execute_conversation_turn_with_candidates`）から通すテストだけにする**（`saaa-butler-role-routing.md` 0.1 と同じ）。新しく書いた関数を直接呼ぶ単体テストは補助。
+- 凍結対象（`critical-path-freeze.json` の ASR / initial-response）に触れる Phase では、AGENTS.md の回帰テストを実行し、`bun run freeze:accept:<domain> --reason "..."` で該当 domain だけを更新する。**`freeze:check` は 2026-09-25 時点で、本件と無関係な 3 ファイル（`role_routing/schema.rs`、`conversation_provider_route.d/01.rs`、`conversation_turn.rs`）の差分により失敗している。** Phase 1 の前に、この差分の持ち主と承認方法をユーザーに確認する。
 
-### 実施順序
+### 0.1 これまでの経緯（なぜ 2 つの LLM が噛み合わなかったか）
 
-最初のゴールは「Qwen 2B が受付し、必要なときに Ornith へ引き継いで、2 つの LLM でユーザーの依頼に応える」状態にすること。そのため Stage 1 だけを先に実装し、完了してから Stage 2 に進む。
-
-| Stage | Phase | 内容 | この Stage での扱い |
-|---|---|---|---|
-| 1 | Phase 1 | `larm-session` で canonical を選び、`backchannel` を含む 5 Provider を claim する | 全部実施 |
-| 1 | Phase 3 | Qwen 2B の受付と、Ornith への昇格 | 全部実施。ただし手順 3 の `first_visible_at` は実装しない（Stage 2 の Phase 5 で追加） |
-| 1 | Phase 4 | 音声会話の Ornith と受付に `enable_thinking=false` を付ける | 全部実施 |
-| 2 | Phase 6 | Qwen 2B の Tool 候補を Ornith に渡す | Stage 1 完了後 |
-| 2 | Phase 5 | TTFT などの計測 | Stage 1 完了後 |
-| 2 | Phase 2 | テキスト会話経路（`dynamic_lan`）の Profile 選択 | Stage 1 完了後 |
-| 2 | Phase 7 | 既定値の整理 | 最後 |
-
-Stage 1 では、14 章のテストのうち #1〜#9 の音声経路（`larm-session` と `larm_voice`）の分だけを対象にする。`text_path_*` のテストと #10（TTFT）は Stage 2 で追加する。
-
-Stage 1 の完了条件:
-
-- Phase 1、3、4 のチェックポイントがすべて通る。
-- `world_tests.rs` に次の通しテスト `butler_turn_escalates_from_backchannel_to_ornith` を追加し、通る。
-  - fixture の LARM は 5 Provider を返す。
-  - 1 発言目「なるほど」: `backchannel` だけが呼ばれ、定型文「なるほど。」を返す。`llm` は呼ばれない。
-  - 2 発言目「明日の予定を確認して、空いている時間に会議を入れて」: `backchannel` が `delegate` を返し、`think == true` になる。その後の会話本体の request が `llm` に届き、body に `enable_thinking: false` が入っている。
-  - 3 発言目: `backchannel` が不正な JSON を返しても、同じく `llm` に引き継がれる。
-  - 会話 session を閉じると、fixture の lease カウンタが 0 に戻る。
+- LARM 側で、Ornith（`llm`）と Qwen 2B（`backchannel`）が 1 つの Profile に揃っていなかった。`backchannel` は `saaa-backchannel-default` など別 Profile にあり、canonical Profile は本番に存在しなかった。
+- SAAA は Profile ID の固定リスト（`saaa-conversation-ornith15` → `saaa-qwen38` → `saaa-conversation-gemma4`）から自動選択していたため、どの Profile が選ばれるかで `backchannel` の有無と `llm` のモデルが変わっていた。
+- 2026-09-25、LARM に consumer selector（`SAAA`、`SAAA-w-Image`、`SAAA-w-music`）が入り、1 回の問い合わせで「SAAA 用の 5 Provider が揃った具体 Profile」を 1 件だけ返すようになった。本計画はこれを唯一の入口にする。
 
 ## 1. 目的
 
-LARM の Agent Profile `saaa-conversation-ornith15` へ SAAA を移行し、次の分担の執事エージェントにする。
+1. LARM の profile 問い合わせ（`GET /v3/agent-profiles?profile=SAAA`）の結果を、SAAA が使う 2 つの LLM の構成として正しく反映する。
+   - 受付（role `frontend`）: `backchannel` = Qwen 3.5 2B
+   - 思考（role `reasoner`）: `llm` = Ornith 1.5 35B
+2. 音声・テキストのどちらの会話でも、思考は Ornith 1.5 35B に届く。
+3. catalog が宣言した LLM と、claim で実際に借りた LLM が食い違ったら、黙って別モデルで動かずに失敗する。
 
-- 一次受付: Qwen 3.5 2B（Provider 名 `backchannel`）。相槌、発話継続判定、単純な意図分類、単一の低リスク Tool 候補の提示。
-- 思考・Tool use・メモリー・world model・最終回答: Ornith 1.5 35B（Provider 名 `llm`）。
+## 2. LARM の仕様（2026-09-25 実機確認済み）
 
-## 2. LARM 側の状態（2026-09-24 報告）
+接続先: `http://192.168.0.130:9810`（保存済み Harness address）。確認に使った操作は `GET /v3/agent-profiles` と `GET /openapi.json` だけで、Connection は作っていない。
 
-| 項目 | 内容 |
-|---|---|
-| canonical Profile | `saaa-conversation-ornith15`。Provider は `backchannel`（Qwen 3.5 2B / 64K）、`llm`（Ornith 1.5 35B / 128K / MTP）、`asr`、`tts`、`embedding` |
-| 互換 Profile | `saaa-qwen38`。Gemma 4 構成の凍結レガシーとして復元済み。Qwen 3.8 ではない |
-| 既存 Profile | `saaa-conversation-gemma4`。SAAA 音声経路の現在の既定値 |
-| Catalog | `GET /v3/agent-profiles` だけを使う。v1 は旧形式。v2 は `contextWindow` と `embeddingSpace` を返さない |
-| Claim | `POST /v1/agent-connections/{id}/claim`、body は `{"format":"openai-provider-v1"}`。Connection ごとに 1 回。全 Provider が `providers[]` にまとめて返る。必ず `name` で検索する |
-| Embedding | `apiStyle: larm-embedding`、`protocol: larm.embedding.v1`、384 次元 |
-| Renew / Release | Connection 単位 |
-| Ornith の通常応答 | request に `chat_template_kwargs.enable_thinking=false` を付ける |
-| 実測 | Qwen 2B の相槌は TTFT 70.5ms、Qwen 2B の Tool call は 429.6ms、Ornith 通常応答は TTFT 154.9ms / 75.1 tok/s、Embedding 30ms、TTS 445ms、ASR 607ms |
-| Media variant | `music`（ACE-Step）と `image`（Qwen-Image）は LARM 側の sudo スクリプトで排他的に切り替える。基本セットは維持される |
-| 本番 | 新 release は隔離環境の E2E まで完了。本番 systemd は旧 release のまま。**本番の LARM には現時点で `saaa-conversation-ornith15` が存在しない** |
+### 2.1 Profile 問い合わせ
 
-## 3. 現行コードの構造（前提として理解すること）
+`GET /v3/agent-profiles?profile=<selector>`。selector は OpenAPI の enum で `contextStill`、`SAAA`、`SAAA-w-Image`、`SAAA-w-music`、`vulnWorkbench`。
 
-SAAA には LARM への接続経路が 2 つある。**執事の本体は経路 A**。
+| selector | `requestedProfile` | 件数 | 返る `id` | Provider | `services` |
+|---|---|---|---|---|---|
+| `SAAA` | `SAAA` | 1 | `saaa-conversation-ornith15` | asr, backchannel, embedding, llm, tts | `[]` |
+| `SAAA-w-Image` | `SAAA-w-Image` | 1 | `saaa-conversation-ornith15` | 同上 | `image`（`media.image.generate`、`larm.image-generation.v1`、`/v1/images/generations`、`qwen-image-2.1`） |
+| `SAAA-w-music` | `SAAA-w-music` | 1 | `saaa-conversation-ornith15` | 同上 | `music`（`media.music.generate`、`larm.music-generation.v1`、`/v1/music/generations`、`ace-step-1.5`） |
 
-### 経路 A: 音声会話セッション（`crates/larm-session`）
+`profile=SAAA` の 2 つの LLM:
 
-- `crates/larm-session/src/lib.rs` の `Session`。1 つの Connection で複数 Provider を claim し、`acquire(name)` で Provider を貸し出す。renew（期限 90 秒前、`ttlSeconds: 600`）、`close()`（冪等）、Drop 時の release をすでに実装している。
-- `crates/larm-session/src/contract.rs`
-  - `PROVIDERS`: 必須 Provider は `tts`、`asr`、`llm`、`embedding` の 4 つ。
-  - `DEFAULT_PROFILE = "saaa-conversation-gemma4"`。
-  - `parse()` はすでに `name` で検索している（`providers[0]` に依存しない）。`PROVIDERS` にない name は無視する。`contextWindow` は `llm` にだけ要求する。
-  - Catalog は取得していない。Profile は呼び出し側が文字列で渡す。
-- `claim()` は `PROVIDERS` の全 Provider に health check を行う。
-- Profile の決定: 保存設定の `harness.larmProfile`。未設定なら `DEFAULT_PROFILE`。参照箇所は次のとおり。
-  - `src-tauri/src/providers/larm_voice/mod.rs`（53〜55 行目、196〜198 行目）
-  - `src-tauri/src/voice/tts_catalog.rs:276`
-  - `src-tauri/src/diagnosis/checks/harness.rs:71`
-  - `src-tauri/src/memory/personal_state/product_binding.rs:25`
-  - `src-tauri/src/harness_llm_diagnostic.rs:15`
-  - `src-tauri/src/persistence/settings_defaults.rs:17`
-  - `src-tauri/src/role_routing/schema.rs:206, 571`
-  - `src/features/settings/settingsDefaults.ts:7`
-- 利用箇所:
-  - 受付の分類: `src-tauri/src/providers/larm_voice/frontdesk_decision.rs`。`respond_with_lfm` と `classify_with_qwen` が**どちらも `acquire("llm")`** を使っている。`stream:false`。
-  - 会話本体: `src-tauri/src/providers/stream/larm_voice.rs` の `stream_larm_voice_provider`。`acquire("llm")` を呼び、`stream_model_provider_with_api_key` → `chat_completions/mod.rs` で streaming する。
-  - メモリー: `memory/personal_state/product_binding.rs` が `acquire("llm")`、`diagnosis/checks/harness.rs` などが `embed_query`。
-  - ASR: `voice/session/asr_routes.rs:67` の `acquire("asr")`。
-  - TTS: `voice/http_audio/requests.rs:51` と `voice/tts_catalog.rs:285` の `acquire("tts")`。
+| Provider 名 | model | capability | protocol / endpoint | contextWindow（max / outputReserve / safetyMargin） |
+|---|---|---|---|---|
+| `llm` | `ornith-1.5-35b` | `llm.general` | `openai.chat-completions.v1` / `/v1/chat/completions` | 131072 / 4096 / 1976 |
+| `backchannel` | `qwen3.5-2b-fast-response` | `llm.backchannel.classifier` | `openai.chat-completions.v1` / `/v1/chat/completions` | 65536 / 4096 / 1976 |
 
-### 経路 B: テキスト会話（`src-tauri/src/providers/dynamic_lan`）
+その他: `asr` = `qwen3-asr-1.7b`、`tts` = `voicevox-core`、`embedding` = `multilingual-e5-small`（384 次元、`larm.embedding.v1`、`/v1/embed`）。
 
-- 音声セッションがないときのテキスト会話で使う（`stream/larm_voice.rs` の `stream_voice_aware_dynamic_lan_provider` が振り分ける）。
-- `GET v3/agent-profiles` → `saaa-qwen38`（`mod.d/01.rs:2` の `AGENT_PROFILE`）→ Connection → claim → `llm` だけを使う。
-- 問題点:
-  - `validate.rs` の `select_default_llm_profile` が、`profile.providers.len() != 1` のときエラーにし、`.first()` を LLM とみなしている。
-  - `validate.rs` の `validate_state_shape` が、`state.providers.len() != 1` のときエラーにし、`state.providers[0]` を検証している。
-  - このため 5 Provider の Profile を選ぶと接続に失敗する。
-  - `saaa-qwen38` は現在 Gemma 4 なので、何もしないとテキスト会話は Gemma 4 のまま動く。
+応答のトップレベル: `contractVersion`（`agent-connection.v3`）、`catalogRevision`、`defaultAgentProfile`（`coding-default`。使わない）、`requestedProfile`、`profiles`、`audiences`。Profile の必須キーには `services` が含まれる（OpenAPI の `required`）。
 
-### その他
+### 2.2 Connection と claim（OpenAPI）
 
-- `crates/larm-session/src/http_api.rs` の `LlmOptions::apply` は `chat_template_kwargs` を毎回削除する。model 名に `qwen` を含むと `{"reasoning_effort": ...}` を入れる。`enable_thinking` を扱う仕組みはない。
-- 既存テストの `crates/larm-session/tests/live.rs` は `#[ignore]` 付きで、環境変数 `SAAA_LARM_CONTROL_URL` と `LARM_API_TOKEN` で実機につなぐ。
+- `POST /v1/agent-connections` の body（`AgentConnectionRequest`、`additionalProperties: false`）: `agentProfile`、`explicitAgentProfile`、`audience`、`client`、`ttlSeconds`、`allowFallback`、`deploymentPolicy`。**selector や variant、services を渡す欄はない。**
+- claim 応答（`AgentConnectionClaim`）のキー: `allocationId`、`audience`、`contextControl`、`expiresAt`、`id`、`providers`、`status`。**`services` は返らない。**
+- したがって、3 つの selector はどれも同じ Connection（`saaa-conversation-ornith15`）になる。image / music の Service を Connection から借りる手段は、現在の LARM にはない。
+
+## 3. SAAA の現状（2026-09-25）
+
+### 3.1 実装済み（コミット済み。`a1446ba`、`225006a`）
+
+- Role Routing の執事構成: actor `larm-frontdesk`（`larmProvider: backchannel`）と `larm-reasoner`（`larmProvider: llm`）、recipe `00-butler-respond`（`["frontend","reasoner"]`）。新規インストールの既定値（`role_routing/contracts.rs` 146〜178 行目、`src/features/settings/settingsRoleRoutingDefaults.ts`）。
+- 受付 step（`role_routing/frontend.rs`、`conversation_provider_route.d/01.rs` 880〜970 行目付近）: `stream: true`、`max_tokens: 64`、`chat_template_kwargs.enable_thinking=false`、ack はホストの定型文。
+- 思考 step: `stream/larm_voice.rs` で `acquire(larm_provider)`、`Thinking::Disabled`。
+- 入口から通すテスト: `providers/larm_voice/butler_route_tests.rs`（`voice_turn_runs_frontend_then_reasoner` など 16 件）。
+- `larm-session`: `BASE_PROVIDERS` + `BACKCHANNEL`、`has_provider()`、claim した全 Provider の health check、renew / release。
+
+### 3.2 未コミット（今回の discovery 変更）
+
+- `catalog::fetch(client, base, token, selector)`: `?profile=<selector>` を付け、`requestedProfile == selector`、`profiles.len() == 1` を検証し、`providers[].name` と `services[].name` を読む。
+- `ProfilePreference::Variant(ProfileVariant)`（`Conversation` / `Image` / `Music` → `SAAA` / `SAAA-w-Image` / `SAAA-w-music`）。`Auto` は `Conversation` と同じ。
+- 5 Provider がすべて宣言されていること、`services` が variant の期待（`[]` / `["image"]` / `["music"]`）と完全一致することを検証し、返った `id` で Connection を作る。
+- `select_voice_profile`（ID 固定リストからの自動選択）は削除済み。
+
+### 3.3 残っている問題
+
+| # | 問題 | 場所 | 影響 |
+|---|---|---|---|
+| G1 | `Variant` が `label()` で `@auto` になり、Owner から Session を作り直すときに `Auto` へ戻る | `providers/larm_voice/profile.rs` の `label`、`providers/larm_voice/mod.rs` 121 行目 | Image / music を指定しても `SAAA` で問い合わせる |
+| G2 | 保存値 `SAAA` などの selector 文字列が `Explicit` 扱いになる | `profile.rs` の `preference` | `agentProfile: "SAAA"` で Connection を作り、LARM に拒否される |
+| G3 | `Explicit` の必須 Provider が `required_providers(id)` で、`backchannel` は `saaa-conversation-ornith15` のときだけ必須 | `crates/larm-session/src/contract.rs` | 明示 Profile で受付の LLM が欠けても接続が成功し、受付 step が実行時に失敗する |
+| G4 | catalog の LLM 情報（model、contextWindow、protocol、endpoint、capability）を読まずに捨てている。claim の内容と照合していない | `crates/larm-session/src/catalog.rs` | catalog と claim が食い違っても気付かない。どの LLM で動いたかを診断で示せない |
+| G5 | 既定値が食い違っている。Rust の `DEFAULT_PROFILE` は `saaa-conversation-ornith15`、TypeScript の `DEFAULT_LARM_PROFILE` は `saaa-conversation-gemma4` | `contract.rs`、`src/features/settings/settingsDefaults.ts` 7 行目 | 画面と実行時の既定値が違う |
+| G6 | テスト fixture のモデルが実機と違う（`llm` = `gemma-4-e4b`、`backchannel` = `fixture`、両方 contextWindow 230400） | `providers/larm_voice/world_wire_fixture.rs` 94 行目 | Qwen 用の `reasoning_effort` 挿入と `Thinking::Disabled` の上書きが、実機のモデル名で試されていない |
+| G7 | テキスト会話の経路 B が `AGENT_PROFILE`（`saaa-qwen38`）固定で、Provider が 1 つの Profile しか受け付けない | `providers/dynamic_lan/validate.rs` 144、202〜218、267 行目、`mod.d/03.rs` 27 行目 | テキスト会話の思考が Ornith に届かない（`saaa-qwen38` は Gemma 4 構成） |
+| G8 | 表示名に旧構成が残っている可能性（「Gemma 4 E4B (LARM)」） | 保存設定の actor `label` | 画面の表示と実際のモデルが違う。保存設定は書き換えない（4.6） |
 
 ## 4. 決定事項
 
-### 4.1 Profile 選択
+### 4.1 Profile の決め方（経路 A: 音声、経路 B: テキスト共通）
 
-| 項目 | 値 |
+| 保存値 `harness.larmProfile` | 解決 |
 |---|---|
-| 定数（`crates/larm-session/src/contract.rs`） | `CANONICAL_PROFILE = "saaa-conversation-ornith15"`、`LEGACY_PROFILE = "saaa-qwen38"`、`PREVIOUS_DEFAULT_PROFILE = "saaa-conversation-gemma4"`。`DEFAULT_PROFILE` は `CANONICAL_PROFILE` と同じ値にする |
-| 自動選択の対象 | 保存設定 `harness.larmProfile` が未設定、`saaa-conversation-gemma4`、`saaa-conversation-ornith15` のいずれか。これ以外の値はユーザーが明示的に選んだものとして、そのまま使う（自動選択しない） |
-| 経路 A の自動選択順 | catalog の中で、必須 Provider（4.2）を**すべて catalog 上で宣言している** Profile を次の順に探す。1) `saaa-conversation-ornith15` 2) `saaa-qwen38` 3) `saaa-conversation-gemma4` |
-| 経路 B の自動選択順 | 1) `saaa-conversation-ornith15` 2) `saaa-qwen38`。`llm` を宣言していれば候補になる |
-| 見つからない場合 | 経路 A はエラーコード `larm_profile_unavailable`。経路 B は既存の `harness-profile-missing` 系 |
-| `defaultAgentProfile` | 無視する |
-| Profile ID からの推測 | しない。model、endpoint、credential、context window はすべて claim 応答から取る |
+| 未設定、`SAAA`、`saaa-conversation-ornith15`、`saaa-conversation-gemma4`、`saaa-qwen38` | `Variant(Conversation)`（selector `SAAA`） |
+| `SAAA-w-Image` | `Variant(Image)` |
+| `SAAA-w-music` | `Variant(Music)` |
+| それ以外 | `Explicit(値)`。catalog を問い合わせず、その ID で Connection を作る |
 
-経路 A で 3 番目に `saaa-conversation-gemma4` を置く理由: 本番の LARM はまだ旧 release で、canonical がない。依頼では「canonical がない場合だけ `saaa-qwen38`」だが、旧 release の `saaa-qwen38` が音声に必要な 4 Provider を持っている保証はない。持っていなければ、現在動いている `saaa-conversation-gemma4` を使わないと本番の音声会話が止まる。「必須 Provider を catalog 上で宣言していること」を条件にしているので、新 release では 2 番目の `saaa-qwen38`（Gemma 4 凍結レガシー）が必ず先に選ばれ、依頼の意図と矛盾しない。
+- `ProfilePreference::Auto` は削除し、`Variant(Conversation)` に統一する。`Auto` を受け取る公開 API はない形にする（呼び出し側はすべて `profile::preference` を通す）。
+- 旧 ID（`saaa-conversation-ornith15`、`saaa-conversation-gemma4`、`saaa-qwen38`）は、保存済み設定の互換のためだけに selector `SAAA` へ読み替える。ID の固定リストからの自動選択やフォールバックは復活させない。
+- `defaultAgentProfile` は使わない。
+- Owner の比較用文字列（`label`）は、`Variant` なら `"@selector:<selector>"`（例 `@selector:SAAA-w-Image`）、`Explicit` ならその値。`@` は `validate_profile` が拒否する文字なので、明示 ID と衝突しない。Session を作り直すときは、この文字列から `Variant` / `Explicit` を**復元する**関数 `profile::from_label` を使う（G1）。
 
-### 4.2 必須 Provider（経路 A）
+### 4.2 必須 Provider
 
-| 選ばれた Profile | 必須 | 任意 |
+| 解決結果 | 必須 | 検証 |
 |---|---|---|
-| `saaa-conversation-ornith15` | `llm`、`backchannel`、`asr`、`tts`、`embedding` | なし |
-| それ以外 | `llm`、`asr`、`tts`、`embedding` | `backchannel` |
+| `Variant(*)` | `llm`、`backchannel`、`asr`、`tts`、`embedding` | catalog と claim の両方 |
+| `Explicit` | `llm`、`backchannel`、`asr`、`tts`、`embedding` | claim のみ |
 
-- `backchannel` の protocol は `openai.chat-completions.v1`。`contextWindow` を必須にする（`llm` と同じ検証）。
-- claim 時の health check は、claim 応答に実際に含まれ、かつ受け付けた Provider 全部に行う。
+- `Explicit` でも `backchannel` を必須にする（G3）。執事構成は受付を前提にしており、欠けたまま接続を成功させない。`backchannel` を持たない Profile を使いたいという要望が出たら、止めて質問する。
+- `required_providers(profile)` は引数を取らない `required_providers()` にし、常に 5 つを返す。
+- `backchannel` と `llm` は `contextWindow` 必須（現状どおり）。
 
-### 4.3 受付（Frontdesk）
+### 4.3 catalog の LLM 情報の反映（G4）
 
-| 項目 | 値 |
-|---|---|
-| 受付に使う Provider | `session.has_provider("backchannel")` なら `backchannel`。なければ現状どおり `llm` |
-| 呼び出し回数 | 1 発話につき 1 回（`respond_with_lfm` と `classify_with_qwen` の並列実行はやめる） |
-| streaming | `stream: true` |
-| thinking | `chat_template_kwargs: {"enable_thinking": false}` を付ける |
-| タイムアウト | 1,500 ms（定数 `FRONTDESK_TIMEOUT`）。実測では相槌 70ms、Tool call 430ms なので十分に余裕がある |
-| `max_tokens` | 128 |
-| `temperature` | 0.0 |
-| 履歴 | 直近 4 ターン（定数 `FRONTDESK_HISTORY_TURNS`）と現在の発言 |
-| 入力上限 | 16,000 bytes（`FRONTDESK_MAX_INPUT_BYTES`）。超えたら呼ばずに Ornith へ昇格させる |
+`CatalogProfile` を次の形にする。
 
-### 4.4 Ornith
+```rust
+pub struct CatalogProfile {
+    pub revision: String,          // catalogRevision
+    pub selector: String,          // requestedProfile
+    pub id: String,
+    pub providers: Vec<CatalogProvider>,
+    pub services: Vec<CatalogService>,
+}
+pub struct CatalogProvider {
+    pub name: String,
+    pub capability: String,
+    pub protocol: String,
+    pub endpoint: String,
+    pub model: String,
+    pub context_window: Option<ContextWindow>,
+}
+pub struct CatalogService { pub name: String, pub capability: String, pub protocol: String, pub endpoint: String, pub model: String }
+```
 
-| 項目 | 値 |
-|---|---|
-| 経路 A の会話本体（`stream_larm_voice_provider`） | `chat_template_kwargs: {"enable_thinking": false}` を付ける |
-| 経路 A のメモリー抽出（`memory/personal_state/**`）、reasoning-mcp の委譲推論 | 変更しない（LARM のテンプレート既定のまま） |
-| 経路 B（テキスト会話） | 変更しない |
-| 実装方法 | `LlmOptions` に `thinking: Thinking`（`Auto` / `Disabled` / `Enabled`、既定値は `Auto`）を追加する。`Disabled` なら `apply()` の最後で `body["chat_template_kwargs"] = {"enable_thinking": false}` とし、qwen 用の `reasoning_effort` 設定は上書きする。`Enabled` なら `true`。`Auto` なら現状の挙動 |
+- `catalogRevision`、`requestedProfile`、各 Provider の `name` / `capability` / `protocol` / `endpoint` / `model` は必須。欠けたら `larm_catalog_invalid`。
+- claim 後に、catalog と claim を Provider 名ごとに照合する。一致しなければ `larm_catalog_claim_mismatch` で失敗し、Connection を release する。
+  - `model` が一致すること。
+  - `protocol` が一致すること。
+  - `llm` と `backchannel` は `contextWindow` の 3 値が一致すること。
+  - endpoint は claim の `baseUrl` と組み合わせて使うため照合しない。
+- renew 後の再 claim でも同じ照合を行う（Session に `CatalogProfile` を保持する）。
+- モデル名やコンテキスト長は、これまでどおり claim の値を使う。catalog の値は照合と表示にだけ使う。**Profile ID やモデル名から挙動を分けるコードは書かない。**
+- Session に次のアクセサを追加する。
+  ```rust
+  pub fn selector(&self) -> Option<&str>;                 // Explicit なら None
+  pub fn catalog_revision(&self) -> Option<&str>;
+  pub async fn provider_summary(&self) -> Vec<ProviderSummary>; // name, model, context_window（token は含めない）
+  ```
+
+### 4.4 media variant（image / music）
+
+- SAAA の既定は `SAAA`。`SAAA-w-Image` / `SAAA-w-music` は、保存値で明示されたときだけ使う。設定画面に選択肢は追加しない。
+- variant を指定しても Connection は同じになる（2.2）。variant は「その media Service が今 LARM にあるか」の確認にだけ使う。image / music の Service 自体の呼び出しは本計画の範囲外。
+- LARM の variant 切替（sudo スクリプト）は SAAA から操作しない。
+
+### 4.5 テキスト会話（経路 B、G7）
+
+- `dynamic_lan` の Profile 選択を、4.1 と同じ selector 問い合わせに置き換える。catalog の問い合わせは `larm-session` の `catalog::fetch` を公開して使う（同じ検証を 2 か所に書かない）。
+- 経路 B が使うのは `llm` だけ。state と claim の `providers[]` から `name == "llm"` の要素をちょうど 1 つ探し、他の Provider は無視する。
+- `providers.len() != 1`、`providers[0]`、`.first()` による特定はすべて削除する。
+
+### 4.6 保存設定
+
+- コードから保存設定を自動で書き換えない。4.1 の読み替えは実行時に行う。
+- 新規インストールの既定値だけを `SAAA` に変える（Phase 4）。
 
 ## 5. やらないこと
 
-- production への切替、LARM service の起動・停止・再起動、Qwen 2B の load / unload 要求。
-- `runtime-variant.sh` の実行、media variant（music / image）の切替要求。SAAA からは variant を操作しない。
-- 保存済みユーザー設定の削除や書き換え（4.1 の自動選択は実行時に解決する。settings の値は書き換えない）。
-- `saaa-qwen38` という ID からモデル名や context window を推測するコード。
+- production への切替、LARM service の起動・停止・再起動、media variant の切替。
+- 保存済みユーザー設定の削除や書き換え。
+- Profile ID の固定リストからの自動選択、`defaultAgentProfile` の利用。
+- Profile ID やモデル名からモデルの性質を推測するコード。
 - `providers[0]`、`.first()`、`providers.len() == N` による Provider の特定。
-- Qwen 2B の出力だけで Tool を実行すること。
-- `voice/**` の ASR 処理ロジックの変更（Phase 5 で時刻を記録する 1 行の呼び出し追加だけは許可する）。
+- `larm_voice/frontdesk*` の受付経路の復活。
+- `voice/**` の ASR 処理ロジックの変更。
 
-## 6. Phase 1: `larm-session` の Profile 自動選択と `backchannel`
+## 6. Phase 1: selector の解決と保持（G1、G2、G3、G5 の Rust 側）
 
-ブランチ: `feat/ornith15-session`
+ブランチ: `feat/larm-selector-profile`
 
 ### 変更ファイル
 
-- `crates/larm-session/src/contract.rs`
 - `crates/larm-session/src/lib.rs`
-- `crates/larm-session/src/catalog.rs`（新規）
+- `crates/larm-session/src/contract.rs`
 - `crates/larm-session/src/tests.rs`
+- `crates/larm-session/tests/live.rs`
+- `src-tauri/src/providers/larm_voice/profile.rs`
 - `src-tauri/src/providers/larm_voice/mod.rs`
-- `src-tauri/src/voice/tts_catalog.rs`
-- `src-tauri/src/diagnosis/checks/harness.rs`
-- `src-tauri/src/memory/personal_state/product_binding.rs`
-- `src-tauri/src/harness_llm_diagnostic.rs`
-- `src-tauri/src/providers/larm_voice/profile.rs`（新規）
+- `ProfilePreference::Auto` と `required_providers(` の参照箇所（`rg -n "ProfilePreference::Auto|required_providers\(" crates src-tauri/src services`）
 
 ### 手順
 
-1. **定数**（`contract.rs`）
-   - 4.1 の 3 つの定数を追加し、`DEFAULT_PROFILE` を `CANONICAL_PROFILE` と同じ値にする。
-   - `PROVIDERS` を次の 2 つに分ける。
-     ```rust
-     pub const BASE_PROVIDERS: [(&str, &str); 4] = [
-         ("tts", "openai.audio-speech.v1"),
-         ("asr", "openai.audio-transcriptions.v1"),
-         ("llm", "openai.chat-completions.v1"),
-         ("embedding", "larm.embedding.v1"),
-     ];
-     pub const BACKCHANNEL: (&str, &str) = ("backchannel", "openai.chat-completions.v1");
-     pub fn required_providers(profile: &str) -> Vec<&'static str>; // 4.2 の表どおり
-     ```
-   - `PROVIDERS` を参照している箇所（`rg -n "PROVIDERS" crates src-tauri services`）をすべて追従させる。
-2. **`parse()` の変更**（`contract.rs`）
-   - シグネチャを `parse(value: Value, id: &str, required: &[&str]) -> Result<Snapshot, &'static str>` にする。
-   - 受け付ける name は `BASE_PROVIDERS` と `BACKCHANNEL`。それ以外は現状どおり無視する。
-   - `contextWindow` は `name == "llm" || name == "backchannel"` のとき必須にする。
-   - 最後の欠落チェックは `required` に対して行う。欠けていたら `larm_missing_provider`。
-3. **Catalog**（新規 `catalog.rs`）
-   ```rust
-   pub struct CatalogProfile { pub id: String, pub provider_names: Vec<String> }
-   pub(crate) async fn fetch(client: &reqwest::Client, control_base: &url::Url, token: &str)
-       -> Result<Vec<CatalogProfile>, &'static str>;
-   pub fn select_voice_profile(profiles: &[CatalogProfile]) -> Result<String, &'static str>;
-   ```
-   - `fetch`: `GET {control_base}/v3/agent-profiles`、Bearer 認証、200 のみ受け付ける。`contractVersion == "agent-connection.v3"` でなければ `larm_catalog_unsupported`。`profiles[].id` と `profiles[].providers[].name` だけを読む。
-   - `select_voice_profile`: 4.1 の順に、`required_providers(id)` の全 name を `provider_names` に含む最初の Profile を返す。同じ id が 2 件以上あれば `larm_catalog_invalid`。見つからなければ `larm_profile_unavailable`。
-4. **Session**（`lib.rs`）
-   - 公開 enum を追加する。
-     ```rust
-     pub enum ProfilePreference { Auto, Explicit(String) }
-     ```
-   - `connect_with_profile_credential_and_key` の `profile: &str` 引数を `preference: ProfilePreference` に変える。`connect_inner` の最初（Connection 作成の前）で、`Auto` なら `catalog::fetch` と `select_voice_profile` を行って Profile を決める。`Explicit` なら現状どおりその文字列を使う。
-   - `connect`、`connect_with_profile`、`connect_with_profile_and_credential` は `Explicit(profile)` を渡すラッパーとして残す。
-   - `Session` に `profile: String` と `required: Vec<&'static str>` を持たせ、`claim()` と renew 後の再 claim で `parse(value, &self.id, &self.required)` を使う。
-   - `claim()` の health check を、`snapshot.providers` の全要素に対して行うよう変える。
-   - アクセサを追加する: `pub fn profile_id(&self) -> &str`、`pub async fn has_provider(&self, name: &str) -> bool`（現在の snapshot に含まれるか）。
-5. **SAAA 側の Profile 解決**（新規 `src-tauri/src/providers/larm_voice/profile.rs`）
-   ```rust
-   pub(crate) fn preference(stored: Option<&str>) -> saaa_larm_session::ProfilePreference
-   ```
-   `None`、`saaa-conversation-gemma4`、`saaa-conversation-ornith15` なら `Auto`、それ以外は `Explicit(stored)`。
-6. 3 章に挙げた「Profile の決定」の参照箇所（`larm_voice/mod.rs`、`tts_catalog.rs`、`diagnosis/checks/harness.rs`、`product_binding.rs`、`harness_llm_diagnostic.rs`）で、`unwrap_or(DEFAULT_PROFILE)` を `profile::preference(stored)` に置き換え、新しい `connect_*` に渡す。`larm_voice/mod.rs` の `Owner.profile: String` には、比較用の文字列として `Auto` なら `"*"`（profile id として不正な印）、`Explicit` ならその値を入れる。保存値が `"auto"` のときは明示選択のままにする。
-7. `settings_defaults.rs`、`settingsDefaults.ts`、`role_routing/schema.rs` の既定値は**この Phase では変えない**（保存値 `saaa-conversation-gemma4` は自動選択の対象なので、変えなくても canonical が選ばれる）。
+1. `lib.rs`: `ProfilePreference` を `Variant(ProfileVariant)` と `Explicit(String)` の 2 つにする。`ProfileVariant::selector()` を `pub` にし、逆変換 `ProfileVariant::from_selector(&str) -> Option<Self>` を足す。
+2. `contract.rs`: `required_providers()` を引数なしにし、5 つを返す。`DEFAULT_PROFILE` を削除し、`DEFAULT_SELECTOR: &str = "SAAA"` を追加する。旧 ID の定数 3 つは `LEGACY_PROFILE_IDS: [&str; 3]` にまとめ、`profile.rs` の読み替えにだけ使う。
+3. `lib.rs` の `connect_inner`: `Explicit` の必須 Provider を `required_providers()` にする。`Variant` の処理は未コミット分をそのまま使う。
+4. `profile.rs`:
+   - `preference(stored)` を 4.1 の表どおりにする。
+   - `label(preference)` を 4.1 の `"@selector:<selector>"` 形式にする。
+   - `from_label(label: &str) -> ProfilePreference` を追加する。`@selector:` で始まり既知の selector なら `Variant`、それ以外は `Explicit`。
+5. `larm_voice/mod.rs` 121 行目: `if owner.profile == profile::AUTO_LABEL { Auto } else { Explicit }` を `profile::from_label(&owner.profile)` にする。`AUTO_LABEL` は削除する。
+6. `settings_defaults.rs` と `role_routing/schema.rs` の `DEFAULT_PROFILE` 参照は `DEFAULT_SELECTOR` に置き換える。ただし `schema.rs` の既存 migration（206 行目）が書き込む値は、過去の migration の意味を変えないため `"saaa-conversation-ornith15"` の文字列で固定する。関連する migration テストの期待値を確認する。
 
-### 追加テスト（`crates/larm-session/src/tests.rs`）
+### 追加・変更テスト
 
-既存の fixture server（`tests.rs` 内の claim 応答生成）に、`GET /v3/agent-profiles` の応答と、claim で返す Provider の集合を切り替える仕組みを追加する。
+`crates/larm-session/src/tests.rs`:
 
 | テスト名 | 内容 | 期待値 |
 |---|---|---|
-| `auto_selects_canonical_ornith15_profile` | catalog に canonical（5 Provider）、`saaa-qwen38`（4 Provider）、gemma4 | create body の `agentProfile` が `saaa-conversation-ornith15` |
-| `auto_falls_back_to_legacy_only_when_canonical_absent` | catalog に `saaa-qwen38` と gemma4 | `saaa-qwen38` |
-| `auto_skips_profile_missing_required_providers` | catalog に canonical（`embedding` なし）と `saaa-qwen38`（4 Provider） | `saaa-qwen38` |
-| `auto_uses_previous_default_when_only_it_exists` | catalog に gemma4 のみ | `saaa-conversation-gemma4` |
-| `auto_fails_without_any_candidate` | catalog に関係ない Profile のみ | `larm_profile_unavailable`。Connection は作られない |
-| `explicit_profile_skips_catalog` | `Explicit("custom-x")` | catalog を GET しない。`agentProfile == "custom-x"` |
-| `legacy_profile_model_comes_from_claim` | `saaa-qwen38` を選び、claim の `llm.model` を `gemma-4-fixture` にする | `acquire("llm")` の `provider().model == "gemma-4-fixture"` |
-| `no_qwen38_literal_in_sources` | `include_str!` で `contract.rs`、`lib.rs`、`catalog.rs` を読む | `qwen3.8` と `qwen-3.8` を含まない |
-| `claims_five_providers_in_any_order` | claim の `providers[]` を `embedding, tts, llm, asr, backchannel` の順にする | 5 つすべて `acquire` でき、それぞれの token と base_url が正しい |
-| `canonical_requires_backchannel` | canonical で claim に `backchannel` がない | `larm_missing_provider`。release を 1 回受信 |
-| `legacy_backchannel_is_optional` | `saaa-qwen38` で `backchannel` なし | 成功。`has_provider("backchannel") == false` |
-| `backchannel_requires_context_window` | `backchannel` の `contextWindow` なし | `larm_missing_context_window` |
-| `renew_reclaims_all_five_and_release_leaves_no_lease` | fixture が create で +1、DELETE で −1 するカウンタを持つ。connect → renew（期限を 60 秒後にして発火させる）→ close → close | renew 1 回、claim 2 回、カウンタ 0。2 回目の close もエラーにならない |
+| `variant_queries_selector_and_creates_returned_id`（既存を拡張） | 3 つの variant | query が `profile=<selector>`、create body の `agentProfile == "saaa-conversation-ornith15"` |
+| `selector_mismatch_is_rejected` | `requestedProfile` が別の値 | `larm_catalog_invalid`。Connection は作られない |
+| `multiple_profiles_are_rejected` | `profiles` が 2 件 | `larm_catalog_invalid`。Connection は作られない |
+| `missing_backchannel_in_catalog_is_rejected` | catalog の Provider から `backchannel` を除く | `larm_profile_unavailable`。Connection は作られない |
+| `variant_service_mismatch_is_rejected` | `SAAA-w-Image` なのに `services: []`、`SAAA` なのに `image` あり | `larm_profile_unavailable` |
+| `explicit_profile_requires_backchannel` | `Explicit("custom-x")`、claim に `backchannel` なし | `larm_missing_provider`。release を 1 回受信 |
+| `explicit_profile_skips_catalog`（既存） | `Explicit("custom-x")` | catalog を GET しない |
 
-`src-tauri/src/providers/larm_voice/profile.rs` の単体テスト:
+`src-tauri/src/providers/larm_voice/profile.rs`:
 
 | テスト名 | 入力 | 期待値 |
 |---|---|---|
-| `preference_auto_for_shipped_values` | `None`、`"saaa-conversation-gemma4"`、`"saaa-conversation-ornith15"` | `Auto` |
-| `preference_respects_operator_choice` | `"custom-x"` | `Explicit("custom-x")` |
+| `preference_maps_shipped_values_to_saaa_selector` | `None`、`"SAAA"`、旧 ID 3 つ | `Variant(Conversation)` |
+| `preference_maps_media_selectors` | `"SAAA-w-Image"`、`"SAAA-w-music"` | `Variant(Image)`、`Variant(Music)` |
+| `preference_respects_operator_choice` | `"custom-x"`、`"auto"` | `Explicit` |
+| `label_round_trips_every_preference` | 上のすべて | `from_label(label(p)) == p` |
+
+`world_tests.rs` など（会話ターンの入口から）:
+
+| テスト名 | 内容 | 期待値 |
+|---|---|---|
+| `voice_session_restart_keeps_media_variant` | 保存値 `SAAA-w-Image` で音声セッションを開始 → 期限切れで作り直す | 2 回とも catalog の query が `profile=SAAA-w-Image` |
 
 ### チェックポイント
 
 ```sh
 cargo test --manifest-path crates/larm-session/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml larm
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path services/reasoning-mcp/Cargo.toml   # larm-session を使う別クレート
+cargo test --manifest-path services/reasoning-mcp/Cargo.toml
+rg -n "ProfilePreference::Auto|AUTO_LABEL|DEFAULT_PROFILE\b" crates src-tauri/src services   # 0 件
 ```
 
-## 7. Phase 2: テキスト会話経路（`dynamic_lan`）の Profile 選択
+## 7. Phase 2: catalog の LLM 情報を照合し、診断に出す（G4、G6）
 
-ブランチ: `feat/ornith15-dynamic-lan`
-
-経路 B は `llm` だけを使う。Provider 束の管理は経路 A（`larm-session`）に任せ、ここでは「5 Provider Profile を拒否しない」「canonical を選ぶ」だけを直す。
+ブランチ: `feat/larm-catalog-llm-binding`
 
 ### 変更ファイル
 
-- `src-tauri/src/providers/dynamic_lan/mod.d/01.rs`
+- `crates/larm-session/src/catalog.rs`
+- `crates/larm-session/src/lib.rs`
+- `crates/larm-session/src/contract.rs`（照合関数）
+- `crates/larm-session/src/tests.rs`
+- `src-tauri/src/providers/larm_voice/world_wire_fixture.rs`
+- `src-tauri/src/diagnosis/checks/harness.rs`
+- `src-tauri/src/harness_llm_diagnostic.rs`
+
+### 手順
+
+1. `catalog.rs`: 4.3 の構造体で読む。必須キーが欠けたら `larm_catalog_invalid`。
+2. `contract.rs`: `pub(crate) fn verify_against_catalog(snapshot: &Snapshot, catalog: &CatalogProfile) -> Result<(), &'static str>` を追加する。4.3 の照合を行い、不一致は `larm_catalog_claim_mismatch`。
+3. `lib.rs`: `Variant` のとき `CatalogProfile` を `Session` に保持し、`claim()` と renew 後の再 claim の直後に `verify_against_catalog` を呼ぶ。失敗したら既存の失敗時と同じく release する。4.3 のアクセサ 3 つを追加する。
+4. `ConnectError` のユーザー向け文言に `larm_catalog_claim_mismatch` を追加する（`src/i18n/locales/*Settings.ts` の既存の LARM エラー文言の並びに合わせる）。文言: 「LARM の Profile 情報と、実際に割り当てられたモデルが一致しません。LARM の再起動後に再接続してください。」
+5. `world_wire_fixture.rs`: fixture の catalog と claim を 2.1 の実機の値にする（`llm` = `ornith-1.5-35b` / 131072、`backchannel` = `qwen3.5-2b-fast-response` / 65536、`asr` / `tts` / `embedding` も実機の model）。`?profile=` の query に応じて `requestedProfile` と `services` を返す。
+6. 診断: `diagnosis/checks/harness.rs` と `harness_llm_diagnostic.rs` の LARM 項目に、`selector`、`catalog_revision`、`provider_summary()` の `llm` と `backchannel` の model と `maxTokens` を出す。token や baseUrl は出さない。
+
+### 追加テスト
+
+| 場所 | テスト名 | 期待値 |
+|---|---|---|
+| `tests.rs` | `catalog_reads_llm_and_backchannel_details` | 2 つの LLM の model、capability、protocol、endpoint、contextWindow が 2.1 の値で読める |
+| `tests.rs` | `catalog_missing_model_is_invalid` | `backchannel.model` なし → `larm_catalog_invalid` |
+| `tests.rs` | `claim_model_mismatch_is_rejected_and_released` | claim の `llm.model` だけを `gemma4-e4b` にする → `larm_catalog_claim_mismatch`、release 1 回、lease カウンタ 0 |
+| `tests.rs` | `claim_context_window_mismatch_is_rejected` | claim の `backchannel.contextWindow.maxTokens` を 230400 にする → `larm_catalog_claim_mismatch` |
+| `tests.rs` | `renew_reclaim_is_verified_against_catalog` | renew 後の claim だけ `llm.model` を変える → 以後の `acquire("llm")` が失敗し、release される |
+| `tests.rs` | `provider_summary_exposes_models_without_tokens` | `provider_summary()` に 5 件、token を含まない |
+| `butler_route_tests.rs` | `voice_turn_runs_frontend_then_reasoner`（既存、fixture 更新後） | `backchannel` の request body の `model == "qwen3.5-2b-fast-response"`、`chat_template_kwargs == {"enable_thinking": false}`（`reasoning_effort` が残っていない）。`llm` の request の `model == "ornith-1.5-35b"`、`enable_thinking == false` |
+
+### チェックポイント
+
+```sh
+cargo test --manifest-path crates/larm-session/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml larm
+cargo test --manifest-path src-tauri/Cargo.toml diagnosis
+bun test
+```
+
+## 8. Phase 3: テキスト会話も Ornith に届ける（G7）
+
+ブランチ: `feat/larm-selector-text-path`
+
+### 変更ファイル
+
+- `crates/larm-session/src/lib.rs`（`catalog::fetch` と `CatalogProfile` を `pub` にする）
+- `src-tauri/src/providers/dynamic_lan/mod.d/01.rs`、`mod.d/03.rs`
 - `src-tauri/src/providers/dynamic_lan/validate.rs`
 - `src-tauri/src/providers/dynamic_lan/profile_catalog.rs`
 - `src-tauri/src/providers/dynamic_lan/mod.d/04.rs`、`mod.d/05.rs`（テスト）
-- `src-tauri/src/providers/larm_voice/world_wire_fixture.rs`（テスト fixture）
 - `AGENT_PROFILE` の参照箇所（`rg -n "AGENT_PROFILE" src-tauri/src`）
 
 ### 手順
 
-1. `mod.d/01.rs`: `AGENT_PROFILE` を削除し、`CANONICAL_AGENT_PROFILE = "saaa-conversation-ornith15"` と `LEGACY_AGENT_PROFILE = "saaa-qwen38"` を追加する。参照箇所をすべて追従させる。
-2. `validate.rs` の `select_default_llm_profile`:
-   - `defaultAgentProfile` を使わない。canonical、legacy の順に `profile.id` で検索する。どちらもなければ既存のエラーを返す。
-   - `profile.providers.len() != 1` と `.first()` を削除する。`profile.providers` から `name == "llm"` の要素をちょうど 1 つ探す（0 個または 2 個以上なら contract error）。他の name は無視する。
-   - それ以外の検証（capability、protocol、contextWindow）はそのまま、見つけた `llm` に対して行う。
-3. `validate.rs` の `validate_state_shape`:
-   - `state.providers.len() != 1` と `state.providers[0]` を削除する。`name == "llm"` の要素をちょうど 1 つ探し、既存の検証をその要素に適用する。他の Provider は無視する。
-4. `validate_claim` はすでに `name == "llm"` で検索しているので変更しない。
-5. `profile_catalog.rs`: v1 用の `legacy_profile_context_window` と、`validate.rs` 内の v1 分岐を削除する。contract version は `agent-connection.v3` だけを受け付ける。
-6. テスト fixture:
-   - `mod.d/04.rs`、`05.rs` で `claim["providers"][0]` を書き換えている箇所は、`name` で要素を探すヘルパー `fn provider_mut<'a>(claim: &'a mut Value, name: &str) -> &'a mut Value` に置き換える。
-   - fixture の catalog と Connection state を、canonical の 5 Provider 構成にする。
-   - `requests[1].contains("\"agentProfile\":\"saaa-qwen38\"")` は canonical を期待する形に変える。
-   - `profile_catalog.rs` のテスト内と `world_wire_fixture.rs` の `"qwen3.8"`、`"qwen3.8-27b"` を、`"ornith-1.5-35b"` などの canonical 前提の値に置き換える。
+1. `mod.d/01.rs`: `AGENT_PROFILE` を削除する。Profile は保存値から `larm_voice::profile::preference` で解決する（4.1）。
+2. `validate.rs` の `select_default_llm_profile` を削除し、`Variant` なら `saaa_larm_session::catalog::fetch(..., selector)` の結果の `id` と `llm` の情報を使う。`Explicit` なら catalog を問い合わせない。
+3. `validate.rs` の `validate_state_shape`（144 行目）と Profile 検証（267 行目）: `len() != 1` と `providers[0]` を削除し、`name == "llm"` の要素をちょうど 1 つ探す。0 個または 2 個以上なら contract error。他の Provider は無視する。
+4. `validate_claim` の `llm` を、catalog の `llm`（model、protocol、contextWindow）と照合する。不一致は contract error（4.3 と同じ条件）。
+5. `profile_catalog.rs`: v1 分岐と `legacy_profile_context_window` を削除し、`agent-connection.v3` だけを受け付ける。
+6. テスト fixture の catalog と state を、2.1 の 5 Provider 構成にする。`claim["providers"][0]` を書き換えている箇所は、`name` で要素を探すヘルパー `provider_mut(claim, name)` に置き換える。
 
 ### 追加テスト（`mod.d/04.rs`）
 
 | テスト名 | 内容 | 期待値 |
 |---|---|---|
-| `text_path_selects_canonical_profile` | catalog に canonical と legacy | `agentProfile` が canonical |
-| `text_path_falls_back_to_legacy_only_when_canonical_absent` | catalog に legacy のみ | legacy |
-| `text_path_accepts_five_provider_state_in_any_order` | state と claim の `providers[]` を `tts, llm, embedding, backchannel, asr` の順にする | 接続成功。`model()` が claim の `llm.model` |
+| `text_path_queries_saaa_selector` | 保存値なし | catalog の query が `profile=SAAA`、`agentProfile == "saaa-conversation-ornith15"` |
+| `text_path_accepts_five_provider_state_in_any_order` | `providers[]` を `tts, llm, embedding, backchannel, asr` の順にする | 接続成功。`model() == "ornith-1.5-35b"` |
 | `text_path_rejects_duplicate_llm` | `llm` が 2 件 | contract error、release 1 回 |
+| `text_path_rejects_claim_model_mismatch` | claim の `llm.model` が catalog と違う | contract error、release 1 回 |
+
+会話ターンの入口からのテスト（`butler_route_tests.rs`）:
+
+| テスト名 | 内容 | 期待値 |
+|---|---|---|
+| `text_turn_skips_frontend_provider`（既存を拡張） | テキスト入力で執事 recipe | `backchannel` は呼ばれず、reasoner の request が `model == "ornith-1.5-35b"` で届く |
 
 ### チェックポイント
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml dynamic_lan
 cargo test --manifest-path src-tauri/Cargo.toml
-rg -n 'providers\[0\]|providers\.first\(\)|len\(\) != 1' src-tauri/src/providers/dynamic_lan/validate.rs   # 0 件
+rg -n 'providers\[0\]|providers\.first\(\)|len\(\) != 1|AGENT_PROFILE' src-tauri/src/providers/dynamic_lan   # 0 件
 ```
 
-## 8. Phase 3: Qwen 2B の一次受付
+## 9. Phase 4: 既定値と表示（G5、G8）
 
-ブランチ: `feat/ornith15-frontdesk`
+ブランチ: `feat/larm-selector-defaults`
 
-### 変更ファイル
-
-- `src-tauri/src/providers/larm_voice/frontdesk_decision.rs`
-- `src-tauri/src/providers/larm_voice/escalation.rs`（新規）
-- `src-tauri/src/providers/larm_voice/mod.rs`（`mod escalation;` の追加）
-- `src-tauri/src/providers/larm_voice/frontdesk_repository_tests.rs`、`world_tests.rs`（テスト）
-
-### 手順
-
-1. **出力 schema**（`frontdesk_decision.rs`）。既存の `FrontdeskClassification`、`Route`、`ReplyKey`、`ReasoningNeed` を次に置き換える。
-   ```rust
-   #[derive(Debug, Clone, Deserialize, PartialEq)]
-   #[serde(rename_all = "camelCase", deny_unknown_fields)]
-   struct FrontdeskOutput {
-       route: Route,          // backchannel | wait | simple_reply | tool_candidate | delegate
-       reply_key: ReplyKey,   // none | greeting | acknowledgement | nod
-       tool: Option<String>,  // route == tool_candidate のときだけ Some
-       confidence: Confidence // high | low
-   }
-   ```
-   request の `response_format` の JSON schema も同じ形にする（`strict: true`、`additionalProperties: false`、`tool` は `["string","null"]`）。
-2. **Provider の選択**: `decide()` の最初で `ready.session.has_provider("backchannel").await` を見て、`"backchannel"` か `"llm"` を決める（4.3）。
-3. **1 回の streaming 呼び出し**: `respond_with_lfm` と `classify_with_qwen` を削除し、`classify_with_frontdesk(ready, provider_name, history, ctx)` を 1 つ作る。
-   - body: `{"model": provider.model, "messages": ..., "stream": true, "max_tokens": 128, "temperature": 0.0, "chat_template_kwargs": {"enable_thinking": false}, "response_format": ...}`
-   - SSE を読み、`choices[0].delta.content` を連結する。`reasoning_content` は捨てる。全体を `FRONTDESK_TIMEOUT` で囲む。
-   - 400 / 422 が返ったら `response_format` を外して 1 回だけ再送する（既存の `structured_output_fallback` の挙動を維持）。
-   - 最初の可視文字の時刻を Phase 5 で使うので、`first_visible_at: Option<Instant>` を戻り値に含める（判定は Phase 5 の `is_visible_delta` を使う。Phase 3 の時点では、空白以外の `content` が初めて来た時刻で仮実装してよい）。
-4. **INSTRUCTION** を新 schema に合わせて書き直す。含める内容:
-   - 無音 1.5 秒ごとに発言が届き、無音は依頼の完了を意味しない（既存文言を維持）。
-   - 短い相槌・同意には `backchannel` + `nod`。挨拶には `simple_reply` + `greeting`、お礼には `simple_reply` + `acknowledgement`。
-   - 話の途中なら `wait`。
-   - 利用可能 Tool の一覧（name と `read_only` かどうか）を渡す。1 つの read_only Tool で明らかに済む依頼だけ `tool_candidate` とし、`tool` に name を入れる。
-   - 少しでも推論、曖昧さの解消、複数の手順、状態変更が必要なら `delegate`。
-   - 自信がなければ `confidence: low`。
-   - JSON 以外の出力は禁止。
-   Tool 一覧は、Frontdesk を呼ぶ側が既に持っている Tool 定義から name と read_only フラグを取って渡す。`receive_lfm_utterance` は Tool catalog を持たないので、Stage 1 は空一覧のままにする（`tool_candidate` は `UnknownTool` で昇格する）。Phase 6 の前に、catalog の `name` と `effect`（`pure` / `read` だけ read_only）を受付へ渡す。
-5. **昇格判定**（新規 `escalation.rs`、HTTP に依存しない純粋関数）
-   ```rust
-   pub(crate) enum Verdict {
-       Backchannel { reply_key: ReplyKey },
-       Wait,
-       SimpleReply { reply_key: ReplyKey },
-       ToolCandidate { tool: String },
-       Delegate { reason: EscalationReason },
-   }
-   pub(crate) enum EscalationReason {
-       Timeout, RequestFailed, Empty, ParseError, SchemaViolation,
-       InputTooLarge, LowConfidence, UnknownTool, SideEffectTool, RequestedByModel,
-   }
-   pub(crate) struct JudgeContext<'a> {
-       pub pending_reasoning: bool,
-       pub input_bytes: usize,
-       pub tools: &'a [(String, bool)], // (name, read_only)
-   }
-   pub(crate) fn judge(raw: Result<&str, FrontdeskCallError>, ctx: &JudgeContext) -> Verdict;
-   ```
-   判定は次の順で、最初に当てはまったものを返す。
-   1. `ctx.pending_reasoning` → `Wait`（呼び出し前に判定し、Qwen 2B を呼ばない。`think = false`、`say = None`。推論中の追加発言で Ornith を二重に起動しない）
-   2. `ctx.input_bytes > FRONTDESK_MAX_INPUT_BYTES` → `Delegate{InputTooLarge}`（同上）
-   3. タイムアウト → `Delegate{Timeout}`、その他の呼び出し失敗 → `Delegate{RequestFailed}`
-   4. 空文字または空白のみ → `Delegate{Empty}`
-   5. JSON として読めない → `Delegate{ParseError}`
-   6. `FrontdeskOutput` に変換できない、`route == tool_candidate` なのに `tool == None`、`route != tool_candidate` なのに `tool == Some` → `Delegate{SchemaViolation}`
-   7. `confidence == low` → `Delegate{LowConfidence}`
-   8. `route == tool_candidate`: Tool が `ctx.tools` にない → `Delegate{UnknownTool}`。`read_only == false` → `Delegate{SideEffectTool}`。それ以外 → `ToolCandidate`
-   9. `route == delegate` → `Delegate{RequestedByModel}`
-   10. それ以外は route どおり
-6. **既存の出力型への対応**: `ConversationDecision` の形は変えず、フィールドを 2 つ足す。
-   ```rust
-   #[serde(skip, default)] pub tool_hint: Option<String>,
-   #[serde(skip, default)] pub escalation: Option<&'static str>,
-   ```
-   `Verdict` からの変換は次のとおり。
-   - `Backchannel` / `SimpleReply`: 既存の定型文テーブル（`frontdesk_decision.rs` の reply 選択関数）から `say` を選び、`think = false`。`nod` 用に「はい。」「なるほど。」を追加する。`Backchannel` が定型表に当たらないときは `Wait` と同じ（無言、`think = false`）。`SimpleReply` が定型表に当たらないときは Ornith へ昇格する。挨拶の繰り返し（`already_greeted`）は無言のまま。
-   - `Wait`: `say = None`、`think = false`。
-   - `ToolCandidate`: `think = true`、`tool_hint = Some(tool)`。
-   - `Delegate`: `think = true`、`escalation = Some(reason の snake_case 名)`。
-   既存の `apply_reasoning_need` と `already_greeted` の扱いは、`think` の決め方を上の変換に置き換えたうえで残す。
-7. `tool_hint` は、この Phase では trace とログに出すだけにする。Ornith の request に渡す処理は Phase 6 で行う。
-8. ファイル内の「LFM」表記（エラーコードの `lfm-` 接頭辞を含む）を `frontdesk-` に改める。DB のテーブル名 `lfm_voice_utterances` は変えない。
-
-### 追加テスト
-
-`escalation.rs` の単体テスト（HTTP なし）:
-
-| テスト名 | 入力 | 期待値 |
-|---|---|---|
-| `nod_for_short_acknowledgement` | `{"route":"backchannel","replyKey":"nod","tool":null,"confidence":"high"}` | `Backchannel{nod}` |
-| `wait_while_mid_utterance` | `route: wait` | `Wait` |
-| `read_only_tool_becomes_candidate` | `route: tool_candidate`、`tool: "current_time"`、tools に `("current_time", true)` | `ToolCandidate{"current_time"}` |
-| `side_effect_tool_is_escalated` | tools に `("send_message", false)` で `tool: "send_message"` | `Delegate{SideEffectTool}` |
-| `unknown_tool_is_escalated` | tools に存在しない name | `Delegate{UnknownTool}` |
-| `complex_request_is_delegated` | `route: delegate` | `Delegate{RequestedByModel}` |
-| `low_confidence_is_escalated` | `confidence: low` | `Delegate{LowConfidence}` |
-| `invalid_json_escalates` | `はい、了解です` | `Delegate{ParseError}` |
-| `unknown_field_escalates` | 余分なフィールド付き | `Delegate{SchemaViolation}` |
-| `tool_without_candidate_route_escalates` | `route: backchannel` かつ `tool: "x"` | `Delegate{SchemaViolation}` |
-| `empty_escalates` | `""` と `"  "` | `Delegate{Empty}` |
-| `timeout_escalates` | `Err(Timeout)` | `Delegate{Timeout}` |
-| `pending_reasoning_stays_silent_without_call` | `pending_reasoning = true` | `Wait`。`ConversationDecision.think == false` かつ `say == None` |
-
-`world_tests.rs`（fixture server 使用）:
-
-| テスト名 | 内容 | 期待値 |
-|---|---|---|
-| `frontdesk_uses_backchannel_provider_when_present` | 5 Provider の session | 受付の request が `backchannel` の base_url と token に届く。`llm` には届かない |
-| `frontdesk_falls_back_to_llm_without_backchannel` | 4 Provider の session | 受付の request が `llm` に届く |
-| `frontdesk_request_is_streaming_without_thinking` | 受付の request body | `stream == true`、`chat_template_kwargs.enable_thinking == false` |
-| `schema_violation_hands_turn_to_ornith` | `backchannel` が不正な JSON を返す | `think == true`、`escalation == Some("schema_violation")` または `"parse_error"` |
-
-### チェックポイント
-
-```sh
-cargo test --manifest-path src-tauri/Cargo.toml larm_voice
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-## 9. Phase 4: Ornith の thinking 制御
-
-ブランチ: `feat/ornith15-thinking`
-
-### 変更ファイル
-
-- `crates/larm-session/src/http_api.rs`
-- `src-tauri/src/providers/stream/larm_voice.rs`
-- 設定の JSON schema や TypeScript 型に `LlmOptions` が出てくる箇所（`rg -n "tokenLimit|LlmOptions" src src-tauri/src` で確認）
-
-### 手順
-
-1. `http_api.rs` に追加する。
-   ```rust
-   #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
-   #[serde(rename_all = "kebab-case")]
-   pub enum Thinking { #[default] Auto, Disabled, Enabled }
-   ```
-   `LlmOptions` に `#[serde(default)] pub thinking: Thinking` を追加する。`Default` と `standard()` は `Auto`。`deny_unknown_fields` はそのまま（既存の保存値にこのキーはないので、`default` で読める）。
-2. `apply()` の最後（qwen 用の `chat_template_kwargs` 設定の後）に追加する。
-   - `Disabled` → `body["chat_template_kwargs"] = json!({"enable_thinking": false})`
-   - `Enabled` → `body["chat_template_kwargs"] = json!({"enable_thinking": true})`
-   - `Auto` → 何もしない
-3. `stream/larm_voice.rs` の `stream_larm_voice_provider` で、`request_options` を次のように決める。
-   ```rust
-   let mut options = request_options.unwrap_or_default();
-   options.thinking = Thinking::Disabled;
-   ```
-   それを `OpenAiCompatibleProviderSettings.request_options` に `Some(options)` として渡す。
-4. 経路 B（`stream_dynamic_lan_provider`）とメモリー抽出は変更しない。
-5. TypeScript 側に `LlmOptions` の型がある場合は `thinking?: "auto" | "disabled" | "enabled"` を追加する。UI は追加しない。
-
-### 追加テスト
-
-| 場所 | テスト名 | 期待値 |
-|---|---|---|
-| `http_api.rs` | `thinking_disabled_overrides_qwen_reasoning_kwargs` | model `qwen3.5-2b-fast-response`、effort `low`、`Disabled` のとき `chat_template_kwargs == {"enable_thinking": false}` |
-| `http_api.rs` | `thinking_auto_keeps_existing_behavior` | 既存テスト `model_capabilities_choose_only_supported_parameters` の期待値が変わらない |
-| `http_api.rs` | `llm_options_without_thinking_key_deserializes` | `{"tokenLimit":"auto"}` を読むと `thinking == Auto` |
-| `world_tests.rs` など | `voice_conversation_request_disables_thinking` | 経路 A の会話本体の request body に `chat_template_kwargs.enable_thinking == false` |
-
-### チェックポイント
-
-```sh
-cargo test --manifest-path crates/larm-session/Cargo.toml http_api
-cargo test --manifest-path src-tauri/Cargo.toml
-bun test
-```
-
-## 10. Phase 5: リアルタイム計測（trace）
-
-ブランチ: `feat/ornith15-trace`
-
-### 変更ファイル
-
-- `src-tauri/src/providers/turn_trace.rs`（新規）
-- `src-tauri/src/providers/mod.rs`（`pub(crate) mod turn_trace;`）
-- `src-tauri/src/providers/chat_completions/chunks.rs`、`sse.rs`
-- `src-tauri/src/providers/larm_voice/frontdesk.rs`、`frontdesk_decision.rs`
-- `src-tauri/src/providers/stream/larm_voice.rs`
-- `src-tauri/src/voice/http_audio/requests.rs`（TTS 開始の記録 1 行）
-
-### 手順
-
-1. **trace の保存場所**（`turn_trace.rs`）: `ModelStreamContext` などの既存構造体にはフィールドを足さず、`conversation_id` をキーにしたプロセス内レジストリにする。
-   ```rust
-   pub(crate) enum TraceEvent {
-       AsrFinal,
-       LlmRequest { role: &'static str, model: String, escalated_from_backchannel: bool },
-       FirstVisibleToken,
-       Token,
-       Done { completion_tokens: Option<u32> },
-       TtsStart,
-   }
-   pub(crate) fn begin_turn(conversation_id: &str) -> String;      // trace_id（Uuid）を返す
-   pub(crate) fn mark(conversation_id: &str, event: TraceEvent);   // 現在のターンに Instant::now() で記録
-   pub(crate) fn finish(conversation_id: &str);                   // ログに 1 行出してから削除
-   ```
-   - 実装は `static REGISTRY: LazyLock<Mutex<HashMap<String, TurnTrace>>>`。ターンが始まっていない conversation への `mark` は無視する。
-   - 同じターンで `LlmRequest` が 2 回来た場合（受付 → Ornith への昇格）は、両方を `attempts: Vec<Attempt>` に積む。`FirstVisibleToken`、`Token`、`Done` は直近の attempt に記録する。`FirstVisibleToken` は attempt ごとに最初の 1 回だけ記録する。
-   - `finish` が出すログ: `tracing::info!(target: "saaa::turn_trace", trace_id, asr_to_request_ms, ttft_ms, decode_tps, total_ms, role, model, escalated_from_backchannel, first_token_to_tts_ms)`。
-     - `ttft_ms` = `FirstVisibleToken` − `LlmRequest`
-     - `total_ms` = `Done` − `LlmRequest`
-     - `decode_tps` = `completion_tokens`（なければ `Token` の回数）÷（`Done` − `FirstVisibleToken`）
-2. **可視文字の判定**（`chunks.rs`）
-   ```rust
-   pub(crate) fn is_visible_delta(chunk: &serde_json::Value) -> bool
-   ```
-   `choices[*].delta.content` が文字列で、空白以外の文字を 1 文字以上含むときだけ `true`。`reasoning_content`、`reasoning`、`role` だけの delta、空文字、空白のみは `false`。
-3. **記録する場所**
-   - `AsrFinal`: `larm_voice/frontdesk.rs` で、ASR 確定テキストを受け取って受付処理を始める関数の先頭。ここで `begin_turn` を呼び、続けて `mark(AsrFinal)` する。
-   - 受付: `frontdesk_decision.rs` の呼び出し直前に `LlmRequest{role: "backchannel" または "llm", ...}`。SSE を読む処理で `is_visible_delta` が最初に `true` になったら `FirstVisibleToken`、各 visible delta で `Token`、終わりに `Done`。
-   - Ornith: `stream/larm_voice.rs` の `stream_model_provider_with_api_key` 呼び出し直前に `LlmRequest{role: "llm", escalated_from_backchannel: <受付が Delegate または ToolCandidate だったか>}`。`chat_completions/sse.rs` のストリーム処理で、`conversation_id` が分かる箇所から `FirstVisibleToken`、`Token`、`Done` を記録する（`ModelStreamContext` が持つ conversation id を使う。見当たらなければ実装を止めて質問する）。
-   - `TtsStart`: `voice/http_audio/requests.rs` で、TTS の `acquire("tts")` が成功した直後。
-   - `finish`: 受付だけで終わるターンは定型文の TTS 開始後。Ornith に渡したターンは、Ornith の応答が終わって最初の TTS が始まった後。
-4. 永続化はしない（ログ出力のみ）。
-
-### 追加テスト
-
-| テスト名 | 内容 | 期待値 |
-|---|---|---|
-| `is_visible_delta_cases` | `role` のみ、`reasoning_content`、`content:""`、`content:"  "`、`content:"は"` | 「は」だけが `true` |
-| `ttft_ignores_reasoning_and_empty_deltas` | SSE を上の順で各 50ms 間隔で送る fixture | `ttft_ms` が 200〜300 の範囲 |
-| `trace_records_backchannel_only_turn` | 受付だけで終わるターン | attempt が 1 つ、`role == "backchannel"`、`escalated_from_backchannel == false` |
-| `trace_records_escalation_to_ornith` | 受付が schema 違反 → Ornith | attempt が 2 つ、2 つ目が `role == "llm"` かつ `escalated_from_backchannel == true` |
-| `decode_tps_uses_completion_tokens` | `completion_tokens = 100`、FirstVisible から Done まで 1 秒 | `decode_tps` が約 100 |
-
-### チェックポイント
-
-```sh
-cargo test --manifest-path src-tauri/Cargo.toml turn_trace
-cargo test --manifest-path src-tauri/Cargo.toml chunks
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-## 11. Phase 6: Tool 候補を Ornith に渡す
-
-ブランチ: `feat/ornith15-tool-hint`
-
-Phase 3 の `ConversationDecision.tool_hint` を、Ornith の request まで届ける。
-
-1. `think == true` の発言は `frontdesk_repository.rs` の `lfm_voice_utterances` に `status='delegate'` で保存され、その後 Ornith の推論 run が `claim_reasoning_request` で取り出す。`tool_hint` をこの受け渡しに載せる。
-2. `lfm_voice_utterances` に `tool_hint TEXT` 列を追加する migration を書く（既存の `CREATE TABLE` 定義の近くにある migration の書き方に合わせる）。migration のテストは一時 DB で行う。
-3. `claim_reasoning_request` の戻り値に `tool_hint` を含め、Ornith の request を組み立てる箇所で、system メッセージとして「受付の一次判定: Tool `{name}` が候補。使うかどうか、引数は会話から判断すること」を追加する。
-4. `request.content` の一致確認（`m.content=?3`）には手を入れない。
-
-テスト:
-
-| テスト名 | 期待値 |
-|---|---|
-| `tool_hint_survives_repository_round_trip` | 保存した `tool_hint` が `claim_reasoning_request` で返る |
-| `tool_hint_reaches_ornith_request` | Ornith の request body に候補 Tool 名を含む system メッセージがある |
-| `backchannel_never_executes_tools` | 受付だけで終わるターンで、Tool 実行関数が 1 回も呼ばれない |
-
-## 12. Phase 7: 既定値の整理
-
-ブランチ: `feat/ornith15-defaults`
-
-1. `src-tauri/src/persistence/settings_defaults.rs` と `src/features/settings/settingsDefaults.ts` の既定の `larmProfile` を `saaa-conversation-ornith15` にする。
-2. `tests/fixtures/ipc-receivers.json`、`tests/settings-regressions.test.ts` の期待値を追従させる。
-3. `role_routing/schema.rs` の 206 行目と 571 行目は `DEFAULT_PROFILE` を参照しているので、値は自動的に変わる。既存 migration の結果が変わるため、関連する migration テストの期待値を確認し、過去の migration が書き込む値は `PREVIOUS_DEFAULT_PROFILE` に固定する（過去の migration の意味を変えない）。
-4. `spec/docs/larm-http-api-review.md` の既定 Profile の記述を更新する。
+1. `src/features/settings/settingsDefaults.ts` の `DEFAULT_LARM_PROFILE` を `"SAAA"` にする。Rust 側の `settings_defaults.rs` は Phase 1 で `DEFAULT_SELECTOR` になっている。
+2. `tests/settings-regressions.test.ts` と `tests/fixtures/ipc-receivers.json` の `larmProfile` の期待値を `"SAAA"` にする。
+3. 新規インストールの actor の表示名（`role_routing/contracts.rs` と `settingsRoleRoutingDefaults.ts`）を、モデル名を含まない「LARM 受付（backchannel）」「LARM 思考（llm）」にする。実際のモデル名は Phase 2 の診断で見る。保存済みの actor の表示名は書き換えない（4.6）。
+4. 設定画面の Harness の Profile 欄の説明文に、`SAAA`（既定）と `SAAA-w-Image` / `SAAA-w-music` を入力できること、旧 ID は `SAAA` として扱われることを書く（`src/i18n/locales/jaSettings.ts`、`enSettings.ts`）。
+5. `spec/docs/larm-http-api-review.md` の既定 Profile の記述を selector 方式に更新する。
 
 チェックポイント:
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml
 bun test
+bun run quality:check
 ```
 
-## 13. ルーティング判断表
+## 10. Phase 5: 実機確認（Phase 4 完了後）
 
-| 入力の性質 | 担当 | Verdict |
-|---|---|---|
-| 「はい」「なるほど」 | Qwen 2B | `Backchannel{nod}`（定型文） |
-| 挨拶、お礼 | Qwen 2B | `SimpleReply`（定型文） |
-| 発話の途中 | Qwen 2B | `Wait` |
-| 単一の read_only Tool で済む依頼 | Qwen 2B が候補を出し、Ornith が引数構築と実行 | `ToolCandidate` |
-| 推論や曖昧さの解消が必要 | Ornith | `Delegate{RequestedByModel}` |
-| 複数段階の Tool use、文脈からの引数構築 | Ornith | `Delegate` |
-| 状態変更、権限、安全性、不可逆操作 | Ornith | `Delegate{SideEffectTool}` |
-| 推論中の追加発言 | 受付を呼ばず無言 | `Wait`（`think = false`） |
-| 長い入力 | Ornith | `Delegate{InputTooLarge}` |
-| Qwen 2B の出力が不正、空、自信なし、タイムアウト | Ornith | `Delegate{ParseError / SchemaViolation / Empty / LowConfidence / Timeout}` |
-| ユーザーへの自由文の回答 | Ornith | — |
+保存設定は変えない。接続先は保存済み Harness address（`http://192.168.0.130:9810`）。
 
-## 14. 依頼のテスト 10 項目との対応
+1. `crates/larm-session/tests/live.rs` に `live_saaa_selector_two_llm_session`（`#[ignore]`）を追加する。`Variant(Conversation)` で接続し、次を確認して close する。
+   - `selector() == Some("SAAA")`、`profile_id() == "saaa-conversation-ornith15"`
+   - `provider_summary()` の `llm.model == "ornith-1.5-35b"`、`backchannel.model == "qwen3.5-2b-fast-response"`
+   - `backchannel` と `llm` にそれぞれ `enable_thinking: false` で短い chat request を 1 回送り、200 が返る
+   ```sh
+   LARM_API_TOKEN=<token> cargo test --manifest-path crates/larm-session/Cargo.toml --test live live_saaa_selector_two_llm_session -- --ignored --nocapture
+   ```
+2. ユーザーがアプリで音声会話を 1 回行い、DB の**コピー**で次を確認する。
+   ```sql
+   SELECT ordinal, purpose, actor_id, status FROM rr_steps WHERE root_id=<直近の音声 run_id> ORDER BY ordinal;
+   ```
+   `0 frontend larm-frontdesk succeeded`、`1 respond larm-reasoner succeeded` になること。違えば `saaa-butler-role-routing.md` 2.6 の条件を上から確認する。
+3. 診断画面の LARM 項目に、selector `SAAA` と 2 つの LLM の model が表示されること。
 
-| # | 依頼項目 | テスト |
-|---|---|---|
-| 1 | canonical を発見・選択 | `auto_selects_canonical_ornith15_profile`、`text_path_selects_canonical_profile` |
-| 2 | Profile がない場合だけ `saaa-qwen38` | `auto_falls_back_to_legacy_only_when_canonical_absent`、`text_path_falls_back_to_legacy_only_when_canonical_absent` |
-| 3 | Qwen 3.8 をハードコードしない | `legacy_profile_model_comes_from_claim`、`no_qwen38_literal_in_sources` |
-| 4 | 5 Provider を claim し同じ session で利用 | `claims_five_providers_in_any_order`、`canonical_requires_backchannel`、`frontdesk_uses_backchannel_provider_when_present` |
-| 5 | Qwen 2B の短い相槌 | `nod_for_short_acknowledgement` |
-| 6 | Qwen 2B の単純な Tool 選択 | `read_only_tool_becomes_candidate` |
-| 7 | 複雑な依頼を Ornith へ昇格 | `complex_request_is_delegated` |
-| 8 | JSON / schema 違反で Ornith へ fallback | `invalid_json_escalates`、`unknown_field_escalates`、`schema_violation_hands_turn_to_ornith` |
-| 9 | renew / release で lease が漏れない | `renew_reclaims_all_five_and_release_leaves_no_lease` |
-| 10 | TTFT が最初の可視文字基準 | `ttft_ignores_reasoning_and_empty_deltas` |
+## 11. 完了条件
 
-## 15. 実機確認（任意、Phase 5 完了後）
-
-本番の LARM はまだ旧 release なので、実機確認は LARM の隔離環境に対して行う。保存設定は変えず、環境変数で接続先を渡す。
-
-```sh
-SAAA_LARM_CONTROL_URL=<隔離環境の control URL> LARM_API_TOKEN=<token> \
-  cargo test --manifest-path crates/larm-session/Cargo.toml --test live -- --ignored
-```
-
-`tests/live.rs` に、自動選択で canonical が選ばれることと、5 Provider が `acquire` できることを確認する `live_canonical_five_provider_session`（`#[ignore]` 付き）を追加する。隔離環境の control URL と token は LARM 担当者から受け取る。
-
-## 16. 完了条件
-
-- 14 章のテストがすべて存在し、通過している。
-- `cargo test --manifest-path crates/larm-session/Cargo.toml`、`cargo test --manifest-path src-tauri/Cargo.toml`、`bun test` が通過している。
-- `rg -n 'providers\[0\]|providers\.first\(\)' src-tauri/src/providers/dynamic_lan/validate.rs crates/larm-session/src` が 0 件。
-- `rg -n 'qwen3\.8|qwen-3\.8' src-tauri/src crates/larm-session/src` が、`http_api.rs` の既存テスト（model 名の判定テスト）以外で 0 件。
-- 本番の旧 release の LARM でも音声会話が動く（4.1 の自動選択で `saaa-conversation-gemma4` にフォールバックする）ことを、`auto_uses_previous_default_when_only_it_exists` で確認している。
+- Phase 1〜4 のチェックポイントがすべて通る。
+- `voice_turn_runs_frontend_then_reasoner` と `text_turn_skips_frontend_provider` が、実機と同じモデル名の fixture で通る（音声は `backchannel` → `llm`、テキストは `llm` だけ。どちらも思考は `ornith-1.5-35b`）。
+- `rg -n "ProfilePreference::Auto|AUTO_LABEL|AGENT_PROFILE|select_voice_profile|select_default_llm_profile" crates src-tauri/src services` が 0 件。
+- `rg -n 'providers\[0\]|providers\.first\(\)' src-tauri/src/providers/dynamic_lan crates/larm-session/src` が 0 件。
+- Phase 5 の live テストが通り、ユーザーが実機の音声会話で 10 章の手順 2 を確認している。
 - 各 Phase の PR 説明に、変更ファイル、テスト結果、未解決事項を書いている。
 
-## 17. リスク
+## 12. 未解決事項（LARM 担当者に確認する）
+
+| # | 質問 | 本計画での扱い |
+|---|---|---|
+| Q1 | 3 つの selector が同じ `id` を返し、Connection の request にも selector を渡す欄がない。image / music の Service を SAAA が使うときの認証と接続先は何か（claim に `services` は返らない） | variant は存在確認だけに使う（4.4）。media の呼び出しは範囲外 |
+| Q2 | `llm` の contextWindow が 230400 から 131072 に変わった。今後も変わりうるか | SAAA は claim の値を使い、catalog と照合するだけなので、コード変更は不要 |
+| Q3 | variant 切替中（image 34GB の起動中など）に、`profile=SAAA` の問い合わせや基本セットの health はどうなるか | 既存の `larm_unhealthy_provider` と capacity 待ちに任せる |
+
+## 13. リスク
 
 | リスク | 対策 |
 |---|---|
-| 本番 LARM が旧 release のため canonical がない | 4.1 の自動選択で、現在動いている Profile に落ちる。LARM の本番反映後は何もしなくても canonical に切り替わる |
-| Qwen 2B の JSON 遵守率が低く、昇格が多発する | Phase 5 の trace で昇格理由の内訳を見て、INSTRUCTION を調整する。昇格しても応答は成立する |
-| media variant（image 34GB）の起動中に、基本セットの health が一時的に落ちる | 既存の `larm_unhealthy_provider` と capacity 待ちの処理に任せる。SAAA からは variant を操作しない |
-| `larm-session` の API 変更で `services/reasoning-mcp` がコンパイルエラーになる | 既存の `connect_with_profile*` を `Explicit` のラッパーとして残す。Cargo workspace はないので、`cargo build --manifest-path services/reasoning-mcp/Cargo.toml` を個別に実行して確認する |
-| `LlmOptions` へのフィールド追加で、保存済み設定の読み込みが壊れる | `#[serde(default)]` を付け、`llm_options_without_thinking_key_deserializes` で確認する |
+| LARM を再起動しないと selector が反映されず、全 Profile が返る（2026-09-25 に実際に発生） | `requestedProfile` の一致と件数 1 の検証で `larm_catalog_invalid` になり、別の Profile では動かない。エラー文言で LARM の再起動を案内する |
+| catalog と claim の食い違いで接続できなくなる | 黙って別モデルで動くより安全なので失敗させる。`larm_catalog_claim_mismatch` の文言で原因を示す |
+| 旧 ID を保存している環境で、意図せず selector に切り替わる | 4.1 の読み替えは、SAAA がこれまで既定値として出荷した 3 つの ID だけに限る。それ以外は `Explicit` のまま |
+| `Explicit` で `backchannel` を必須にしたため、既存の独自 Profile が接続できなくなる | 4.2 のとおり、要望が出たら止めて質問する。PR 説明に挙動の変更として書く |
+| `larm-session` の API 変更で `services/reasoning-mcp` がコンパイルエラーになる | `connect_with_profile*` は `Explicit` のラッパーとして残す。`cargo test --manifest-path services/reasoning-mcp/Cargo.toml` を Phase 1 で実行する |

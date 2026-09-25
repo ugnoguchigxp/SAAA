@@ -1,15 +1,15 @@
 //! One lease for the entire voice conversation. Read guards pin all claimed tokens;
 //! renew/reclaim and release take the writer lock and cannot overtake inference.
-mod catalog;
+pub mod catalog;
 mod contract;
 mod error;
 mod http;
 pub mod http_api;
+use catalog::CatalogProfile;
 use contract::Snapshot;
 pub use contract::{
-    local_url, required_providers, Capacity, ContextWindow, EmbeddingSpace, Provider,
-    BACKCHANNEL, BASE_PROVIDERS, CANONICAL_PROFILE, DEFAULT_PROFILE, LEGACY_PROFILE,
-    PREVIOUS_DEFAULT_PROFILE,
+    local_url, required_providers, Capacity, ContextWindow, EmbeddingSpace, Provider, BACKCHANNEL,
+    BASE_PROVIDERS, DEFAULT_SELECTOR, LEGACY_PROFILE_IDS,
 };
 pub use error::ConnectError;
 use serde_json::json;
@@ -24,8 +24,47 @@ use tokio::sync::{watch, OwnedRwLockReadGuard, RwLock};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProfilePreference {
-    Auto,
+    Variant(ProfileVariant),
     Explicit(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileVariant {
+    Conversation,
+    Image,
+    Music,
+}
+
+impl ProfileVariant {
+    pub const ALL: [Self; 3] = [Self::Conversation, Self::Image, Self::Music];
+    pub fn selector(self) -> &'static str {
+        match self {
+            Self::Conversation => DEFAULT_SELECTOR,
+            Self::Image => "SAAA-w-Image",
+            Self::Music => "SAAA-w-music",
+        }
+    }
+    pub fn from_selector(selector: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|variant| variant.selector() == selector)
+    }
+    fn services(self) -> &'static [&'static str] {
+        match self {
+            Self::Conversation => &[],
+            Self::Image => &["image"],
+            Self::Music => &["music"],
+        }
+    }
+}
+
+/// Credential-free view of a claimed provider for diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderSummary {
+    pub name: String,
+    pub model: String,
+    pub endpoint: String,
+    pub context_window: Option<ContextWindow>,
 }
 
 pub struct Session {
@@ -34,6 +73,7 @@ pub struct Session {
     connection: url::Url,
     id: String,
     profile: String,
+    catalog: Option<CatalogProfile>,
     required: Vec<&'static str>,
     snapshot: Arc<RwLock<Option<Snapshot>>>,
     closed: AtomicBool,
@@ -86,7 +126,19 @@ impl Session {
         base: &str,
         cancellation: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
-        Self::connect_with_profile(base, DEFAULT_PROFILE, cancellation).await
+        #[cfg(not(test))]
+        let token = std::env::var("LARM_API_TOKEN")
+            .map_err(|_| ConnectError::from("credential_missing"))?;
+        #[cfg(test)]
+        let token = "test-control-token".to_string();
+        Self::connect_with_profile_credential_and_key(
+            base,
+            ProfilePreference::Variant(ProfileVariant::Conversation),
+            token,
+            format!("saaa-session-{}", uuid::Uuid::new_v4()),
+            cancellation,
+        )
+        .await
     }
     pub async fn connect_with_profile(
         base: &str,
@@ -192,19 +244,31 @@ impl Session {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|_| "larm_client_failed")?;
-        let profile = match preference {
-            ProfilePreference::Explicit(profile) => profile,
-            ProfilePreference::Auto => {
-                let profiles = tokio::select! { biased;
+        let required = contract::required_providers();
+        let (profile, catalog) = match &preference {
+            ProfilePreference::Explicit(profile) => (profile.clone(), None),
+            ProfilePreference::Variant(variant) => {
+                let profile = tokio::select! { biased;
                     _ = cancelled(&mut cancellation) => return Err("larm_cancelled".into()),
                     _ = cancelled(&mut abandoned) => return Err("larm_cancelled".into()),
-                    result = catalog::fetch(&client, &base, &token) => result?,
+                    result = catalog::fetch(&client, &base, &token, variant.selector()) => result?,
                 };
-                catalog::select_voice_profile(&profiles)?
+                let expected = variant.services();
+                if !required
+                    .iter()
+                    .all(|name| profile.provider(name).is_some())
+                    || profile.services.len() != expected.len()
+                    || !expected
+                        .iter()
+                        .all(|name| profile.services.iter().any(|service| service.name == *name))
+                {
+                    return Err("larm_profile_unavailable".into());
+                }
+                let id = profile.id.clone();
+                (id, Some(profile))
             }
         };
         validate_profile(&profile)?;
-        let required = contract::required_providers(&profile);
         base.set_path("/v1/agent-connections");
         // Do not race creation against cancellation: receive the id, then release it.
         let created = http::json(
@@ -238,6 +302,7 @@ impl Session {
             connection: base,
             id: id.clone(),
             profile: profile.clone(),
+            catalog,
             required: required.clone(),
             snapshot: Arc::new(RwLock::new(None)),
             closed: AtomicBool::new(false),
@@ -321,6 +386,9 @@ impl Session {
         )
         .await?;
         let snapshot = contract::parse(value, &self.id, &self.required)?;
+        if let Some(catalog) = &self.catalog {
+            contract::verify_against_catalog(&snapshot, catalog)?;
+        }
         for provider in snapshot.providers.values() {
             self.health(provider).await?;
         }
@@ -328,6 +396,47 @@ impl Session {
     }
     pub fn profile_id(&self) -> &str {
         &self.profile
+    }
+    pub fn selector(&self) -> Option<&str> {
+        self.catalog.as_ref().map(|catalog| catalog.selector.as_str())
+    }
+    pub fn catalog_revision(&self) -> Option<&str> {
+        self.catalog
+            .as_ref()
+            .map(|catalog| catalog.revision.as_str())
+    }
+    pub async fn provider_summary(&self) -> Vec<ProviderSummary> {
+        let endpoints = self
+            .catalog
+            .as_ref()
+            .map(|catalog| {
+                catalog
+                    .providers
+                    .iter()
+                    .map(|provider| (provider.name.clone(), provider.endpoint.clone()))
+                    .collect::<std::collections::HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        let mut summary = self
+            .snapshot
+            .read()
+            .await
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .providers
+                    .iter()
+                    .map(|(name, provider)| ProviderSummary {
+                        name: name.clone(),
+                        model: provider.model.clone(),
+                        endpoint: endpoints.get(name).cloned().unwrap_or_default(),
+                        context_window: provider.context_window,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        summary.sort_by(|left, right| left.name.cmp(&right.name));
+        summary
     }
     pub async fn provider_names(&self) -> Vec<String> {
         self.snapshot

@@ -1,1 +1,1 @@
-export type { RoleRoutingSettings } from "./roleRoutingSettingsParts";
+export type { RoleRoutingActor, RoleRoutingSettings } from "./roleRoutingSettingsParts";

@@ -290,6 +290,12 @@ fn settings_reject_embedded_credentials_and_cloud_fallback_on_local_route() {
     documents[routing_index].value_json["voiceSpeak"]["providerId"] = Value::Null;
     documents[routing_index].value_json["conversationRespond"]["fallbackProviderIds"] =
         json!(["local-fallback"]);
+    if let Some(roles) = documents
+        .iter_mut()
+        .find(|document| document.namespace == "routing.roles")
+    {
+        roles.value_json["enabled"] = json!(false);
+    }
     assert!(validate_settings_batch(&documents).is_ok());
 
     documents[routing_index].value_json["conversationRespond"]["fallbackProviderIds"] = json!([]);

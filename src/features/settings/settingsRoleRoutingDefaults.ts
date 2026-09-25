@@ -7,7 +7,7 @@ export function defaultRoleRoutingSettings(): RoleRoutingSettings {
     actors: [
       {
         id: "larm-frontdesk",
-        label: "LARM 受付",
+        label: "LARM 受付（backchannel）",
         aliases: [],
         transport: "provider",
         providerId: "lan-llm-dynamic",
@@ -20,7 +20,7 @@ export function defaultRoleRoutingSettings(): RoleRoutingSettings {
       },
       {
         id: "larm-reasoner",
-        label: "LARM 思考",
+        label: "LARM 思考（llm）",
         aliases: [],
         transport: "provider",
         providerId: "lan-llm-dynamic",

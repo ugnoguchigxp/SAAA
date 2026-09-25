@@ -15,25 +15,7 @@
                     .send(read_request(&mut stream))
                     .expect("request captured");
                 let body = match index {
-                    0 => json!({
-                        "contractVersion": "agent-connection.v1",
-                        "defaultAgentProfile": "coding-default",
-                        "profiles": [{
-                            "id": "coding-default",
-                            "providers": [{
-                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
-                                "capability": "llm.coding",
-                                "supportedCapabilities": [
-                                    "llm.coding",
-                                    "llm.general",
-                                    "llm.reasoning"
-                                ],
-                                "protocol": "openai.chat-completions.v1",
-                                "model": "coding-default"
-                            }]
-                        }],
-                        "audiences": [AUDIENCE]
-                    }),
+                    0 => serde_json::from_str::<serde_json::Value>(&saaa_selector_catalog()).unwrap(),
                     1 => {
                         let mut state = connection_state_json(
                             "aconn_test",
@@ -42,20 +24,10 @@
                             &created_at,
                             &expires_at,
                         );
-                        state["agentProfile"] = json!("coding-default");
-                        state["providers"][0]["capability"] = json!("llm.coding");
-                        state["providers"][0]["route"] = json!("llm-default");
-                        state["providers"][0]["publicModel"] = json!("coding-default");
                         state
                     }
                     2 => {
-                        let mut claim =
-                            claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at);
-                        claim["providers"][0]["capability"] = json!("llm.coding");
-                        claim["providers"][0]["model"] = json!("coding-default");
-                        claim["providers"][0]["configuration"]["fields"]["model"] =
-                            json!("coding-default");
-                        claim
+                        claim_json("127.0.0.1", address.port(), AUDIENCE, &expires_at)
                     }
                     3 => {
                         json!({ "ready": true, "acceptingRequests": true, "capacity": {"maxConcurrentRequests":1,"activeRequests":0,"maxQueuedRequests":2,"queueDepth":0,"queueTimeoutMs":5000,"retryAfterMs":100,"completionGuaranteed":false} })
@@ -77,13 +49,14 @@
         )
         .await
         .expect("current default profile resolves");
-        assert_eq!(connection.model(), "coding-default");
+        assert_eq!(connection.model(), LLM_MODEL);
         connection.release().await.expect("connection releases");
         server.join().expect("server joins");
 
         let requests = captured_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 5);
-        assert!(requests[1].contains("\"agentProfile\":\"coding-default\""));
+        assert!(requests[0].contains("GET /v3/agent-profiles?profile=SAAA"));
+        assert!(requests[1].contains("\"agentProfile\":\"saaa-conversation-ornith15\""));
         assert!(requests[2].starts_with("POST /v1/agent-connections/aconn_test/claim HTTP/1.1"));
         assert!(requests[4].starts_with("DELETE /v1/agent-connections/aconn_test HTTP/1.1"));
 
@@ -110,19 +83,7 @@
                     .send(read_request(&mut stream))
                     .expect("request captured");
                 let body = match index {
-                    0 => json!({
-                        "contractVersion": "agent-connection.v1",
-                        "profiles": [{
-                            "id": AGENT_PROFILE,
-                            "providers": [{
-                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
-                                "capability": PROFILE_CAPABILITY,
-                                "protocol": "openai.chat-completions.v1",
-                                "model": AGENT_PROFILE
-                            }]
-                        }],
-                        "audiences": [AUDIENCE]
-                    })
+                    0 => serde_json::from_str::<serde_json::Value>(&saaa_selector_catalog()).unwrap()
                     .to_string(),
                     1 => connection_state_json(
                         "aconn_test",
@@ -187,19 +148,7 @@
                 let request = read_request(&mut stream);
                 captured_tx.send(request).expect("request captured");
                 let body = match index {
-                    0 => json!({
-                        "contractVersion": "agent-connection.v1",
-                        "profiles": [{
-                            "id": AGENT_PROFILE,
-                            "providers": [{
-                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
-                                "capability": PROFILE_CAPABILITY,
-                                "protocol": "openai.chat-completions.v1",
-                                "model": AGENT_PROFILE
-                            }]
-                        }],
-                        "audiences": [AUDIENCE]
-                    })
+                    0 => serde_json::from_str::<serde_json::Value>(&saaa_selector_catalog()).unwrap()
                     .to_string(),
                     1 => connection_state_json(
                         "aconn_test",
@@ -261,19 +210,7 @@
                 let request = read_request(&mut stream);
                 captured_tx.send(request).expect("request captured");
                 let body = match index {
-                    0 => json!({
-                        "contractVersion": "agent-connection.v1",
-                        "profiles": [{
-                            "id": AGENT_PROFILE,
-                            "providers": [{
-                                "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
-                                "capability": PROFILE_CAPABILITY,
-                                "protocol": "openai.chat-completions.v1",
-                                "model": AGENT_PROFILE
-                            }]
-                        }],
-                        "audiences": [AUDIENCE]
-                    })
+                    0 => serde_json::from_str::<serde_json::Value>(&saaa_selector_catalog()).unwrap()
                     .to_string(),
                     1 => connection_state_json(
                         "aconn_test",
@@ -349,7 +286,7 @@
     async fn live_dynamic_lan_claim_and_chat() {
         let _environment = crate::test_environment::larm_lock().lock().await;
         let host = env::var("SAAA_DYNAMIC_LAN_HOST").expect("SAAA_DYNAMIC_LAN_HOST is required");
-        let connection = DynamicLanConnection::resolve(&host, Arc::new(RunCancellation::default()))
+        let connection = DynamicLanConnection::resolve(&host, None, Arc::new(RunCancellation::default()))
             .await
             .expect("live dynamic_lan connection resolves");
         let authorization = connection

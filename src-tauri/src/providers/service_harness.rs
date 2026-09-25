@@ -137,24 +137,37 @@ async fn fetch_descriptor(base: &url::Url) -> Result<HarnessDescriptor, String> 
     Ok(descriptor)
 }
 
-pub(crate) async fn resolve_with_legacy_llm(address: &str) -> Result<HarnessResolution, String> {
+pub(crate) async fn resolve_with_legacy_llm(
+    address: &str,
+    stored_profile: Option<&str>,
+) -> Result<HarnessResolution, String> {
     let Some(host) = legacy_dynamic_lan_host(address)? else {
         return resolve(address).await;
     };
     let connection = crate::providers::dynamic_lan::DynamicLanConnection::resolve(
         &host,
+        stored_profile,
         Arc::new(RunCancellation::default()),
     )
     .await
     .map_err(|error| error.public_message().to_string())?;
     let model = connection.model().to_string();
+    let endpoint = connection.endpoint().to_string();
     let protocol = connection.stream_protocol().to_string();
     let _ = connection.release().await;
     Ok(HarnessResolution {
         state: "degraded",
         revision: "agent-connection.v1".to_string(),
         services: vec![
-            ready_status("llm", &protocol, model, None, None),
+            HarnessServiceStatus {
+                capability: "llm",
+                state: "ready",
+                protocol: Some(protocol),
+                model: Some(model.clone()),
+                language: None,
+                voice: None,
+                message: format!("{model} · {endpoint}"),
+            },
             missing_status("asr"),
             missing_status("tts"),
         ],

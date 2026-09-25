@@ -1,10 +1,11 @@
+import os
 from pathlib import Path
 source = Path(__file__).with_name("diagnose.py").read_text()
 exec(source.split('health = request("health-before"')[0])
 OUT = Path(__file__).with_name("asr-results.json")
 request("health-before", "/health")
 remote = "python3 -c " + shlex.quote("import pathlib,shlex; lines=pathlib.Path('/etc/larm/larm.env').read_text().splitlines(); print(next(shlex.split(l.split('=',1)[1])[0] for l in lines if l.startswith('LARM_API_TOKEN=')))")
-token = subprocess.check_output(["ssh", "-o", "BatchMode=yes", "gnosis", remote], timeout=10).decode().strip()
+token = subprocess.check_output(["ssh", "-o", "BatchMode=yes", "-i", os.path.expanduser("~/.ssh/ai395.pem"), "ugnoguchi@192.168.0.130", remote], timeout=10).decode().strip()
 def transcribe(label, audio):
     boundary = "saaa-" + uuid.uuid4().hex
     parts=[]

@@ -49,6 +49,7 @@ pub(crate) fn stop_tts(state: &AppState, run_id: String) -> Result<(), String> {
     // Speech playback can share a run ID with an unfinished reasoning turn.
     // Stopping audio must not cancel the model or its pending tool follow-up.
     state.streaming_tts.cancel(&run_id);
+    crate::voice::audio_backend::global().interrupt_playback();
     Ok(())
 }
 

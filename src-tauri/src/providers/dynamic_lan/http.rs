@@ -256,6 +256,22 @@ pub(crate) async fn read_limited(
     }
 }
 
+pub(crate) fn control_token() -> Result<String, DynamicLanError> {
+    #[cfg(not(test))]
+    let loaded = super::credential::load();
+    #[cfg(test)]
+    let loaded = super::credential::load_environment_only_for_test();
+    loaded
+        .map(|loaded| loaded.token().to_string())
+        .map_err(|error| {
+            DynamicLanError::with_code(
+                ErrorKind::Authentication,
+                "LARM control credential is not safely configured.",
+                error.code(),
+            )
+        })
+}
+
 pub(crate) fn control_credential() -> Result<HeaderValue, DynamicLanError> {
     #[cfg(not(test))]
     let loaded = super::credential::load();
