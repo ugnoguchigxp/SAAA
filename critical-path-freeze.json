@@ -2,8 +2,8 @@
   "version": 1,
   "domains": {
     "asr": {
-      "acceptedAt": "2026-09-24T23:33:02.898Z",
-      "reason": "VoiceProcessing review: AEC-off skips native VPIO and WebKit echoCancellation, and playback drain no longer waits on a discarded ring.",
+      "acceptedAt": "2026-09-25T02:00:44.562Z",
+      "reason": "Native capture keeps listening without an AudioContext, so reset the VAD after every utterance and flush the trailing PCM before commit. Otherwise the level meter moves but speech never becomes a chat message. bun voice tests and cargo test voice::streaming_asr (36) passed.",
       "files": {
         "src-tauri/src/voice/network_asr.rs": "53e14d522b058a6bd4a2a3b949d44ce11f095d6315314b06aec67f7025abfcf4",
         "src-tauri/src/voice/network_asr/discovery.rs": "2010c7a177dd3dd0e5056cefcb1eb823721f7878bd41fb77e47b0cab86a94063",
@@ -24,17 +24,17 @@
         "src-tauri/src/voice/streaming_asr/session.rs": "1eae30c0551c3407413ec09da04a5325d635ce046f9d8136eddcd634f060e866",
         "src-tauri/src/voice/streaming_asr/speaker_gate.rs": "7328655253a373d6ccfbd150a6f04aa8c585b2cbb4e02957e22a21db35b84b34",
         "src-tauri/src/voice/streaming_asr/speaker_gate_runtime.rs": "405478e8f8003410d363b60fc72862acf6ac0c7a9d21b0eb9b20d886c4e81f6f",
-        "src/features/voice/ambientVoiceCapture.ts": "3745efccc0b8a1d8b371e16c4505d040f6bf560c1a06f59dc0fe1e817ff86535",
-        "src/features/voice/ambientVoiceCaptureActions.ts": "34e14ebb1d4dc95fbca5347a1617a5383ab1a51f236bd0f72f010132c2da7bd4",
-        "src/features/voice/useAmbientVoiceSession.ts": "a86893cfbab2b5d75eb00732cbbd75ef8791da92097cad1af3d367aea2fc906f",
+        "src/features/voice/ambientVoiceCapture.ts": "41aef0b84dc52abe2db55a949a56243f75c4c852acc026ab5e1e8e48794d8e50",
+        "src/features/voice/ambientVoiceCaptureActions.ts": "f1a3288114e65db51bb187c76bb3d2bb2e565bced0c9d034713c67b77c06897c",
+        "src/features/voice/useAmbientVoiceSession.ts": "de6c2326d13a48a8dbe0f43a6904bc89c12ab61878bd699cda545ccddb5726c1",
         "src/features/voice/voiceCaptureSettings.ts": "f23cbcb78821a63cc78d8b45f1fc4546515ff8f7dcdd6199ea5b3534627d2900",
         "src/lib/microphone.ts": "c16d977c6c74916b139f01e69ab2ad2f8ca24f09464715243cebbe0b420a40fa",
         "src/lib/voiceAsrRuntime.ts": "dd55488f0ba41ec058b7e7a437324fe4e67201a2d7497af63518c369102034e8"
       }
     },
     "initial-response": {
-      "acceptedAt": "2026-09-24T23:24:09.149Z",
-      "reason": "Receptionist speech and the saved reply are the same line, and a reply wrapped in extra text still parses.",
+      "acceptedAt": "2026-09-25T00:50:03.915Z",
+      "reason": "Packed dialogue history is no longer sent as an assistant turn, so Ornith cannot echo RECENT_DIALOGUE_HISTORY as the spoken reply. cargo test conversation_context:: and role_routing::frontend:: passed; bun run quality:check passed.",
       "files": {
         "src-tauri/src/persistence/app_commands.rs": "0e93155944cafd837e0eecffc129b327e74093e0876b63db00b305c6c946bdfd",
         "src-tauri/src/persistence/schema.rs": "591633043388875e2ed97008ce1c4a243b93aa22272f4a4d558f6d0a6e3e2a6b",
@@ -93,7 +93,7 @@
         "src-tauri/src/providers/stream/dynamic_lan.rs": "49bea196d499a0331e789f6a183712f44cbda0ab18f9677cf80af24d50539cdb",
         "src-tauri/src/providers/stream/dynamic_lan/initialization.rs": "adcadb9bad24134dc35ae9b800855cb76e3d7c8654066663f2fb6ea60d4da0bc",
         "src-tauri/src/role_routing/schema.rs": "46f681992de92c3ca081b64366368513ff8e78e28dbce4282f20752a412c1790",
-        "src-tauri/src/runtime/conversation_context.rs": "2bd8823bbe8593a5df92abdf48b5955a4249f73ed59a9d852b1c79d027294caa",
+        "src-tauri/src/runtime/conversation_context.rs": "f12fb6dff2d0a8b7dce34991001a55a96ae3aa97a52f393dbb93a0ba7a14c918",
         "src-tauri/src/runtime/conversation_inputs.rs": "456b824ee2ee129b7acc75865db3362428e86cc316799209d725c9278b16554b",
         "src-tauri/src/runtime/conversation_prepare.rs": "b87c6b91e5e68b0cb1dd967907448ca1be0e8e9bc2cc9b346d923085be8f6b2a",
         "src-tauri/src/runtime/conversation_provider_route.d/01.rs": "adbebf39f45c38dcfaa48d77de2bc0f9ef683276422edd1faf5b272f9693742a",

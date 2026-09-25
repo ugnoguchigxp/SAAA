@@ -18,7 +18,8 @@ pub use projected_context_message::build;
 #[cfg(test)]
 use projected_context_message::build_with_memory;
 pub(crate) use projected_context_message::{
-    compose, load, validate_current_instruction, LoadedContextWindow,
+    compose, is_untrusted_evidence_block, load, validate_current_instruction, LoadedContextWindow,
+    EVIDENCE_ROLE,
 };
 use projected_context_message::{
     render_memory_projection, render_recent_history, render_recent_line, SourceMessage,

@@ -42,6 +42,9 @@ export const jaVoice = {
     aecEnabled: "SAAAの読み上げをマイクから取り除く（macOS VoiceProcessing）",
     aecHelp:
       "TTS とマイクを同じ VoiceProcessingIO に通すと、SAAA 自身の声を引き算できます。他アプリの音は確実には消えません。他アプリの音量低下は Min まで下げられ、0 にはできません。",
+    aecFallback:
+      "macOS 14 未満、AirPlay、Bluetooth（上のスイッチがオフのとき）では VoiceProcessing を開かず、マイクはエコー除去なしで開きます。その場合、他アプリの音量は下がりません。",
+    nativeInputDevice: "エコー抑制がオンのとき、マイクはシステムの既定入力だけを使います。",
     duckingLevel: "他アプリの音量低下",
     duckingMin: "最小（推奨）",
     duckingDefault: "標準",

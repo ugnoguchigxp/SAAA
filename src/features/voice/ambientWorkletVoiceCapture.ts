@@ -3,6 +3,9 @@ import type { VoiceActivityDetector, VoiceActivityObservation } from "../../lib/
 import type { CommitReason } from "../../lib/generated/voiceAsr";
 import { voiceSegmentCommitReason } from "./voiceSegmentBoundary";
 
+const BARGE_IN_HOLD_MS = 200;
+const BARGE_IN_GRACE_MS = 400;
+
 export function observeCaptureFrame(input: {
   frame: Float32Array;
   activityDetector: MutableRefObject<VoiceActivityDetector | null>;
@@ -14,22 +17,53 @@ export function observeCaptureFrame(input: {
   speechIsPlaying?: () => boolean;
   ttsStartedAtMs?: () => number;
   interruptSpeech?: () => void;
+  speechRunId?: () => string | null;
+  bargeInSpeechSince?: MutableRefObject<number>;
+  bargeInFiredFor?: MutableRefObject<string | null>;
 }): void {
   input.packetFrame(input.frame);
   const observation = input.activityDetector.current?.observe(input.frame);
   if (observation) {
     input.onActivity?.(observation);
-    if (
-      observation.hasSpeech &&
-      input.bargeInEnabled !== false &&
-      input.speechIsPlaying?.() &&
-      (input.ttsStartedAtMs?.() ?? 0) + 400 <= performance.now()
-    ) {
-      input.interruptSpeech?.();
-    }
+    considerBargeIn(input, observation.hasSpeech);
   }
   const reason = voiceSegmentCommitReason(observation, input.packetCount());
   if (reason) input.finishSegment(reason);
+}
+
+function considerBargeIn(
+  input: {
+    bargeInEnabled?: boolean;
+    speechIsPlaying?: () => boolean;
+    ttsStartedAtMs?: () => number;
+    interruptSpeech?: () => void;
+    speechRunId?: () => string | null;
+    bargeInSpeechSince?: MutableRefObject<number>;
+    bargeInFiredFor?: MutableRefObject<string | null>;
+  },
+  hasSpeech: boolean,
+): void {
+  const since = input.bargeInSpeechSince;
+  const fired = input.bargeInFiredFor;
+  if (!since || !fired) return;
+  const runId = input.speechRunId?.() ?? null;
+  const now = performance.now();
+  const eligible =
+    hasSpeech &&
+    input.bargeInEnabled !== false &&
+    Boolean(runId) &&
+    Boolean(input.speechIsPlaying?.()) &&
+    (input.ttsStartedAtMs?.() ?? 0) + BARGE_IN_GRACE_MS <= now;
+  if (!eligible || !runId) {
+    since.current = 0;
+    return;
+  }
+  if (fired.current === runId) return;
+  if (since.current === 0) since.current = now;
+  if (now - since.current < BARGE_IN_HOLD_MS) return;
+  fired.current = runId;
+  since.current = 0;
+  input.interruptSpeech?.();
 }
 
 export function bindWorkletFrameHandler(
@@ -48,23 +82,7 @@ export function bindWorkletFrameHandler(
       return;
     }
     try {
-      // ASR receives every frame before VAD; VAD only decides commit boundaries.
-      const context = input;
-      context.packetFrame(event.data);
-      const observation = context.activityDetector.current?.observe(event.data);
-      if (observation) {
-        input.onActivity?.(observation);
-        if (
-          observation.hasSpeech &&
-          input.bargeInEnabled !== false &&
-          input.speechIsPlaying?.() &&
-          (input.ttsStartedAtMs?.() ?? 0) + 400 <= performance.now()
-        ) {
-          input.interruptSpeech?.();
-        }
-      }
-      const reason = voiceSegmentCommitReason(observation, context.packetCount());
-      if (reason) input.finishSegment(reason);
+      observeCaptureFrame({ ...input, frame: event.data });
     } finally {
       event.data.fill(0);
     }

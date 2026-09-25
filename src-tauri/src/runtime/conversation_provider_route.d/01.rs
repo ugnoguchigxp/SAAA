@@ -743,7 +743,7 @@ async fn wait_for_reasoner(
                 tick += 1;
                 #[cfg(test)]
                 crate::runtime::event_hub::reasoning_ack::observe_filler_tick(&input.run_id, tick);
-                if tick >= 20 {
+                if tick >= timeout_ms.div_ceil(2_000).max(1) as u32 {
                     step_cancel.cancel();
                     let cleanup = match attempt.await {
                         ProviderAttemptOutcome::Completed { cleanup, .. }
@@ -1000,7 +1000,7 @@ async fn frontend_model_output(
     let ack = crate::role_routing::frontend::spoken_line(&parsed)
         .filter(|text| text.chars().count() <= usize::from(max_ack_chars));
     let recorded = serde_json::json!({
-        "resolvesTurn": parsed.resolves_turn && ack.is_some(),
+        "kind": parsed.kind,
         "reply": ack.clone().unwrap_or_default(),
     })
     .to_string();

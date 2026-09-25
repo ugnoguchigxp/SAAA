@@ -93,6 +93,7 @@ export function VoiceSettingsSection({
           <Field label={t("voice.inputDevice")}>
             <select
               value={voice.inputDeviceId}
+              disabled={voice.aecEnabled}
               onChange={(event) => onChange({ ...voice, inputDeviceId: event.target.value })}
             >
               <option value="default">{t("common.systemDefault")}</option>
@@ -115,6 +116,7 @@ export function VoiceSettingsSection({
         {deviceError && (
           <p className="provider-test-result error">{localizeUiMessage(t, deviceError, "voice")}</p>
         )}
+        {voice.aecEnabled && <p className="settings-help">{t("voice.nativeInputDevice")}</p>}
         <p className="settings-help">{t("voice.outputHelp")}</p>
       </section>
 

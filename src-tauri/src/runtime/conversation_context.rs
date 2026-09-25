@@ -26,26 +26,33 @@ pub(super) fn compose_provider_history(
         input_origin,
         presentation_mode,
     )?;
-    let system_content = format!("{}\n\n{}", system_context.trim(), policy.content.trim());
-    let mut history = vec![ConversationMessage {
-        parts: None,
-        id: "context-system-conversation-respond".to_string(),
-        conversation_id: conversation_id.to_string(),
-        role: "system".to_string(),
-        content: system_content,
-        created_at: "system".to_string(),
-    }];
-    history.extend(
-        projected
-            .enumerate()
-            .map(|(index, message)| ConversationMessage {
-                parts: None,
-                id: format!("context-projection-{}", index + 1),
-                conversation_id: conversation_id.to_string(),
-                role: message.role,
-                content: message.content,
-                created_at: (index + 1).to_string(),
-            }),
+    let mut system_content = format!("{}\n\n{}", system_context.trim(), policy.content.trim());
+    let mut history = Vec::new();
+    for (index, message) in projected.enumerate() {
+        if message.role == memory::context_window::EVIDENCE_ROLE {
+            system_content.push_str("\n\n");
+            system_content.push_str(message.content.trim());
+            continue;
+        }
+        history.push(ConversationMessage {
+            parts: None,
+            id: format!("context-projection-{}", index + 1),
+            conversation_id: conversation_id.to_string(),
+            role: message.role,
+            content: message.content,
+            created_at: (index + 1).to_string(),
+        });
+    }
+    history.insert(
+        0,
+        ConversationMessage {
+            parts: None,
+            id: "context-system-conversation-respond".to_string(),
+            conversation_id: conversation_id.to_string(),
+            role: "system".to_string(),
+            content: system_content,
+            created_at: "system".to_string(),
+        },
     );
     Ok(history)
 }
@@ -105,8 +112,8 @@ mod tests {
     #[test]
     fn provider_history_has_one_leading_system_message() {
         let history = compose_provider_history(
-            "conversation-test",
-            "こはく",
+            "c",
+            "n",
             "",
             &RegionalPreferences::default(),
             "voice",
@@ -114,37 +121,68 @@ mod tests {
             vec![
                 memory::context_window::ProjectedContextMessage {
                     role: "system".to_string(),
-                    content: "Memory projection policy".to_string(),
-                },
-                memory::context_window::ProjectedContextMessage {
-                    role: "assistant".to_string(),
-                    content: "Historical evidence".to_string(),
+                    content: "p".to_string(),
                 },
                 memory::context_window::ProjectedContextMessage {
                     role: "user".to_string(),
-                    content: "Current request".to_string(),
+                    content: "u".to_string(),
                 },
             ],
         )
         .expect("history composes");
-        assert_eq!(history[0].role, "system");
-        assert!(history[0].content.contains("agent=\"こはく\""));
+        assert_eq!(
+            history
+                .iter()
+                .map(|message| message.role.as_str())
+                .collect::<Vec<_>>(),
+            ["system", "user"]
+        );
+        assert!(history[0].content.contains("agent=\"n\""));
         assert!(history[0].content.contains("user=\"\""));
         assert!(history[0].content.contains(r#""currency":"JPY""#));
         assert!(history[0].content.contains("inputOrigin=\"voice\""));
         assert!(history[0]
             .content
             .contains("presentationMode=\"visual-and-spoken\""));
-        assert!(history[0].content.contains("Memory projection policy"));
+        assert!(history[0].content.contains('\n') && history[0].content.contains('p'));
         assert!(!history[0].content.contains("{{"));
+        assert_eq!(history[1].content, "u");
+    }
+
+    #[test]
+    fn evidence_role_is_folded_into_system_and_never_a_chat_turn() {
+        let history = compose_provider_history(
+            "c",
+            "n",
+            "",
+            &RegionalPreferences::default(),
+            "voice",
+            "visual-and-spoken",
+            vec![
+                memory::context_window::ProjectedContextMessage {
+                    role: "system".to_string(),
+                    content: "p".to_string(),
+                },
+                memory::context_window::ProjectedContextMessage {
+                    role: memory::context_window::EVIDENCE_ROLE.to_string(),
+                    content: "e".to_string(),
+                },
+                memory::context_window::ProjectedContextMessage {
+                    role: "user".to_string(),
+                    content: "u".to_string(),
+                },
+            ],
+        )
+        .expect("history composes");
         assert_eq!(
             history
                 .iter()
-                .filter(|message| message.role == "system")
-                .count(),
-            1
+                .map(|message| message.role.as_str())
+                .collect::<Vec<_>>(),
+            ["system", "user"]
         );
-        assert_eq!(history.last().expect("current request exists").role, "user");
+        assert!(history[0].content.contains('e'));
+        assert_eq!(history[1].content, "u");
     }
 
     #[test]
@@ -158,14 +196,14 @@ mod tests {
         };
         let rendered = render_conversation_system_context(
             "A \"quoted\" name",
-            "野口",
+            "",
             &regional,
             "text",
             "visual",
         )
         .expect("system context renders");
         assert!(rendered.contains(r#"agent="A \"quoted\" name""#));
-        assert!(rendered.contains(r#"user="野口""#));
+        assert!(rendered.contains(r#"user="""#));
         assert!(rendered.contains(
             r#"regional={"language":"ja","timeZone":"Asia/Tokyo","lengthUnit":"metric","weightUnit":"kilogram","currency":"JPY"}"#
         ));

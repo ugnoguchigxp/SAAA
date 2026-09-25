@@ -296,7 +296,7 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
         tokio::time::sleep(std::time::Duration::from_secs(13)).await;
     }
     if f.route == "butler" && name == "llm" && f.transition == "reasoner-hang" {
-        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(180)).await;
     }
     let body: Value = serde_json::from_slice(
         &axum::body::to_bytes(request.into_body(), 65536)
@@ -313,11 +313,11 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
     if f.route == "butler" && name == "backchannel" {
         let content = match f.transition {
             "frontend-bad" => "not-json",
-            "frontend-nod" => r#"{"resolvesTurn":true,"reply":"はい。"}"#,
-            "frontend-thanks" => r#"{"resolvesTurn":true,"reply":"どういたしまして。"}"#,
-            "frontend-greeting" => r#"{"resolvesTurn":true,"reply":"おはようございます。"}"#,
-            "frontend-low" => r#"{"resolvesTurn":false,"reply":"少し考えます。"}"#,
-            _ => r#"{"resolvesTurn":false,"reply":"少し考えます。"}"#,
+            "frontend-nod" => r#"{"kind":"nod","reply":"x"}"#,
+            "frontend-thanks" => r#"{"kind":"thanks","reply":"x"}"#,
+            "frontend-greeting" => r#"{"kind":"greeting","reply":"x"}"#,
+            "frontend-low" => r#"{"kind":"handoff","reply":"少し考えます。"}"#,
+            _ => r#"{"kind":"handoff","reply":"少し考えます。"}"#,
         };
         return Json(json!({"choices":[{"message":{"content":content}}]})).into_response();
     }

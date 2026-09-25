@@ -22,6 +22,7 @@ export function VoiceProcessingSettings({
         {t("voice.aecEnabled")}
       </label>
       <p className="settings-help">{t("voice.aecHelp")}</p>
+      <p className="settings-help">{t("voice.aecFallback")}</p>
       <div className="settings-form-grid">
         <Field label={t("voice.duckingLevel")}>
           <select

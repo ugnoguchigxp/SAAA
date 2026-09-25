@@ -108,6 +108,8 @@ export function createAmbientVoiceCaptureActions(input: {
     ttsStartedAtRef,
     stopSpeech,
   } = input;
+  const bargeInSpeechSince = { current: 0 };
+  const bargeInFiredFor = { current: null as string | null };
 
   async function attachVoiceCapture() {
     const settings = effectiveCaptureSettings(voiceSettingsRef.current, voicePolicyRef.current);
@@ -207,10 +209,17 @@ export function createAmbientVoiceCaptureActions(input: {
         nativeStop: nativeStopRef,
         bargeInEnabled: settings.bargeInEnabled,
         speechIsPlaying: () => Boolean(conversationSessionRef.current.speechRunId),
+        speechRunId: () => conversationSessionRef.current.speechRunId,
+        bargeInSpeechSince,
+        bargeInFiredFor,
         ttsStartedAtMs: () => ttsStartedAtRef.current,
         interruptSpeech: () => {
           void interruptNativeVoicePlayback();
           void stopSpeech();
+        },
+        onNativeEnded: (message) => {
+          setError((current) => current ?? message);
+          void terminateFailedVoiceCapture();
         },
       });
       auditCaptureStarted(
@@ -312,16 +321,26 @@ export function createAmbientVoiceCaptureActions(input: {
       const sender = voiceAsrSenderRef.current;
       if (!sender) throw new Error("ASR session is not available");
       if (keepListening) {
-        const commit = sender.enqueueCommit(reason);
-        voiceAsrPacketCountRef.current = 0;
-        const context = voiceContextRef.current;
         const nextSettings = effectiveCaptureSettings(
           voiceSettingsRef.current,
           voicePolicyRef.current,
         );
-        if (context && nextSettings) {
-          resetVoiceActivityDetector(voiceActivityDetectorRef, nextSettings, context.sampleRate);
+        if (nextSettings) {
+          // Native VoiceProcessing has no AudioContext. Reset anyway, or the detector
+          // stays finalized and later speech never becomes a chat utterance.
+          resetVoiceActivityDetector(
+            voiceActivityDetectorRef,
+            nextSettings,
+            voiceContextRef.current?.sampleRate ?? ASR_SAMPLE_RATE,
+          );
         }
+        const tail = voiceAsrPacketizerRef.current.flushPadded();
+        if (tail) {
+          sender.enqueueAudio(tail);
+          voiceAsrPacketCountRef.current += 1;
+        }
+        const commit = sender.enqueueCommit(reason);
+        voiceAsrPacketCountRef.current = 0;
         await commit;
         applyVoiceEvent({ type: "captureStarted" });
         return;

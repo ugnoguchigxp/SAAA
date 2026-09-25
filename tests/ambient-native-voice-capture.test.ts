@@ -31,6 +31,7 @@ describe("native VoiceProcessing capture", () => {
 
   test("starts the native backend and forwards frames", async () => {
     const frames: number[] = [];
+    const ended: string[] = [];
     invokeImpl.handler = async (command, args) => {
       if (command === "audio_backend_status") {
         return {
@@ -48,7 +49,9 @@ describe("native VoiceProcessing capture", () => {
       if (command === "start_native_voice_capture") {
         const onFrame = (args as { onFrame?: { onmessage: ((event: unknown) => void) | null } })
           .onFrame;
-        onFrame?.onmessage?.([0.1, 0.2]);
+        const pcm = new Float32Array([0.1, 0.2]);
+        onFrame?.onmessage?.(pcm.buffer);
+        onFrame?.onmessage?.({ type: "ended", reason: "airplay" });
       }
       return { available: true };
     };
@@ -65,6 +68,7 @@ describe("native VoiceProcessing capture", () => {
         }),
       stale: () => false,
       handleFrame: (frame) => frames.push(frame.length),
+      onEnded: (reason) => ended.push(reason),
       disposeOwnedCapture: async () => undefined,
       applyEvent: () => undefined,
       clearTranscript: () => undefined,
@@ -72,6 +76,7 @@ describe("native VoiceProcessing capture", () => {
     expect(started).toBe(true);
     expect(invokeCalls.some((call) => call.command === "start_native_voice_capture")).toBe(true);
     expect(frames).toEqual([2]);
+    expect(ended).toEqual(["airplay"]);
   });
 
   test("falls back when the native backend is unavailable", async () => {

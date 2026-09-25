@@ -9,6 +9,7 @@ import {
   requestMicrophoneStream,
 } from "../../lib/microphone";
 import { VoiceActivityDetector } from "../../lib/voiceActivity";
+import { stopNativeVoiceCapture } from "../../lib/audioBackend";
 import { tryStartNativeVoiceCapture } from "./ambientNativeVoiceCapture";
 import type { AmbientVoiceCaptureContext } from "./ambientVoiceCaptureContext";
 import { bindWorkletFrameHandler, observeCaptureFrame } from "./ambientWorkletVoiceCapture";
@@ -64,27 +65,10 @@ export async function attachAmbientVoiceCapture(
     releaseOwnedCapture();
   };
   const handleFrame = (frame: Float32Array) => observeCaptureFrame({ ...context, frame });
-  try {
-    context.applyEvent({ type: "captureStarting" });
-    releaseCapture = acquireAudioCapture("chat");
-    context.captureLease.current = releaseCapture;
-    const nativeStarted = await tryStartNativeVoiceCapture({
-      settings: context.settings,
-      nativeCapture: context.nativeCapture,
-      nativeStop: context.nativeStop,
-      activityDetector: context.activityDetector,
-      createDetector: (sampleRate) => detector(context.settings, sampleRate),
-      stale,
-      handleFrame,
-      disposeOwnedCapture,
-      applyEvent: context.applyEvent,
-      clearTranscript: context.clearTranscript,
-    });
-    if (nativeStarted) return;
-    const audio = microphoneCaptureConstraints(
-      context.settings.inputDeviceId,
-      context.settings.aecEnabled,
-    );
+  const startWorklet = async () => {
+    // Native VoiceProcessing is unavailable here. Leave WebKit echo cancellation off so
+    // its internal VPIO does not duck other apps.
+    const audio = microphoneCaptureConstraints(context.settings.inputDeviceId, false);
     stream = await requestMicrophoneStream(audio);
     if (stale()) {
       await disposeOwnedCapture();
@@ -126,6 +110,43 @@ export async function attachAmbientVoiceCapture(
     }
     context.clearTranscript();
     context.applyEvent({ type: "captureStarted" });
+  };
+  try {
+    context.applyEvent({ type: "captureStarting" });
+    releaseCapture = acquireAudioCapture("chat");
+    context.captureLease.current = releaseCapture;
+    const nativeStarted = await tryStartNativeVoiceCapture({
+      settings: context.settings,
+      nativeCapture: context.nativeCapture,
+      nativeStop: context.nativeStop,
+      activityDetector: context.activityDetector,
+      createDetector: (sampleRate) => detector(context.settings, sampleRate),
+      stale,
+      handleFrame,
+      disposeOwnedCapture,
+      applyEvent: context.applyEvent,
+      clearTranscript: context.clearTranscript,
+      onEnded: () => {
+        void (async () => {
+          if (stale() || !context.nativeCapture?.current) return;
+          context.nativeCapture.current = false;
+          if (context.nativeStop) context.nativeStop.current = null;
+          await stopNativeVoiceCapture().catch(() => undefined);
+          if (stale()) {
+            await disposeOwnedCapture();
+            return;
+          }
+          try {
+            await startWorklet();
+          } catch (cause) {
+            await disposeOwnedCapture();
+            context.onNativeEnded?.(cause instanceof Error ? cause.message : String(cause));
+          }
+        })();
+      },
+    });
+    if (nativeStarted) return;
+    await startWorklet();
   } catch (cause) {
     if (stale()) {
       await disposeOwnedCapture();

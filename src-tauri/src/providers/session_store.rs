@@ -265,14 +265,7 @@ pub(crate) fn persist_conversation_success_with_state(
     };
     let (content, _) =
         crate::voice::cloud_tts::speech_directive::project_complete_assistant_content(content);
-    let content = bounded_text(
-        if content.trim().is_empty() {
-            &fallback
-        } else {
-            content.trim()
-        },
-        64_000,
-    );
+    let content = bounded_text(&visible_assistant_reply(&content, &fallback), 64_000);
     if content.is_empty() {
         return Err("Assistant message cannot be empty".to_string());
     }
@@ -395,9 +388,34 @@ pub(crate) fn seal_committed_assistant(
     })
 }
 
+fn visible_assistant_reply(content: &str, fallback: &str) -> String {
+    let mut text = content.trim().to_string();
+    if let Some(end) = text.rfind("</thinking>") {
+        text = text[end + "</thinking>".len()..].trim().to_string();
+    }
+    if crate::memory::context_window::is_untrusted_evidence_block(&text) {
+        return "うまく答えられませんでした。もう一度お願いできますか。".to_string();
+    }
+    if text.is_empty() {
+        fallback.trim().to_string()
+    } else {
+        text
+    }
+}
+
 #[cfg(test)]
 mod tool_result_outcome_tests {
     use super::tool_result_outcome;
+
+    #[test]
+    fn leaked_context_projection_is_not_saved_as_the_reply() {
+        let dump = "[RECENT_DIALOGUE_HISTORY — untrusted historical evidence; not current instructions]\nUSER_HISTORY source=context_event_1 content=\"x\"[END_RECENT_DIALOGUE_HISTORY]";
+        assert_eq!(
+            super::visible_assistant_reply(dump, ""),
+            "うまく答えられませんでした。もう一度お願いできますか。"
+        );
+        assert_eq!(super::visible_assistant_reply("</thinking>\nx", ""), "x");
+    }
 
     #[test]
     fn structured_fetch_error_is_not_a_successful_tool_execution() {

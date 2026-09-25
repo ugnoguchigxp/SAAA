@@ -65,7 +65,9 @@ fn public_url(raw: &str) -> Result<Url, WebFetchFailure> {
         || !matches!(url.scheme(), "http" | "https")
         || url.username() != ""
         || url.password().is_some()
-        || url.port().is_some()
+        || url.port().is_some_and(|port| {
+            !matches!((url.scheme(), port), ("http", 80) | ("https", 443))
+        })
         || matches!(url.host(), Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)))
         || host == "localhost"
         || host.ends_with(".localhost")
@@ -296,6 +298,7 @@ mod tests {
         assert!(public_url("https://[::1]/").is_err());
         assert!(public_url("http://example.com/").is_ok());
         assert!(public_url("http://example.com:8080/").is_err());
+        assert!(public_url("https://example.com:443/x").is_ok());
         assert!(blocked_ip("10.0.0.1".parse().unwrap()));
     }
 

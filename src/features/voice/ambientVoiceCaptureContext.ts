@@ -28,4 +28,8 @@ export type AmbientVoiceCaptureContext = {
   speechIsPlaying?: () => boolean;
   ttsStartedAtMs?: () => number;
   interruptSpeech?: () => void;
+  speechRunId?: () => string | null;
+  bargeInSpeechSince?: MutableRefObject<number>;
+  bargeInFiredFor?: MutableRefObject<string | null>;
+  onNativeEnded?: (reason: string) => void;
 };

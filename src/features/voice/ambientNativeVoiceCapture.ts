@@ -20,6 +20,7 @@ export async function tryStartNativeVoiceCapture(input: {
   disposeOwnedCapture: () => Promise<void>;
   applyEvent: (event: VoiceSessionEvent) => unknown;
   clearTranscript: () => void;
+  onEnded?: (reason: string) => void;
 }): Promise<boolean> {
   const native = await audioBackendStatus().catch(() => null);
   if (!native || !nativeCapturePreferred(native, input.settings.aecEnabled)) return false;
@@ -27,10 +28,13 @@ export async function tryStartNativeVoiceCapture(input: {
     const activityDetector = input.createDetector(16_000);
     input.activityDetector.current = activityDetector;
     if (input.nativeCapture) input.nativeCapture.current = true;
-    await startNativeVoiceCapture((frame) => {
-      if (input.stale() || !input.nativeCapture?.current) return;
-      input.handleFrame(frame);
-    });
+    await startNativeVoiceCapture(
+      (frame) => {
+        if (input.stale() || !input.nativeCapture?.current) return;
+        input.handleFrame(frame);
+      },
+      (reason) => input.onEnded?.(reason),
+    );
     if (input.stale()) {
       await stopNativeVoiceCapture().catch(() => undefined);
       if (input.nativeCapture) input.nativeCapture.current = false;

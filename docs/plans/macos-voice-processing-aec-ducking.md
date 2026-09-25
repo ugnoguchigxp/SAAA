@@ -197,7 +197,8 @@ Phase 3 は ASR 凍結パス（`src/lib/microphone.ts`、`ambientVoiceCapture.ts
 - Ducking: Min でも完全な 0 にはならない。完全に不要なら VPIO 以外の AEC が必要。macOS 13 以前は ducking 設定 API がないため、backend は macOS 14 未満では無効にする。
 - Feedback / echo: AEC の収束前（開始直後の数百 ms）は残留エコーが出る。TTS 開始直後は barge-in の閾値を上げる。
 - TTS interruption: ring の clear と TTS 生成の cancel が同期しないと、停止後に数十 ms の音が漏れる。clear は世代番号（atomic）で行い、古い世代のデータを worker 側で捨てる。
-- WebView との二重 VPIO: 移行中に WebKit の `getUserMedia(echoCancellation: true)` と native VPIO が同時に動くと ducking が重なり、AEC も干渉する。macOS native backend 有効時は WebView 側でマイクを開かないことを保証する。
+- WebView との二重 VPIO: 移行中に WebKit の `getUserMedia(echoCancellation: true)` と native VPIO が同時に動くと ducking が重なり、AEC も干渉する。macOS native backend 有効時は WebView 側でマイクを開かないことを保証する。native を開けないとき（macOS 14 未満、AirPlay、Bluetooth 既定）は `echoCancellation: false` で開く。
+- rodio 再生中にマイクを始めた発話: その発話の再生は rodio のままなので、同じ VPIO の far-end reference に入らず AEC は効かない。次の発話から VPIO 再生に乗る。これは許容する。
 
 ## 13. 参照
 

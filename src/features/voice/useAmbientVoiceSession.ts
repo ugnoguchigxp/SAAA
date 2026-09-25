@@ -301,10 +301,7 @@ export function useAmbientVoiceSession({
       if (!skipGetUserMedia) {
         const permissionStream = await withTimeout(
           requestMicrophoneStream(
-            microphoneCaptureConstraints(
-              voiceSettingsRef.current.inputDeviceId,
-              voiceSettingsRef.current.aecEnabled,
-            ),
+            microphoneCaptureConstraints(voiceSettingsRef.current.inputDeviceId, false),
           ),
           30_000,
           "microphone-startup-timeout",
