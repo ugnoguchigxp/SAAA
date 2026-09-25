@@ -2,7 +2,7 @@ pub(crate) const CONTROL_PORT: u16 = 9810;
 pub(crate) const AUDIENCE: &str = "saaa-desktop";
 const API_TOKEN_ENV: &str = "LARM_API_TOKEN";
 const CLIENT_ID: &str = "saaa-desktop";
-const CONNECTION_TTL_SECONDS: u32 = 300;
+const CONNECTION_TTL_SECONDS: u32 = 900;
 const READY_TIMEOUT: Duration = Duration::from_secs(300);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -67,6 +67,9 @@ impl DynamicLanError {
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct SelectedLlmProfile {
+    selector: String,
+    catalog_revision: Option<String>,
+    catalog_models: Option<std::collections::BTreeMap<String, String>>,
     id: String,
     capability: String,
     model: String,
@@ -81,12 +84,14 @@ struct ConnectionState {
     allocation_id: String,
     boot_epoch: String,
     catalog_revision: String,
+    profile: String,
     agent_profile: String,
     profile_revision: String,
     audience: String,
     audience_revision: String,
     status: String,
     providers: Vec<ConnectionStateProvider>,
+    services: Vec<serde_json::Value>,
     created_at: String,
     expires_at: String,
     #[serde(default)]
@@ -99,7 +104,8 @@ struct ConnectionStateProvider {
     capability: String,
     route: String,
     protocol: String,
-    public_model: String,
+    endpoint: String,
+    model: String,
     readiness: String,
     claimable: bool,
 }

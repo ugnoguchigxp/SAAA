@@ -53,6 +53,110 @@ pub(crate) fn accepted_provider(name: &str) -> Option<&'static str> {
         .find(|(candidate, _)| *candidate == name)
         .map(|(_, protocol)| *protocol)
 }
+pub(crate) fn expected_endpoint(name: &str) -> Option<&'static str> {
+    match name {
+        "llm" | "backchannel" => Some("/v1/chat/completions"),
+        "asr" => Some("/v1/audio/transcriptions"),
+        "tts" => Some("/v1/audio/speech"),
+        "embedding" => Some("/v1/embed"),
+        _ => None,
+    }
+}
+
+pub(crate) fn validate_created(
+    value: &Value,
+    selector: &str,
+    required: &[&str],
+    catalog: Option<&crate::catalog::CatalogProfile>,
+) -> Result<(), &'static str> {
+    if value["profile"] != selector || string(value, "agentProfile").is_err() {
+        return Err("larm_invalid_contract");
+    }
+    let status = string(value, "status")?;
+    if !matches!(status, "ready" | "pending" | "probing") {
+        return Err("larm_startup_terminal");
+    }
+    let raw = value["providers"]
+        .as_array()
+        .ok_or("larm_invalid_contract")?;
+    if raw.len() != required.len() {
+        return Err("larm_missing_provider");
+    }
+    let mut seen = std::collections::HashSet::new();
+    for provider in raw {
+        let name = string(provider, "name")?;
+        if !required.contains(&name) || !seen.insert(name) {
+            return Err("larm_invalid_provider");
+        }
+        if provider["protocol"] != accepted_provider(name).ok_or("larm_invalid_provider")?
+            || provider["endpoint"] != expected_endpoint(name).ok_or("larm_invalid_provider")?
+            || string(provider, "model").is_err()
+            || (status == "ready"
+                && (provider["readiness"] != "ready" || provider["claimable"] != true))
+        {
+            return Err("larm_invalid_provider");
+        }
+        if let Some(catalog) = catalog {
+            let declared = catalog
+                .provider(name)
+                .ok_or("larm_catalog_claim_mismatch")?;
+            if provider["model"] != declared.model
+                || provider["protocol"] != declared.protocol
+                || declared.endpoint != expected_endpoint(name).ok_or("larm_invalid_provider")?
+            {
+                return Err("larm_catalog_claim_mismatch");
+            }
+        }
+    }
+    if let Some(catalog) = catalog {
+        if value["agentProfile"] != catalog.id {
+            return Err("larm_catalog_claim_mismatch");
+        }
+    }
+    let expected_service = match selector {
+        "SAAA-w-Image" => Some((
+            "image",
+            "media.image.generate",
+            "larm.image-generation.v1",
+            "/v1/images/generations",
+        )),
+        "SAAA-w-music" => Some((
+            "music",
+            "media.music.generate",
+            "larm.music-generation.v1",
+            "/v1/music/generations",
+        )),
+        _ => None,
+    };
+    let services = value["services"]
+        .as_array()
+        .ok_or("larm_invalid_contract")?;
+    if services.len() != usize::from(expected_service.is_some()) {
+        return Err("larm_invalid_service");
+    }
+    if let Some((name, capability, protocol, endpoint)) = expected_service {
+        let service = &services[0];
+        if service["name"] != name
+            || service["capability"] != capability
+            || service["protocol"] != protocol
+            || service["endpoint"] != endpoint
+            || string(service, "model").is_err()
+        {
+            return Err("larm_invalid_service");
+        }
+        if let Some(catalog) = catalog {
+            let declared = catalog
+                .services
+                .iter()
+                .find(|entry| entry.name == name)
+                .ok_or("larm_invalid_service")?;
+            if service["model"] != declared.model {
+                return Err("larm_invalid_service");
+            }
+        }
+    }
+    Ok(())
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContextWindow {
     pub max_tokens: u64,
@@ -216,6 +320,10 @@ pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapsho
             None
         };
         let fields = &raw["configuration"]["fields"];
+        let url_field = if name == "embedding" { "daemonURL" } else { "baseURL" };
+        if fields[url_field] != raw["baseUrl"] || fields["model"] != raw["model"] {
+            return Err("larm_invalid_provider_configuration");
+        }
         providers.insert(
             name.to_string(),
             Provider {

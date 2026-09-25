@@ -1633,23 +1633,31 @@
       "total": 417,
       "production": 417
     },
-    "src-tauri/src/providers/dynamic_lan/mod.d/01.rs": {
+    "src-tauri/src/providers/dynamic_lan/connection_types.rs": {
       "total": 251,
       "production": 251
     },
-    "src-tauri/src/providers/dynamic_lan/mod.d/02.rs": {
+    "src-tauri/src/providers/dynamic_lan/connection_lifecycle.rs": {
       "total": 456,
       "production": 456
     },
-    "src-tauri/src/providers/dynamic_lan/mod.d/03.rs": {
+    "src-tauri/src/providers/dynamic_lan/connection_runtime.rs": {
+      "total": 147,
+      "production": 147
+    },
+    "src-tauri/src/providers/dynamic_lan/tests/fixtures_and_contracts.rs": {
       "total": 486,
       "production": 486
     },
-    "src-tauri/src/providers/dynamic_lan/mod.d/04.rs": {
+    "src-tauri/src/providers/dynamic_lan/tests/resolution_tests.rs": {
       "total": 467,
       "production": 467
     },
-    "src-tauri/src/providers/dynamic_lan/mod.d/05.rs": {
+    "src-tauri/src/providers/dynamic_lan/tests/selector_tests.rs": {
+      "total": 224,
+      "production": 224
+    },
+    "src-tauri/src/providers/dynamic_lan/tests/lifecycle_tests.rs": {
       "total": 482,
       "production": 482
     },
@@ -3713,17 +3721,13 @@
       "total": 118,
       "production": 118
     },
-    "src-tauri/src/voice/streaming_asr/session.d/01.rs": {
-      "total": 514,
-      "production": 514
-    },
-    "src-tauri/src/voice/streaming_asr/session.d/02.rs": {
-      "total": 286,
-      "production": 14
-    },
     "src-tauri/src/voice/streaming_asr/session.rs": {
       "total": 1482,
       "production": 851
+    },
+    "src-tauri/src/voice/streaming_asr/session/tests.rs": {
+      "total": 394,
+      "production": 0
     },
     "src-tauri/src/voice/streaming_asr/speaker_gate_runtime.rs": {
       "total": 282,

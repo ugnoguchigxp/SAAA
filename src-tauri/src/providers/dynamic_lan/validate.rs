@@ -12,6 +12,16 @@ fn valid_llm_protocol(value: &str) -> bool {
     value == "openai.chat-completions.v1"
 }
 
+fn provider_contract(name: &str) -> Option<(&'static str, &'static str)> {
+    match name {
+        "llm" | "backchannel" => Some(("openai.chat-completions.v1", "/v1/chat/completions")),
+        "asr" => Some(("openai.audio-transcriptions.v1", "/v1/audio/transcriptions")),
+        "tts" => Some(("openai.audio-speech.v1", "/v1/audio/speech")),
+        "embedding" => Some(("larm.embedding.v1", "/v1/embed")),
+        _ => None,
+    }
+}
+
 pub(crate) fn validate_config_revision(revision: Option<&str>) -> Result<(), DynamicLanError> {
     let revision = revision.ok_or_else(|| contract_error(()))?;
     validate_revision(revision)
@@ -34,9 +44,10 @@ pub(crate) fn validate_initial_state(
     let mut profile = expected_profile.clone();
     if !profile.compare_catalog {
         let provider = sole_llm(&state.providers)?;
+        profile.id = state.agent_profile.clone();
         profile.capability = provider.capability.clone();
         profile.protocol = provider.protocol.clone();
-        profile.model = provider.public_model.clone();
+        profile.model = provider.model.clone();
     }
     let created_at =
         chrono::DateTime::parse_from_rfc3339(&state.created_at).map_err(contract_error)?;
@@ -146,7 +157,9 @@ pub(crate) fn validate_state_shape(
     validate_connection_id(&state.id)?;
     if !valid_bounded_identifier(&state.allocation_id, 192)
         || !valid_bounded_identifier(&state.boot_epoch, 192)
-        || state.agent_profile != expected_profile.id
+        || state.profile != expected_profile.selector
+        || state.agent_profile.is_empty()
+        || (expected_profile.compare_catalog && state.agent_profile != expected_profile.id)
         || state.audience != expected_audience
     {
         return Err(contract_error(()));
@@ -155,11 +168,59 @@ pub(crate) fn validate_state_shape(
     validate_revision(&state.profile_revision)?;
     validate_revision(&state.audience_revision)?;
     let provider = sole_llm(&state.providers)?;
+    let expected_service = match expected_profile.selector.as_str() {
+        "SAAA-w-Image" => Some((
+            "image",
+            "media.image.generate",
+            "larm.image-generation.v1",
+            "/v1/images/generations",
+        )),
+        "SAAA-w-music" => Some((
+            "music",
+            "media.music.generate",
+            "larm.music-generation.v1",
+            "/v1/music/generations",
+        )),
+        _ => None,
+    };
+    if state.services.len() != usize::from(expected_service.is_some()) {
+        return Err(contract_error(()));
+    }
+    if let Some((name, capability, protocol, endpoint)) = expected_service {
+        let service = &state.services[0];
+        if service["name"] != name
+            || service["capability"] != capability
+            || service["protocol"] != protocol
+            || service["endpoint"] != endpoint
+            || service["model"].as_str().is_none_or(str::is_empty)
+        {
+            return Err(contract_error(()));
+        }
+    }
+    if state.providers.len() != 5 {
+        return Err(contract_error(()));
+    }
+    let mut names = std::collections::HashSet::new();
+    for entry in &state.providers {
+        let expected = provider_contract(&entry.name).ok_or_else(|| contract_error(()))?;
+        if !names.insert(entry.name.as_str())
+            || entry.protocol != expected.0
+            || entry.endpoint != expected.1
+            || entry.model.is_empty()
+            || expected_profile
+                .catalog_models
+                .as_ref()
+                .is_some_and(|models| models.get(&entry.name) != Some(&entry.model))
+            || (state.status == "ready" && (!entry.claimable || entry.readiness != "ready"))
+        {
+            return Err(contract_error(()));
+        }
+    }
     let terminal = matches!(state.status.as_str(), "failed" | "released" | "expired");
     let catalog_match = !expected_profile.compare_catalog
         || (provider.capability == expected_profile.capability
             && provider.protocol == expected_profile.protocol
-            && provider.public_model == expected_profile.model);
+            && provider.model == expected_profile.model);
     if provider.name != "llm"
         || !catalog_match
         || !valid_llm_protocol(&provider.protocol)
@@ -214,6 +275,22 @@ pub(crate) fn selected_llm_from_catalog(
     if catalog.revision.is_empty() {
         return Err(contract_error(()));
     }
+    let mut catalog_models = std::collections::BTreeMap::new();
+    for entry in &catalog.providers {
+        let expected = provider_contract(&entry.name).ok_or_else(|| contract_error(()))?;
+        if entry.protocol != expected.0
+            || entry.endpoint != expected.1
+            || entry.model.is_empty()
+            || catalog_models
+                .insert(entry.name.clone(), entry.model.clone())
+                .is_some()
+        {
+            return Err(contract_error(()));
+        }
+    }
+    if catalog_models.len() != 5 {
+        return Err(contract_error(()));
+    }
     let mut matching = catalog
         .providers
         .iter()
@@ -244,6 +321,9 @@ pub(crate) fn selected_llm_from_catalog(
         return Err(contract_error(()));
     }
     Ok(SelectedLlmProfile {
+        selector: catalog.selector.clone(),
+        catalog_revision: Some(catalog.revision.clone()),
+        catalog_models: Some(catalog_models),
         id: catalog.id.clone(),
         capability: provider.capability.clone(),
         model: provider.model.clone(),

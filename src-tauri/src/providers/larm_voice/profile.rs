@@ -11,7 +11,9 @@ pub(crate) fn preference(stored: Option<&str>) -> saaa_larm_session::ProfilePref
     }
     match saaa_larm_session::ProfileVariant::from_selector(value) {
         Some(variant) => saaa_larm_session::ProfilePreference::Variant(variant),
-        None => saaa_larm_session::ProfilePreference::Explicit(value.to_string()),
+        None => saaa_larm_session::ProfilePreference::Variant(
+            saaa_larm_session::ProfileVariant::Conversation,
+        ),
     }
 }
 
@@ -30,7 +32,7 @@ pub(crate) fn from_label(label: &str) -> saaa_larm_session::ProfilePreference {
         .and_then(saaa_larm_session::ProfileVariant::from_selector)
     {
         Some(variant) => saaa_larm_session::ProfilePreference::Variant(variant),
-        None => saaa_larm_session::ProfilePreference::Explicit(label.to_string()),
+        None => preference(Some(label)),
     }
 }
 
@@ -70,14 +72,14 @@ mod tests {
     }
 
     #[test]
-    fn preference_respects_operator_choice() {
+    fn unsupported_saved_profile_uses_saaa_selector() {
         assert_eq!(
             preference(Some("custom-x")),
-            saaa_larm_session::ProfilePreference::Explicit("custom-x".into())
+            conversation()
         );
         assert_eq!(
             preference(Some("auto")),
-            saaa_larm_session::ProfilePreference::Explicit("auto".into())
+            conversation()
         );
     }
 
@@ -87,8 +89,6 @@ mod tests {
             conversation(),
             saaa_larm_session::ProfilePreference::Variant(saaa_larm_session::ProfileVariant::Image),
             saaa_larm_session::ProfilePreference::Variant(saaa_larm_session::ProfileVariant::Music),
-            saaa_larm_session::ProfilePreference::Explicit("custom-x".into()),
-            saaa_larm_session::ProfilePreference::Explicit("auto".into()),
         ];
         for preference in preferences {
             assert_eq!(from_label(&label(&preference)), preference);

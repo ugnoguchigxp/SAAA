@@ -61,19 +61,19 @@ impl Fake {
         let endpoint = format!("{}/v1", self.base);
         json!({"id":"world-fixture","allocationId":"world-allocation","status":"ready","audience":"saaa-desktop","expiresAt":self.expires,"providers":[{"name":"llm","capability":"llm.general","apiStyle":"openai","protocol":"openai.chat-completions.v1","scheme":"http","host":"127.0.0.1","port":url.port().unwrap(),"baseUrl":endpoint,"model":model,"contextWindow":{"maxTokens":131072,"outputReserveTokens":4096,"safetyMarginTokens":1976},"health":{"url":format!("{}/v1/agent-connections/world-fixture/providers/llm/health",self.base),"kind":"semantic-inference","maxAgeMs":10000},"credential":{"type":"bearer","token":"token-llm","expiresAt":self.expires},"configuration":{"kind":"openai-provider-v1","fields":{"baseURL":endpoint,"model":model},"secretFields":{"apiKey":"credential.token"}}}]})
     }
-    fn dynamic_state(&self, agent_profile: &str) -> Value {
-        let provider = |name: &str, capability: &str, model: &str| {
-            json!({
-                "name": name,
-                "capability": capability,
-                "route": name,
-                "protocol": "openai.chat-completions.v1",
-                "publicModel": model,
-                "readiness": "ready",
-                "claimable": true
+    fn dynamic_state(&self, selector: &str) -> Value {
+        let providers = ["tts", "llm", "embedding", "backchannel", "asr"]
+            .into_iter()
+            .map(|name| {
+                let mut provider = declared_provider(name);
+                provider["route"] = json!(name);
+                provider["readiness"] = json!("ready");
+                provider["claimable"] = json!(true);
+                provider
             })
-        };
-        json!({"id":"world-fixture","allocationId":"world-allocation","bootEpoch":"epoch-fixture","catalogRevision":"0".repeat(64),"agentProfile":agent_profile,"profileRevision":"0".repeat(64),"audience":"saaa-desktop","audienceRevision":"0".repeat(64),"status":"ready","providers":[provider("tts","speech.tts","voicevox-core"),provider("llm","llm.general","ornith-1.5-35b"),provider("embedding","embedding","multilingual-e5-small"),provider("backchannel","llm.backchannel.classifier","qwen3.5-2b-fast-response"),provider("asr","speech.stt","qwen3-asr-1.7b")],"createdAt":self.created,"expiresAt":self.expires,"error":null})
+            .collect::<Vec<_>>();
+        let services = match selector { "SAAA-w-Image" => vec![declared_service("image")], "SAAA-w-music" => vec![declared_service("music")], _ => vec![] };
+        json!({"id":"world-fixture","allocationId":"world-allocation","bootEpoch":"epoch-fixture","catalogRevision":"0".repeat(64),"profile":selector,"agentProfile":"saaa-conversation-ornith15","profileRevision":"0".repeat(64),"audience":"saaa-desktop","audienceRevision":"0".repeat(64),"status":"ready","providers":providers,"services":services,"createdAt":self.created,"expiresAt":self.expires,"error":null})
     }
 }
 fn fixture_model(name: &str) -> &'static str {
@@ -219,7 +219,7 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
                         "protocol": protocol,
                         "baseUrl": format!("{}/{name}/v1", f.base),
                         "model": fixture_model(name),
-                        "configuration": {"fields": {}},
+                        "configuration": {"fields": {"baseURL":format!("{}/{name}/v1", f.base),"model":fixture_model(name)}},
                         "credential": {"token": format!("token-{name}")},
                         "health": {"url": format!("{}/{name}/health", f.base), "maxAgeMs": 10000},
                         "contextWindow": fixture_window(name),
@@ -246,15 +246,15 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
                 .unwrap();
             serde_json::from_slice::<Value>(&bytes)
                 .ok()
-                .and_then(|body| body["agentProfile"].as_str().map(str::to_string))
-                .unwrap_or_else(|| "saaa-conversation-ornith15".into())
+                .and_then(|body| body["profile"].as_str().map(str::to_string))
+                .unwrap_or_else(|| "SAAA".into())
         } else {
-            "saaa-conversation-ornith15".into()
+            "SAAA".into()
         };
         let value = if f.route == "dynamic-lan" {
             f.dynamic_state(&requested_profile)
         } else {
-            json!({"id":"world-fixture","status":"ready","allocationId":"world-allocation","expiresAt":f.expires})
+            { let providers = ["tts", "llm", "embedding", "backchannel", "asr"].into_iter().map(|name| { let mut provider = declared_provider(name); provider["readiness"] = json!("ready"); provider["claimable"] = json!(true); provider }).collect::<Vec<_>>(); let services = match requested_profile.as_str() { "SAAA-w-Image" => vec![declared_service("image")], "SAAA-w-music" => vec![declared_service("music")], _ => vec![] }; json!({"id":"world-fixture","profile":requested_profile,"agentProfile":"saaa-conversation-ornith15","status":"ready","allocationId":"world-allocation","expiresAt":f.expires,"providers":providers,"services":services}) }
         };
         return (axum::http::StatusCode::CREATED, Json(value)).into_response();
     }

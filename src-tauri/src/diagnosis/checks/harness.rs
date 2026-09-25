@@ -84,8 +84,42 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
                 promote_response(&mut items, &readiness.message);
             }
             if legacy {
+                items.push(item(
+                    "harness.tcp",
+                    "harness",
+                    "LARM TCP reachability",
+                    DiagnosisStatus::Ok,
+                    DiagnosisSeverity::Info,
+                    "LARM TCP connection succeeded",
+                    None,
+                ));
+                for (stage, label) in [
+                    ("discovery", "LARM discovery"),
+                    ("create", "Agent Connection create"),
+                    ("semantic-readiness", "Provider semantic readiness"),
+                    ("claim", "Provider claim"),
+                ] {
+                    items.push(item(
+                        &format!("harness.larm.{stage}"),
+                        "harness",
+                        label,
+                        DiagnosisStatus::Ok,
+                        DiagnosisSeverity::Info,
+                        "Verified by the Agent Connection resolution",
+                        None,
+                    ));
+                }
                 let (embedding, binding) =
                     probe_embedding(&settings.harness.address, preference).await;
+                items.push(item(
+                    "harness.larm.inference",
+                    "harness",
+                    "Provider inference",
+                    embedding.status,
+                    DiagnosisSeverity::Degraded,
+                    &embedding.message,
+                    None,
+                ));
                 items.retain(|item| item.id != "harness.embedding");
                 items.push(embedding);
                 items.extend(binding);
@@ -96,7 +130,34 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
                 Some(detail) => format!("{detail}\n{error}"),
                 None => error,
             };
-            push_failure(&mut items, legacy, &message);
+            let host = if legacy {
+                crate::providers::service_harness::legacy_dynamic_lan_host(
+                    &settings.harness.address,
+                )
+                .ok()
+                .flatten()
+            } else {
+                None
+            };
+            let reached_tcp = if let Some(host) = host.as_deref() {
+                tokio::time::timeout(
+                    Duration::from_secs(3),
+                    tokio::net::TcpStream::connect((
+                        host,
+                        crate::providers::dynamic_lan::CONTROL_PORT,
+                    )),
+                )
+                .await
+                .is_ok_and(|result| result.is_ok())
+            } else {
+                false
+            };
+            let reached_http = if let Some(host) = host.as_deref() {
+                crate::providers::dynamic_lan::probe::reachable(host, Duration::from_secs(3)).await
+            } else {
+                false
+            };
+            push_failure(&mut items, legacy, reached_tcp, reached_http, &message);
         }
     }
     if let Some(legacy_asr) = legacy_asr {
@@ -151,9 +212,57 @@ async fn advertised_llms(
     advertised_detail(&catalog)
 }
 
-fn push_failure(items: &mut Vec<DiagnosisItem>, legacy: bool, message: &str) {
+fn push_failure(
+    items: &mut Vec<DiagnosisItem>,
+    legacy: bool,
+    reached_tcp: bool,
+    reached_http: bool,
+    message: &str,
+) {
     if legacy {
-        items.push(readiness_item(true, false, message));
+        items.push(item(
+            "harness.tcp",
+            "harness",
+            "LARM TCP reachability",
+            if reached_tcp {
+                DiagnosisStatus::Ok
+            } else {
+                DiagnosisStatus::Fail
+            },
+            DiagnosisSeverity::Degraded,
+            if reached_tcp {
+                "LARM TCP connection succeeded"
+            } else {
+                "LARM TCP connection failed"
+            },
+            None,
+        ));
+        items.push(item(
+            "harness.reachability",
+            "harness",
+            "Harness reachability",
+            if reached_http {
+                DiagnosisStatus::Ok
+            } else {
+                DiagnosisStatus::Fail
+            },
+            DiagnosisSeverity::Degraded,
+            if reached_http {
+                "LARM HTTP endpoint responded"
+            } else {
+                "LARM HTTP endpoint did not respond"
+            },
+            None,
+        ));
+        items.push(item(
+            "harness.resolve",
+            "harness",
+            "Agent Connection create and readiness",
+            DiagnosisStatus::Fail,
+            DiagnosisSeverity::Degraded,
+            message,
+            None,
+        ));
         return;
     }
     items.push(readiness_item(
@@ -474,6 +583,33 @@ fn service_item(service: &HarnessServiceStatus) -> DiagnosisItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_success_and_create_contract_failure_are_separate_diagnostics() {
+        let mut items = Vec::new();
+        push_failure(&mut items, true, true, true, "larm_invalid_request");
+        assert_eq!(
+            items
+                .iter()
+                .find(|item| item.id == "harness.tcp")
+                .map(|item| item.status),
+            Some(DiagnosisStatus::Ok)
+        );
+        assert_eq!(
+            items
+                .iter()
+                .find(|item| item.id == "harness.reachability")
+                .map(|item| item.status),
+            Some(DiagnosisStatus::Ok)
+        );
+        assert_eq!(
+            items
+                .iter()
+                .find(|item| item.id == "harness.resolve")
+                .map(|item| item.status),
+            Some(DiagnosisStatus::Fail)
+        );
+    }
     use rusqlite::Connection;
 
     fn fresh() -> AppState {

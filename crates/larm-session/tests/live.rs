@@ -4,13 +4,13 @@ use serde_json::json;
 use std::time::Duration;
 #[tokio::test]
 #[ignore = "starts the existing-only SAAA LARM profile on the LAN"]
-async fn live_four_provider_session() {
+async fn live_five_provider_session() {
     let base = std::env::var("SAAA_LARM_CONTROL_URL")
         .unwrap_or_else(|_| "http://192.168.0.130:9810".into());
     let (_stop, receiver) = tokio::sync::watch::channel(false);
     let session = Session::connect(&base, receiver)
         .await
-        .expect("connect and health all four providers");
+        .expect("connect and health all five providers");
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(45))
@@ -65,7 +65,7 @@ async fn live_four_provider_session() {
     };
     session.close().await.expect("release");
     eprintln!("connection: released");
-    result.expect("all four providers respond");
+    result.expect("all five providers respond");
     let invalidated = invalidated.expect("lease for revocation check");
     let status=client.post(invalidated.0).bearer_auth(invalidated.1).json(&json!({"model":invalidated.2,"messages":[{"role":"user","content":"OK"}],"stream":false}))
         .send().await.unwrap().status();
@@ -82,8 +82,8 @@ async fn live_restart_reclaims_connection() {
     let (_first_stop, first_receiver) = tokio::sync::watch::channel(false);
     let first = Session::connect_with_profile_credential_and_key(
         &base,
-        saaa_larm_session::ProfilePreference::Explicit(
-            "saaa-conversation-ornith15".into(),
+        saaa_larm_session::ProfilePreference::Variant(
+            saaa_larm_session::ProfileVariant::Conversation,
         ),
         token.clone(),
         key.clone(),
@@ -102,8 +102,8 @@ async fn live_restart_reclaims_connection() {
     let (_second_stop, second_receiver) = tokio::sync::watch::channel(false);
     let second = Session::connect_with_profile_credential_and_key(
         &base,
-        saaa_larm_session::ProfilePreference::Explicit(
-            "saaa-conversation-ornith15".into(),
+        saaa_larm_session::ProfilePreference::Variant(
+            saaa_larm_session::ProfileVariant::Conversation,
         ),
         token,
         key,

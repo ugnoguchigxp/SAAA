@@ -1,5 +1,7 @@
 # Ornith 1.5 35B + Qwen 3.5 2B 執事応答 実装計画（LARM selector 対応版）
 
+> この文書の旧 `agentProfile` 作成要求は履歴として残す。現行の provide 契約は [SAAA Agent Connection provide 契約](../larm-agent-connection-provide.md) を参照する。
+
 作成日: 2026-09-24（第 3 版）／改訂: 2026-09-25（第 4 版。LARM の profile selector に合わせて全面改訂）
 状態: 計画確定、未着手
 関連: `docs/plans/saaa-butler-role-routing.md`（Role Routing による受付 → 思考の実装。Stage 1 は実装済み。本計画はその上で「LARM から借りる 2 つの LLM を正しく揃える」部分を担当する）
@@ -86,7 +88,7 @@
 | G4 | catalog の LLM 情報（model、contextWindow、protocol、endpoint、capability）を読まずに捨てている。claim の内容と照合していない | `crates/larm-session/src/catalog.rs` | catalog と claim が食い違っても気付かない。どの LLM で動いたかを診断で示せない |
 | G5 | 既定値が食い違っている。Rust の `DEFAULT_PROFILE` は `saaa-conversation-ornith15`、TypeScript の `DEFAULT_LARM_PROFILE` は `saaa-conversation-gemma4` | `contract.rs`、`src/features/settings/settingsDefaults.ts` 7 行目 | 画面と実行時の既定値が違う |
 | G6 | テスト fixture のモデルが実機と違う（`llm` = `gemma-4-e4b`、`backchannel` = `fixture`、両方 contextWindow 230400） | `providers/larm_voice/world_wire_fixture.rs` 94 行目 | Qwen 用の `reasoning_effort` 挿入と `Thinking::Disabled` の上書きが、実機のモデル名で試されていない |
-| G7 | テキスト会話の経路 B が `AGENT_PROFILE`（`saaa-qwen38`）固定で、Provider が 1 つの Profile しか受け付けない | `providers/dynamic_lan/validate.rs` 144、202〜218、267 行目、`mod.d/03.rs` 27 行目 | テキスト会話の思考が Ornith に届かない（`saaa-qwen38` は Gemma 4 構成） |
+| G7 | テキスト会話の経路 B が `AGENT_PROFILE`（`saaa-qwen38`）固定で、Provider が 1 つの Profile しか受け付けない | `providers/dynamic_lan/validate.rs` 144、202〜218、267 行目、`tests/fixtures_and_contracts.rs` 27 行目 | テキスト会話の思考が Ornith に届かない（`saaa-qwen38` は Gemma 4 構成） |
 | G8 | 表示名に旧構成が残っている可能性（「Gemma 4 E4B (LARM)」） | 保存設定の actor `label` | 画面の表示と実際のモデルが違う。保存設定は書き換えない（4.6） |
 
 ## 4. 決定事項
@@ -296,22 +298,22 @@ bun test
 ### 変更ファイル
 
 - `crates/larm-session/src/lib.rs`（`catalog::fetch` と `CatalogProfile` を `pub` にする）
-- `src-tauri/src/providers/dynamic_lan/mod.d/01.rs`、`mod.d/03.rs`
+- `src-tauri/src/providers/dynamic_lan/connection_types.rs`、`tests/fixtures_and_contracts.rs`
 - `src-tauri/src/providers/dynamic_lan/validate.rs`
 - `src-tauri/src/providers/dynamic_lan/profile_catalog.rs`
-- `src-tauri/src/providers/dynamic_lan/mod.d/04.rs`、`mod.d/05.rs`（テスト）
+- `src-tauri/src/providers/dynamic_lan/tests/resolution_tests.rs`、`tests/lifecycle_tests.rs`（テスト）
 - `AGENT_PROFILE` の参照箇所（`rg -n "AGENT_PROFILE" src-tauri/src`）
 
 ### 手順
 
-1. `mod.d/01.rs`: `AGENT_PROFILE` を削除する。Profile は保存値から `larm_voice::profile::preference` で解決する（4.1）。
+1. `connection_types.rs`: `AGENT_PROFILE` を削除する。Profile は保存値から `larm_voice::profile::preference` で解決する（4.1）。
 2. `validate.rs` の `select_default_llm_profile` を削除し、`Variant` なら `saaa_larm_session::catalog::fetch(..., selector)` の結果の `id` と `llm` の情報を使う。`Explicit` なら catalog を問い合わせない。
 3. `validate.rs` の `validate_state_shape`（144 行目）と Profile 検証（267 行目）: `len() != 1` と `providers[0]` を削除し、`name == "llm"` の要素をちょうど 1 つ探す。0 個または 2 個以上なら contract error。他の Provider は無視する。
 4. `validate_claim` の `llm` を、catalog の `llm`（model、protocol、contextWindow）と照合する。不一致は contract error（4.3 と同じ条件）。
 5. `profile_catalog.rs`: v1 分岐と `legacy_profile_context_window` を削除し、`agent-connection.v3` だけを受け付ける。
 6. テスト fixture の catalog と state を、2.1 の 5 Provider 構成にする。`claim["providers"][0]` を書き換えている箇所は、`name` で要素を探すヘルパー `provider_mut(claim, name)` に置き換える。
 
-### 追加テスト（`mod.d/04.rs`）
+### 追加テスト（`tests/resolution_tests.rs`）
 
 | テスト名 | 内容 | 期待値 |
 |---|---|---|

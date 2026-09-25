@@ -75,6 +75,7 @@ pub struct Session {
     profile: String,
     catalog: Option<CatalogProfile>,
     required: Vec<&'static str>,
+    created_models: std::collections::HashMap<String, String>,
     snapshot: Arc<RwLock<Option<Snapshot>>>,
     closed: AtomicBool,
     released: AtomicBool,
@@ -160,7 +161,13 @@ impl Session {
     ) -> Result<Arc<Self>, ConnectError> {
         Self::connect_with_profile_credential_and_key(
             base,
-            ProfilePreference::Explicit(profile.to_string()),
+            if let Some(variant) = ProfileVariant::from_selector(profile) {
+                ProfilePreference::Variant(variant)
+            } else if LEGACY_PROFILE_IDS.contains(&profile) {
+                ProfilePreference::Variant(ProfileVariant::Conversation)
+            } else {
+                ProfilePreference::Explicit(profile.to_string())
+            },
             token,
             format!("saaa-session-{}", uuid::Uuid::new_v4()),
             cancellation,
@@ -183,6 +190,9 @@ impl Session {
         }
         if let ProfilePreference::Explicit(profile) = &preference {
             validate_profile(profile)?;
+            if ProfileVariant::from_selector(profile).is_none() {
+                return Err("larm_unknown_selector".into());
+            }
         }
         if idempotency_key.is_empty()
             || idempotency_key.len() > 160
@@ -254,9 +264,7 @@ impl Session {
                     result = catalog::fetch(&client, &base, &token, variant.selector()) => result?,
                 };
                 let expected = variant.services();
-                if !required
-                    .iter()
-                    .all(|name| profile.provider(name).is_some())
+                if !required.iter().all(|name| profile.provider(name).is_some())
                     || profile.services.len() != expected.len()
                     || !expected
                         .iter()
@@ -264,26 +272,32 @@ impl Session {
                 {
                     return Err("larm_profile_unavailable".into());
                 }
-                let id = profile.id.clone();
-                (id, Some(profile))
+                (variant.selector().to_string(), Some(profile))
             }
         };
         validate_profile(&profile)?;
         base.set_path("/v1/agent-connections");
         // Do not race creation against cancellation: receive the id, then release it.
-        let created = http::json(
-            authorize(
-                client
-                    .post(base.clone())
-                    .header("Idempotency-Key", &idempotency_key)
-                    .json(&json!({"agentProfile":profile,"explicitAgentProfile":true,
-                "audience":"saaa-desktop","client":"saaa-coding-agent","ttlSeconds":600,
-                "allowFallback":false,"deploymentPolicy":"existing-only"})),
-                &token,
-            )?,
-            &[201, 202],
-        )
-        .await?;
+        let mut body = json!({"profile":profile,
+            "audience":"saaa-desktop","client":"saaa-desktop","ttlSeconds":900,
+            "allowFallback":false,"deploymentPolicy":"existing-only"});
+        if let Some(catalog) = &catalog {
+            body["expectedCatalogRevision"] = json!(catalog.revision);
+        }
+        let create = client
+            .post(base.clone())
+            .timeout(Duration::from_secs(315))
+            .header("Idempotency-Key", &idempotency_key)
+            .header("Prefer", "wait=300")
+            .json(&body);
+        let create = authorize(create, &token)?;
+        let retry_create = create.try_clone().ok_or("larm_client_failed")?;
+        let (create_status, created, location) = match http::json_response(create, &[201, 202])
+            .await
+        {
+            Err("larm_transport_failed") => http::json_response(retry_create, &[201, 202]).await?,
+            result => result?,
+        };
         let id = contract::string(&created, "id")?.to_string();
         if id.len() > 160
             || !id
@@ -295,15 +309,46 @@ impl Session {
         base.path_segments_mut()
             .map_err(|_| "larm_invalid_control_url")?
             .push(&id);
+        let create_contract_invalid = (create_status == 201 && created["status"] != "ready")
+            || (create_status == 202
+                && !matches!(created["status"].as_str(), Some("pending" | "probing")))
+            || (create_status == 202
+                && location
+                    .as_deref()
+                    .and_then(|location| {
+                        let mut root = base.clone();
+                        root.set_path("/");
+                        root.join(location).ok()
+                    })
+                    .as_ref()
+                    != Some(&base));
         let (stop, _) = watch::channel(false);
+        let created_models = created["providers"]
+            .as_array()
+            .map(|providers| {
+                providers
+                    .iter()
+                    .filter_map(|provider| {
+                        Some((
+                            provider["name"].as_str()?.to_string(),
+                            provider["model"].as_str()?.to_string(),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let session = Arc::new(Self {
             client,
             control_token: zeroize::Zeroizing::new(token),
             connection: base,
             id: id.clone(),
-            profile: profile.clone(),
+            profile: created["agentProfile"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
             catalog,
             required: required.clone(),
+            created_models,
             snapshot: Arc::new(RwLock::new(None)),
             closed: AtomicBool::new(false),
             released: AtomicBool::new(false),
@@ -311,9 +356,21 @@ impl Session {
         });
         let startup = async {
             let mut state = created;
+            if create_contract_invalid {
+                return Err("larm_invalid_contract");
+            }
+            contract::validate_created(&state, &profile, &required, session.catalog.as_ref())?;
             loop {
                 match state["status"].as_str() {
-                    Some("ready") => break,
+                    Some("ready") => {
+                        contract::validate_created(
+                            &state,
+                            &profile,
+                            &required,
+                            session.catalog.as_ref(),
+                        )?;
+                        break;
+                    }
                     Some("pending" | "probing") => {}
                     _ => return Err("larm_startup_terminal"),
                 }
@@ -326,6 +383,7 @@ impl Session {
                 if state["id"] != id {
                     return Err("larm_connection_mismatch");
                 }
+                contract::validate_created(&state, &profile, &required, session.catalog.as_ref())?;
             }
             let snapshot = session.claim().await?;
             *session.snapshot.write().await = Some(snapshot);
@@ -386,6 +444,13 @@ impl Session {
         )
         .await?;
         let snapshot = contract::parse(value, &self.id, &self.required)?;
+        if snapshot
+            .providers
+            .iter()
+            .any(|(name, provider)| self.created_models.get(name) != Some(&provider.model))
+        {
+            return Err("larm_create_claim_mismatch");
+        }
         if let Some(catalog) = &self.catalog {
             contract::verify_against_catalog(&snapshot, catalog)?;
         }
@@ -398,7 +463,9 @@ impl Session {
         &self.profile
     }
     pub fn selector(&self) -> Option<&str> {
-        self.catalog.as_ref().map(|catalog| catalog.selector.as_str())
+        self.catalog
+            .as_ref()
+            .map(|catalog| catalog.selector.as_str())
     }
     pub fn catalog_revision(&self) -> Option<&str> {
         self.catalog

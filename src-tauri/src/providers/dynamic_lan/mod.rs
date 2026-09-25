@@ -19,11 +19,13 @@ use profile_catalog::*;
 use urls::*;
 pub(crate) use urls::{control_base_url, url_is_local};
 use validate::*;
-include!("mod.d/01.rs");
-include!("mod.d/02.rs");
+include!("connection_types.rs");
+include!("connection_lifecycle.rs");
+include!("connection_runtime.rs");
 #[cfg(test)]
 mod tests {
-    include!("mod.d/03.rs");
-    include!("mod.d/04.rs");
-    include!("mod.d/05.rs");
+    include!("tests/fixtures_and_contracts.rs");
+    include!("tests/resolution_tests.rs");
+    include!("tests/selector_tests.rs");
+    include!("tests/lifecycle_tests.rs");
 }

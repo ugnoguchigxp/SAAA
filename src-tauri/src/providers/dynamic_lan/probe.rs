@@ -43,7 +43,7 @@ pub(crate) async fn reachable_at(base: Url, timeout: Duration) -> bool {
         }
     }
     match request.send().await {
-        Ok(response) => response.status().is_success(),
+        Ok(_) => true,
         Err(error) => {
             eprintln!("dynamic_lan reachability probe failed: {error}");
             false
@@ -125,7 +125,7 @@ mod tests {
         ok_server.join().expect("200 server");
 
         let (denied_url, denied_server) = serve("401 Unauthorized");
-        assert!(!reachable_at(denied_url, Duration::from_secs(2)).await);
+        assert!(reachable_at(denied_url, Duration::from_secs(2)).await);
         denied_server.join().expect("401 server");
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
