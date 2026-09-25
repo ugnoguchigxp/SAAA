@@ -184,7 +184,11 @@ export function createAmbientVoiceCaptureActions(input: {
         activityDetector: voiceActivityDetectorRef,
         captureLease: voiceCaptureLeaseRef,
         applyEvent: applyVoiceEvent,
-        finishSegment: (reason) => void finishVoiceCapture(true, reason),
+        finishSegment: (reason) => {
+          if (reason === "silence" && voiceAsrProjectionRef.current.scope !== "all-speakers")
+            return;
+          void finishVoiceCapture(true, reason);
+        },
         packetFrame: packetVoiceFrame,
         packetCount: () => voiceAsrPacketCountRef.current,
         clearTranscript: () => setInterimTranscript(""),
@@ -395,8 +399,28 @@ export function createAmbientVoiceCaptureActions(input: {
     const next = projectVoiceAsrEvent(voiceAsrProjectionRef.current, event);
     voiceAsrProjectionRef.current = next;
     setAsrProjection(next);
+    if (
+      next.scope === "target-speaker" &&
+      (event.type === "final" || event.type === "utteranceDiscarded")
+    ) {
+      const settings = effectiveCaptureSettings(voiceSettingsRef.current, voicePolicyRef.current);
+      if (settings) {
+        resetVoiceActivityDetector(
+          voiceActivityDetectorRef,
+          settings,
+          voiceContextRef.current?.sampleRate ?? ASR_SAMPLE_RATE,
+        );
+      }
+      voiceAsrPacketCountRef.current = 0;
+      voiceActivityDetectedRef.current = false;
+      setVoiceActivityDetected(false);
+    }
     if (event.type === "partial") setInterimTranscript(`${next.stableText}${next.unstableText}`);
-    if (event.type === "utteranceDiscarded") setInterimTranscript("");
+    if (event.type === "utteranceDiscarded") {
+      setInterimTranscript("");
+      if (event.reason === "target-speaker-empty")
+        setError((current) => current ?? uiMessage("voiceTargetSpeakerRejected"));
+    }
     if (event.type === "stopped") {
       acceptedVoiceAsrSessionsRef.current.delete(event.sessionId);
       voiceAsrConversationsRef.current.delete(event.sessionId);

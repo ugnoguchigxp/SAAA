@@ -12,6 +12,16 @@ export type AudioBackendStatus = {
   macosMajor: number;
 };
 
+let captureMonitor: ReturnType<typeof setInterval> | null = null;
+let captureGeneration = 0;
+
+function clearCaptureMonitor(): number {
+  captureGeneration += 1;
+  if (captureMonitor !== null) clearInterval(captureMonitor);
+  captureMonitor = null;
+  return captureGeneration;
+}
+
 export async function audioBackendStatus(): Promise<AudioBackendStatus> {
   return invoke("audio_backend_status");
 }
@@ -20,17 +30,46 @@ export async function startNativeVoiceCapture(
   onFrame: (frame: Float32Array) => void,
   onEnded?: (reason: string) => void,
 ): Promise<AudioBackendStatus> {
+  const generation = clearCaptureMonitor();
   const channel = new Channel<unknown>();
   channel.onmessage = (payload) => {
+    if (generation !== captureGeneration) return;
     const frame = pcmFrame(payload);
     if (frame) {
       onFrame(frame);
       return;
     }
     const reason = endedReason(payload);
-    if (reason) onEnded?.(reason);
+    if (reason && generation === captureGeneration) {
+      clearCaptureMonitor();
+      onEnded?.(reason);
+    }
   };
-  return invoke("start_native_voice_capture", { onFrame: channel });
+  const started = await invoke<AudioBackendStatus>("start_native_voice_capture", { onFrame: channel });
+  if (generation !== captureGeneration) return started;
+  let checking = false;
+  let failures = 0;
+  const endCapture = (reason: string) => {
+    if (generation !== captureGeneration) return;
+    clearCaptureMonitor();
+    onEnded?.(reason);
+  };
+  captureMonitor = setInterval(() => {
+    if (checking) return;
+    checking = true;
+    void audioBackendStatus()
+      .then((status) => {
+        failures = 0;
+        if (!status.captureActive) endCapture("VoiceProcessing capture stopped unexpectedly");
+      })
+      .catch(() => {
+        if (++failures >= 3) endCapture("VoiceProcessing capture status is unavailable");
+      })
+      .finally(() => {
+        checking = false;
+      });
+  }, 500);
+  return started;
 }
 
 function pcmFrame(payload: unknown): Float32Array | null {
@@ -74,6 +113,7 @@ function endedReason(payload: unknown): string | null {
 }
 
 export async function stopNativeVoiceCapture(): Promise<void> {
+  clearCaptureMonitor();
   await invoke("stop_native_voice_capture");
 }
 

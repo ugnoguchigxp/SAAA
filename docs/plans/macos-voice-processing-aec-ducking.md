@@ -1,6 +1,8 @@
 # macOS VoiceProcessingIO による AEC と Other Audio Ducking 制御 実装計画
 
-状態: 実装済み（Phase 0 の Spotify / `log stream` 確認は手動。CLI は `cargo run --manifest-path src-tauri/Cargo.toml --bin vpio_probe`）。対象: macOS 14 以降。確認環境: macOS 26.6.2 SDK。
+状態: 実装済み・実機受入未完了。Spotify 等の減音量、SAAA の TTS に対する AEC 効果、通常の会話経路の機器別結果は未記録。CLI は `cargo run --manifest-path src-tauri/Cargo.toml --bin vpio_probe -- --seconds 1`（Bluetooth 出力で試す場合は `--bluetooth` を追加）。対象: macOS 14 以降。確認環境: macOS 26.6.2 SDK。
+
+2026-09-25 の単体確認: Bluetooth 出力では既定設定のままでは VPIO を開かず、`--bluetooth` 指定時は `aec=true`、`agc=false`、`ducking=min` で起動した。これは設定読み戻しの確認であり、他アプリの実際の減音量や AEC の効果を証明しない。Qwen Audio Agent の参照実装は同じ VPIO で再生・録音するが、ducking 制御と無減音の測定結果は含まない。
 
 ## 1. 結論
 

@@ -21,6 +21,7 @@ struct SaaaVpio {
     float input_samples[SAAA_MAX_FRAMES];
     AudioBufferList input_list;
     _Atomic uint32_t rebuild;
+    _Atomic uint32_t capture_failed;
     uint32_t sample_rate;
     uint32_t ducking_level;
     uint8_t advanced_ducking;
@@ -97,6 +98,7 @@ static OSStatus input_cb(void *inRefCon, AudioUnitRenderActionFlags *ioActionFla
     (void)ioData;
     SaaaVpio *session = (SaaaVpio *)inRefCon;
     if (inNumberFrames == 0 || inNumberFrames > SAAA_MAX_FRAMES) {
+        if (inNumberFrames > SAAA_MAX_FRAMES) atomic_store(&session->capture_failed, 1);
         return noErr;
     }
     session->input_list.mNumberBuffers = 1;
@@ -106,10 +108,14 @@ static OSStatus input_cb(void *inRefCon, AudioUnitRenderActionFlags *ioActionFla
     OSStatus err = AudioUnitRender(session->unit, ioActionFlags, inTimeStamp, 1, inNumberFrames,
         &session->input_list);
     if (err != noErr) {
+        atomic_store(&session->capture_failed, 1);
         return noErr;
     }
     if (session->write_capture != NULL) {
-        session->write_capture(session->capture_ring, session->input_samples, inNumberFrames);
+        if (session->write_capture(session->capture_ring, session->input_samples, inNumberFrames)
+            != inNumberFrames) {
+            atomic_store(&session->capture_failed, 1);
+        }
     }
     return noErr;
 }
@@ -253,6 +259,7 @@ SaaaVpio *saaa_vpio_create(const SaaaVpioConfig *config, void *playback_ring, vo
     session->enable_agc = config->enable_agc;
     session->bypass = config->bypass_voice_processing;
     atomic_store(&session->rebuild, 0);
+    atomic_store(&session->capture_failed, 0);
     if (AudioComponentInstanceNew(component, &session->unit) != noErr) {
         set_error(err, err_len, "Could not create VoiceProcessingIO");
         free(session);
@@ -358,26 +365,26 @@ int saaa_vpio_readback(SaaaVpio *session, SaaaVpioStatus *status) {
     UInt32 agc = 0;
     UInt32 size = sizeof(UInt32);
     if (AudioUnitGetProperty(session->unit, kAUVoiceIOProperty_BypassVoiceProcessing,
-            kAudioUnitScope_Global, 0, &bypass, &size)
-        == noErr) {
-        status->bypass_enabled = bypass ? 1 : 0;
+            kAudioUnitScope_Global, 0, &bypass, &size) != noErr) {
+        return SAAA_VPIO_ERR;
     }
+    status->bypass_enabled = bypass ? 1 : 0;
     size = sizeof(UInt32);
     if (AudioUnitGetProperty(session->unit, kAUVoiceIOProperty_VoiceProcessingEnableAGC,
-            kAudioUnitScope_Global, 0, &agc, &size)
-        == noErr) {
-        status->agc_enabled = agc ? 1 : 0;
+            kAudioUnitScope_Global, 0, &agc, &size) != noErr) {
+        return SAAA_VPIO_ERR;
     }
+    status->agc_enabled = agc ? 1 : 0;
     if (__builtin_available(macOS 14.0, *)) {
         AUVoiceIOOtherAudioDuckingConfiguration ducking;
         memset(&ducking, 0, sizeof(ducking));
         size = sizeof(ducking);
         if (AudioUnitGetProperty(session->unit, kAUVoiceIOProperty_OtherAudioDuckingConfiguration,
-                kAudioUnitScope_Global, 0, &ducking, &size)
-            == noErr) {
-            status->advanced_ducking = ducking.mEnableAdvancedDucking ? 1 : 0;
-            status->ducking_level = ducking.mDuckingLevel;
+                kAudioUnitScope_Global, 0, &ducking, &size) != noErr) {
+            return SAAA_VPIO_ERR;
         }
+        status->advanced_ducking = ducking.mEnableAdvancedDucking ? 1 : 0;
+        status->ducking_level = ducking.mDuckingLevel;
     }
     saaa_audio_default_output_transport(&status->output_transport);
     return SAAA_VPIO_OK;
@@ -388,6 +395,10 @@ int saaa_vpio_rebuild_requested(const SaaaVpio *session) {
         return 0;
     }
     return atomic_load(&session->rebuild) ? 1 : 0;
+}
+
+int saaa_vpio_capture_failed(const SaaaVpio *session) {
+    return session != NULL && atomic_load(&session->capture_failed) != 0;
 }
 
 void saaa_vpio_clear_rebuild(SaaaVpio *session) {

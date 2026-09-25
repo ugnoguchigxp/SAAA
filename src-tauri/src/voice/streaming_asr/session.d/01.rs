@@ -2,6 +2,7 @@
 use tauri::ipc::Channel;
 const FINAL_TIMEOUT: Duration = Duration::from_secs(15);
 const RESULT_CAPACITY: usize = 8;
+const TARGET_SILENCE_SAMPLES: u64 = 24_000;
 pub(crate) enum SessionCommand {
     Audio(Zeroizing<Vec<u8>>),
     Commit {
@@ -68,6 +69,8 @@ struct Actor {
     batch_failures: usize,
     stopping: bool,
     stop_deadline: Option<tokio::time::Instant>,
+    target_seen: bool,
+    target_silence_samples: u64,
 }
 pub(crate) async fn run(config: SessionConfig, commands: mpsc::Receiver<SessionCommand>) {
     let (decode_tx, decode_rx) = mpsc::channel(RESULT_CAPACITY);
@@ -88,6 +91,8 @@ pub(crate) async fn run(config: SessionConfig, commands: mpsc::Receiver<SessionC
         batch_failures: 0,
         stopping: false,
         stop_deadline: None,
+        target_seen: false,
+        target_silence_samples: 0,
     };
 
     actor.run_loop().await;
@@ -135,6 +140,7 @@ impl Actor {
             Some(SessionCommand::Audio(packet)) if !self.stopping => {
                 let sanitized = self.gate.push(packet).await;
                 self.process_sanitized(sanitized).await;
+                self.commit_after_target_silence().await;
                 false
             }
             Some(SessionCommand::Audio(mut packet)) => {
@@ -205,6 +211,14 @@ impl Actor {
 
     async fn process_sanitized(&mut self, packets: Vec<Zeroizing<Vec<u8>>>) {
         for packet in packets {
+            if self.gate.scope() == "target-speaker" {
+                if packet.iter().any(|byte| *byte != 0) {
+                    self.target_seen = true;
+                    self.target_silence_samples = 0;
+                } else if self.target_seen {
+                    self.target_silence_samples += (packet.len() / 2) as u64;
+                }
+            }
             self.current.pcm.extend_from_slice(&packet);
             if let Some(request) = self.current.engine.on_audio(self.current.sample_count()) {
                 self.spawn_decode(self.current.id.clone(), request, self.current.pcm.clone());
@@ -212,7 +226,33 @@ impl Actor {
         }
     }
 
+    async fn commit_after_target_silence(&mut self) {
+        if !self.target_seen || self.target_silence_samples < TARGET_SILENCE_SAMPLES {
+            return;
+        }
+        // Resolve the gate's buffered lookahead before closing the segment. A new
+        // target utterance in that buffer must keep the current segment open.
+        let sanitized = self.gate.flush().await;
+        self.process_sanitized(sanitized).await;
+        if self.target_silence_samples < TARGET_SILENCE_SAMPLES {
+            return;
+        }
+        if self.pending.len() >= 2 {
+            return;
+        }
+        if let Err(error) = self.commit_current().await {
+            self.emit_failed(
+                Some(self.current.id.clone()),
+                failure_code(&error),
+                &error,
+                false,
+            );
+        }
+    }
+
     async fn commit_current(&mut self) -> Result<(), String> {
+        self.target_seen = false;
+        self.target_silence_samples = 0;
         let next_id = crate::new_id("voice_asr_utterance");
         let end_sample = self.current.sample_count();
         self.current.partial_cancellation.cancel();

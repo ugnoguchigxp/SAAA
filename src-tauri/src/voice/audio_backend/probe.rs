@@ -10,6 +10,7 @@ use std::{
 pub fn run() -> i32 {
     let mut seconds = 3u64;
     let mut wav: Option<PathBuf> = None;
+    let mut bluetooth = false;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -20,8 +21,9 @@ pub fn run() -> i32 {
                     .unwrap_or(seconds);
             }
             "--wav" => wav = args.next().map(PathBuf::from),
+            "--bluetooth" => bluetooth = true,
             "--help" => {
-                eprintln!("vpio_probe [--seconds N] [--wav out.wav]");
+                eprintln!("vpio_probe [--seconds N] [--wav out.wav] [--bluetooth]");
                 return 0;
             }
             other => {
@@ -45,12 +47,17 @@ pub fn run() -> i32 {
     }
     let recorded = Arc::new(Mutex::new(Vec::<f32>::new()));
     let frames = recorded.clone();
+    let config = super::VoiceProcessingConfig {
+        vpio_on_bluetooth: bluetooth,
+        ..Default::default()
+    };
     match backend.start_capture(
-        super::VoiceProcessingConfig::default(),
+        config,
         Arc::new(move |frame| {
             if let Ok(mut samples) = frames.lock() {
                 samples.extend_from_slice(&frame);
             }
+            true
         }),
     ) {
         Ok(started) => println!(

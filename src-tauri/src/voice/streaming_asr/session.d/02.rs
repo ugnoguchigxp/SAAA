@@ -78,6 +78,17 @@ mod tests {
         }
     }
 
+    struct PositiveVoiceScorer;
+    impl SpeakerScorer for PositiveVoiceScorer {
+        fn score(&self, samples_16k: Zeroizing<Vec<f32>>) -> Result<f32, String> {
+            let mean = samples_16k.iter().sum::<f32>() / samples_16k.len() as f32;
+            Ok(if mean > 0.01 { 0.9 } else { 0.1 })
+        }
+        fn threshold(&self) -> f32 {
+            0.5
+        }
+    }
+
     fn event_channel() -> (Channel<VoiceAsrStreamEvent>, Arc<Mutex<Vec<Value>>>) {
         let values = Arc::new(Mutex::new(Vec::new()));
         let captured = values.clone();
@@ -260,6 +271,119 @@ mod tests {
             run_pcm_fixture(SpeakerGate::new(Some(Arc::new(RejectScorer)), 0.001), 15).await;
         assert_eq!(target.len(), 1);
         assert!(target[0].iter().all(|byte| *byte == 0));
+    }
+
+    #[tokio::test]
+    async fn target_silence_commits_despite_other_audible_speaker() {
+        let (event, captured) = event_channel();
+        let mut config = config(event);
+        config.speaker_gate = SpeakerGate::new(Some(Arc::new(PositiveVoiceScorer)), 0.001);
+        let (commands, receiver) = mpsc::channel(64);
+        let task = tokio::spawn(run(config, receiver));
+        let other = (-5_000_i16).to_le_bytes().repeat(1_600);
+        let target = 5_000_i16.to_le_bytes().repeat(1_600);
+        for _ in 0..20 {
+            commands
+                .send(SessionCommand::Audio(Zeroizing::new(other.clone())))
+                .await
+                .unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(!captured
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["type"] == "final"));
+        for _ in 0..20 {
+            commands
+                .send(SessionCommand::Audio(Zeroizing::new(target.clone())))
+                .await
+                .unwrap();
+        }
+        for _ in 0..24 {
+            commands
+                .send(SessionCommand::Audio(Zeroizing::new(other.clone())))
+                .await
+                .unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(!captured
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["type"] == "final"));
+        commands
+            .send(SessionCommand::Audio(Zeroizing::new(other.clone())))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if captured
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|event| event["type"] == "final")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("target utterance should finalize without a frontend commit");
+        let (accepted, received) = oneshot::channel();
+        commands
+            .send(SessionCommand::Stop {
+                finalize_current: false,
+                accepted,
+            })
+            .await
+            .unwrap();
+        received.await.unwrap().unwrap();
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resumed_target_before_timeout_keeps_one_utterance_open() {
+        let (event, captured) = event_channel();
+        let mut config = config(event);
+        config.speaker_gate = SpeakerGate::new(Some(Arc::new(PositiveVoiceScorer)), 0.001);
+        let (commands, receiver) = mpsc::channel(64);
+        let task = tokio::spawn(run(config, receiver));
+        for (count, sample) in [(20, 5_000_i16), (10, -5_000), (20, 5_000)] {
+            let packet = sample.to_le_bytes().repeat(1_600);
+            for _ in 0..count {
+                commands
+                    .send(SessionCommand::Audio(Zeroizing::new(packet.clone())))
+                    .await
+                    .unwrap();
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!captured
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["type"] == "final"));
+        let (accepted, received) = oneshot::channel();
+        commands
+            .send(SessionCommand::Stop {
+                finalize_current: true,
+                accepted,
+            })
+            .await
+            .unwrap();
+        received.await.unwrap().unwrap();
+        task.await.unwrap();
+        assert_eq!(
+            captured
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| event["type"] == "final")
+                .count(),
+            1
+        );
     }
 
     #[test]

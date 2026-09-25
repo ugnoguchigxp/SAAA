@@ -21,6 +21,7 @@ use std::{
 };
 
 static BACKEND: OnceLock<Arc<AudioBackend>> = OnceLock::new();
+pub(super) type CaptureSink = dyn Fn(Vec<f32>) -> bool + Send + Sync;
 
 pub fn global() -> Arc<AudioBackend> {
     BACKEND
@@ -75,7 +76,7 @@ impl AudioBackend {
     pub fn start_capture(
         &self,
         config: VoiceProcessingConfig,
-        sink: Arc<dyn Fn(Vec<f32>) + Send + Sync>,
+        sink: Arc<CaptureSink>,
     ) -> Result<AudioBackendStatus, String> {
         #[cfg(target_os = "macos")]
         {

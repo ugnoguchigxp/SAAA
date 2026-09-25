@@ -1,11 +1,10 @@
 //! Lock-free SPSC ring for VoiceProcessingIO callbacks.
-use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 pub const CAPACITY: usize = 131_072;
 
 pub struct SpscF32 {
-    samples: Box<[UnsafeCell<f32>]>,
+    samples: Box<[AtomicU32]>,
     mask: usize,
     write: AtomicUsize,
     read: AtomicUsize,
@@ -13,14 +12,11 @@ pub struct SpscF32 {
     consumer_epoch: AtomicU64,
 }
 
-unsafe impl Send for SpscF32 {}
-unsafe impl Sync for SpscF32 {}
-
 impl SpscF32 {
     pub fn new() -> Self {
         Self {
             samples: (0..CAPACITY)
-                .map(|_| UnsafeCell::new(0.0))
+                .map(|_| AtomicU32::new(0))
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
             mask: CAPACITY - 1,
@@ -72,9 +68,8 @@ impl SpscF32 {
         let space = CAPACITY.saturating_sub(used).saturating_sub(1);
         let n = src.len().min(space);
         for (index, sample) in src.iter().take(n).enumerate() {
-            unsafe {
-                *self.samples[(write.wrapping_add(index)) & self.mask].get() = *sample;
-            }
+            self.samples[(write.wrapping_add(index)) & self.mask]
+                .store(sample.to_bits(), Ordering::Relaxed);
         }
         self.write.store(write.wrapping_add(n), Ordering::Release);
         n
@@ -98,7 +93,9 @@ impl SpscF32 {
         }
         let n = dst.len().min(available);
         for (index, slot) in dst.iter_mut().take(n).enumerate() {
-            *slot = unsafe { *self.samples[(read.wrapping_add(index)) & self.mask].get() };
+            *slot = f32::from_bits(
+                self.samples[(read.wrapping_add(index)) & self.mask].load(Ordering::Relaxed),
+            );
         }
         if self.epoch.load(Ordering::Acquire) != epoch {
             return 0;

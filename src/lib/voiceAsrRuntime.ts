@@ -14,7 +14,13 @@ export async function startVoiceAsrSession(
 ): Promise<void> {
   let owner: Awaited<ReturnType<typeof prepareLarmVoiceSession>> = null;
   try {
-    owner = await prepareLarmVoiceSession(input.conversationId);
+    // The conversation lease can fail when an LLM provider is unavailable.
+    // ASR has its own Harness route, so keep microphone capture available.
+    try {
+      owner = await prepareLarmVoiceSession(input.conversationId);
+    } catch {
+      owner = null;
+    }
     const channel = createVoiceAsrChannel(input, onEvent);
     return await invoke("start_voice_asr_session", { input, onEvent: channel });
   } catch (error) {

@@ -4,6 +4,7 @@ use crate::persistence::{load_model_providers, load_routing_settings};
 use crate::providers::service_harness::{HarnessResolution, HarnessServiceStatus};
 use crate::voice::network_asr::NetworkAsrRuntime;
 use crate::AppState;
+use rusqlite::OptionalExtension;
 use std::{sync::Arc, time::Duration};
 
 pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem> {
@@ -42,9 +43,10 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
         .sqlite_readers
         .read(load_routing_settings)
         .is_ok_and(|routing| routing.voice_transcribe.source == "harness");
+    let recent_asr = recent_asr_result(state);
     let legacy_asr = async {
         if uses_harness_asr {
-            legacy_asr_item(&settings.harness.address).await
+            legacy_asr_item(&settings.harness.address, recent_asr).await
         } else {
             None
         }
@@ -197,7 +199,48 @@ fn readiness_item(legacy: bool, ready: bool, message: &str) -> DiagnosisItem {
     )
 }
 
-async fn legacy_asr_item(address: &str) -> Option<DiagnosisItem> {
+fn recent_asr_result(state: &AppState) -> Option<(String, String)> {
+    let cutoff = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis()
+        .saturating_sub(5 * 60 * 1_000) as i64;
+    state
+        .sqlite_readers
+        .read(|connection| {
+            connection
+                .query_row(
+                    "SELECT event_name, COALESCE(failure_code, '') FROM audit_events \
+                     WHERE component='voice-asr' AND CAST(occurred_at AS INTEGER)>=?1 \
+                     AND event_name IN ('capture-start-failed', 'asr-utterance-discarded', \
+                     'asr-final-received', 'asr-ready') ORDER BY sequence DESC LIMIT 1",
+                    [cutoff],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|error| error.to_string())
+        })
+        .ok()
+        .flatten()
+}
+
+fn observed_asr_status(event: &(String, String)) -> (DiagnosisStatus, &'static str) {
+    match (event.0.as_str(), event.1.as_str()) {
+        ("asr-final-received", _) => (DiagnosisStatus::Ok, "Recent speech was transcribed"),
+        ("capture-start-failed", _) => (DiagnosisStatus::Fail, "Recent microphone capture failed"),
+        ("asr-utterance-discarded", "target-speaker-empty") => (
+            DiagnosisStatus::Fail,
+            "Recent speech was discarded by the target-speaker filter",
+        ),
+        ("asr-utterance-discarded", _) => (DiagnosisStatus::Warn, "Recent speech was discarded"),
+        _ => (
+            DiagnosisStatus::Warn,
+            "ASR started, but no transcription was confirmed",
+        ),
+    }
+}
+
+async fn legacy_asr_item(address: &str, recent: Option<(String, String)>) -> Option<DiagnosisItem> {
     let host = crate::providers::service_harness::legacy_dynamic_lan_host(address)
         .ok()
         .flatten()?;
@@ -219,7 +262,10 @@ async fn legacy_asr_item(address: &str) -> Option<DiagnosisItem> {
             .map(|_| ())
     };
     let (status, message) = match tokio::time::timeout(Duration::from_secs(8), probe).await {
-        Ok(Ok(())) => (DiagnosisStatus::Ok, ""),
+        Ok(Ok(())) => recent.as_ref().map(observed_asr_status).unwrap_or((
+            DiagnosisStatus::Warn,
+            "ASR endpoint is reachable; microphone capture and transcription were not tested",
+        )),
         Ok(Err(_)) => (DiagnosisStatus::Fail, "ASR service is unavailable"),
         Err(_) => (
             DiagnosisStatus::Fail,
@@ -523,6 +569,22 @@ mod tests {
                 .find(|item| item.id == "harness.llm")
                 .map(|item| item.status),
             Some(DiagnosisStatus::Ok)
+        );
+    }
+
+    #[test]
+    fn recent_target_speaker_discard_is_an_asr_failure() {
+        assert_eq!(
+            observed_asr_status(&(
+                "asr-utterance-discarded".into(),
+                "target-speaker-empty".into(),
+            ))
+            .0,
+            DiagnosisStatus::Fail
+        );
+        assert_eq!(
+            observed_asr_status(&(String::from("asr-ready"), String::new())).0,
+            DiagnosisStatus::Warn
         );
     }
 

@@ -45,6 +45,7 @@ int saaa_vpio_start(SaaaVpio *session, char *err, uint32_t err_len);
 int saaa_vpio_stop(SaaaVpio *session);
 int saaa_vpio_readback(SaaaVpio *session, SaaaVpioStatus *status);
 int saaa_vpio_rebuild_requested(const SaaaVpio *session);
+int saaa_vpio_capture_failed(const SaaaVpio *session);
 void saaa_vpio_clear_rebuild(SaaaVpio *session);
 void saaa_vpio_destroy(SaaaVpio *session);
 int saaa_audio_default_output_transport(uint32_t *transport);

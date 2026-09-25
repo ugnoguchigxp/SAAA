@@ -2,7 +2,7 @@
 use super::{
     converter::{i16_to_f32_mono, CaptureDownsampler, LinearResampler, VPIO_RATE},
     ring::SpscF32,
-    AudioBackendStatus, DuckingLevel, VoiceProcessingConfig, AIRPLAY_TRANSPORT,
+    AudioBackendStatus, CaptureSink, DuckingLevel, VoiceProcessingConfig, AIRPLAY_TRANSPORT,
     BLUETOOTH_TRANSPORT,
 };
 use crate::RunCancellation;
@@ -62,6 +62,7 @@ extern "C" {
     fn saaa_vpio_stop(session: *mut c_void) -> i32;
     fn saaa_vpio_readback(session: *mut c_void, status: *mut SaaaVpioStatus) -> i32;
     fn saaa_vpio_rebuild_requested(session: *const c_void) -> i32;
+    fn saaa_vpio_capture_failed(session: *const c_void) -> i32;
     fn saaa_vpio_clear_rebuild(session: *mut c_void);
     fn saaa_vpio_destroy(session: *mut c_void);
     fn saaa_audio_default_output_transport(transport: *mut u32) -> i32;
@@ -153,12 +154,19 @@ impl NativeUnit {
             return Err(c_error(&err));
         }
         let mut status = empty_status();
-        unsafe { saaa_vpio_readback(ptr, &mut status) };
+        if unsafe { saaa_vpio_readback(ptr, &mut status) } != 0 {
+            unsafe { saaa_vpio_destroy(ptr) };
+            return Err("Could not read VoiceProcessing settings after start".into());
+        }
         Ok((Self { ptr }, status))
     }
 
     fn rebuild_requested(&self) -> bool {
         unsafe { saaa_vpio_rebuild_requested(self.ptr) != 0 }
+    }
+
+    fn capture_failed(&self) -> bool {
+        unsafe { saaa_vpio_capture_failed(self.ptr) != 0 }
     }
 
     fn clear_rebuild(&self) {
@@ -184,7 +192,7 @@ pub struct MacEngine {
     unit: Mutex<Option<NativeUnit>>,
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
-    sink: Mutex<Option<Arc<dyn Fn(Vec<f32>) + Send + Sync>>>,
+    sink: Mutex<Option<Arc<CaptureSink>>>,
     config: Mutex<VoiceProcessingConfig>,
     last_status: Mutex<SaaaVpioStatus>,
     playback_active: AtomicBool,
@@ -220,6 +228,7 @@ impl MacEngine {
     pub fn status(&self) -> AudioBackendStatus {
         let last = self.last_status.lock().unwrap_or_else(|e| e.into_inner());
         let available = macos_major() >= 14;
+        let transport = default_output_transport().unwrap_or(last.output_transport);
         AudioBackendStatus {
             available,
             reason: if available {
@@ -238,7 +247,7 @@ impl MacEngine {
             }
             .into(),
             agc_enabled: last.agc_enabled != 0,
-            output_transport: transport_name(last.output_transport).map(str::to_string),
+            output_transport: transport_name(transport).map(str::to_string),
             macos_major: last.macos_major,
         }
     }
@@ -246,7 +255,7 @@ impl MacEngine {
     pub fn start_capture(
         self: &Arc<Self>,
         config: VoiceProcessingConfig,
-        sink: Arc<dyn Fn(Vec<f32>) + Send + Sync>,
+        sink: Arc<CaptureSink>,
     ) -> Result<AudioBackendStatus, String> {
         if macos_major() < 14 {
             return Err("VoiceProcessing ducking requires macOS 14 or later".into());
@@ -292,6 +301,13 @@ impl MacEngine {
         if status.agc_enabled != 0 {
             drop(unit);
             return Err("VoiceProcessing AGC stayed enabled after initialize".into());
+        }
+        if status.bypass_enabled != u8::from(config.bypass)
+            || status.advanced_ducking != 0
+            || status.ducking_level != config.ducking.as_vpio_level()
+        {
+            drop(unit);
+            return Err("VoiceProcessing settings changed after initialize".into());
         }
         *self.last_status.lock().unwrap_or_else(|e| e.into_inner()) = status;
         *self.unit.lock().unwrap_or_else(|e| e.into_inner()) = Some(unit);
@@ -339,17 +355,24 @@ impl MacEngine {
             .is_some_and(NativeUnit::rebuild_requested)
     }
 
+    pub fn unit_capture_failed(&self) -> bool {
+        self.unit
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(NativeUnit::capture_failed)
+    }
+
     pub fn stop_capture(&self) {
         self.stop.store(true, Ordering::Release);
+        self.capture_active.store(false, Ordering::Release);
         if let Some(handle) = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = handle.join();
         }
-        self.capture_active.store(false, Ordering::Release);
         *self.sink.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.unit.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.capture.clear();
-        self.playback.clear();
-        self.playback_active.store(false, Ordering::Release);
+        self.interrupt_playback();
     }
 
     pub fn is_capturing(&self) -> bool {
@@ -457,13 +480,16 @@ fn capture_worker(
     engine: Arc<MacEngine>,
     capture: Arc<SpscF32>,
     stop: Arc<AtomicBool>,
-    sink: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync>>,
+    sink: Option<Arc<CaptureSink>>,
 ) {
     let mut downsampler = CaptureDownsampler::new();
     let mut pending = Vec::new();
     let mut scratch = vec![0.0; 2048];
     let Some(sink) = sink else { return };
-    while !stop.load(Ordering::Acquire) {
+    'capture: while !stop.load(Ordering::Acquire) {
+        if engine.unit_capture_failed() {
+            break;
+        }
         if engine.unit_rebuild_requested() && !engine.rebuild_if_needed() {
             break;
         }
@@ -475,9 +501,14 @@ fn capture_worker(
         downsampler.push(&scratch[..n], &mut pending);
         while pending.len() >= FRAME_SAMPLES {
             let frame = pending.drain(..FRAME_SAMPLES).collect::<Vec<_>>();
-            sink(frame);
+            if !sink(frame) {
+                break 'capture;
+            }
         }
     }
+    engine.capture_active.store(false, Ordering::Release);
+    engine.playback_active.store(false, Ordering::Release);
+    *engine.unit.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 #[cfg(test)]

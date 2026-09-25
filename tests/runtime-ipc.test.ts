@@ -315,6 +315,19 @@ describe("frontend IPC wrappers", () => {
     expect(invokeCalls.map((call) => call.command)).toContain("end_larm_voice_session");
   });
 
+  test("starts ASR when the LARM provider lease cannot be prepared", async () => {
+    ownLarmVoice("c-lease-failure");
+    invokeImpl.handler = async (command) => {
+      if (command === "begin_larm_voice_session") throw new Error("LLM lease unavailable");
+      return command;
+    };
+    await startVoiceAsrSession(
+      { sessionId: "asr-after-lease-failure", conversationId: "c-lease-failure", sampleRate: 16_000 },
+      () => undefined,
+    );
+    expect(invokeCalls.map((call) => call.command)).toContain("start_voice_asr_session");
+  });
+
   test("does not fail a LARM owner when ASR start is cancelled", async () => {
     invokeImpl.handler = async (command) => {
       if (command === "start_voice_asr_session") throw new Error("asr-cancelled");

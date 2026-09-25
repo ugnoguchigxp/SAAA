@@ -25,7 +25,6 @@ pub(crate) trait BatchDecode: Send + Sync {
 
 pub(crate) struct ProductionBatchDecoder {
     readers: crate::persistence::SqliteReaders,
-    conversation: String,
     network: crate::voice::network_asr::NetworkAsrRuntime,
 }
 
@@ -36,18 +35,9 @@ impl BatchDecode for ProductionBatchDecoder {
         pcm16le: Zeroizing<Vec<u8>>,
         cancellation: Arc<RunCancellation>,
     ) -> Result<BatchDecodeOutcome, String> {
-        let selected = self.readers.read(|c| {
-            let mut selected = crate::voice::session::select_streaming_asr(c)?;
-            if crate::larm_voice::enabled()
-                && matches!(selected.route, crate::voice::session::AsrRoute::Harness(_))
-            {
-                selected.route = crate::voice::session::AsrRoute::Larm(
-                    self.conversation.clone(),
-                    crate::persistence::load_model_providers(c)?.harness,
-                );
-            }
-            Ok(selected)
-        })?;
+        let selected = self
+            .readers
+            .read(crate::voice::session::select_streaming_asr)?;
         if pcm16le.is_empty() || pcm16le.iter().all(|byte| *byte == 0) {
             return Ok(BatchDecodeOutcome::NoSpeech);
         }
@@ -92,11 +82,10 @@ fn is_no_speech_error(error: &str) -> bool {
 
 pub(crate) fn decoder(
     readers: crate::persistence::SqliteReaders,
-    conversation: String,
+    _conversation: String,
 ) -> Result<Arc<dyn BatchDecode>, String> {
     Ok(Arc::new(ProductionBatchDecoder {
         readers,
-        conversation,
         network: crate::voice::network_asr::NetworkAsrRuntime::new()?,
     }))
 }

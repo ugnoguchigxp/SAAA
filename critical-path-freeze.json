@@ -2,8 +2,8 @@
   "version": 1,
   "domains": {
     "asr": {
-      "acceptedAt": "2026-09-25T02:00:44.562Z",
-      "reason": "Native capture keeps listening without an AudioContext, so reset the VAD after every utterance and flush the trailing PCM before commit. Otherwise the level meter moves but speech never becomes a chat message. bun voice tests and cargo test voice::streaming_asr (36) passed.",
+      "acceptedAt": "2026-09-25T11:35:22.770Z",
+      "reason": "Mic review fixed speaker-gated endpointing and resume behavior, atomic audio ring and native capture failure detection. Required Bun voice tests 29 and cargo voice::streaming_asr 38 passed; backend tests 8 and typecheck passed.",
       "files": {
         "src-tauri/src/voice/network_asr.rs": "53e14d522b058a6bd4a2a3b949d44ce11f095d6315314b06aec67f7025abfcf4",
         "src-tauri/src/voice/network_asr/discovery.rs": "2010c7a177dd3dd0e5056cefcb1eb823721f7878bd41fb77e47b0cab86a94063",
@@ -11,7 +11,7 @@
         "src-tauri/src/voice/session/asr.rs": "208e08b76e2d30548c1ac238000bd85002f574b171d9dd1efbb60767e3cb1843",
         "src-tauri/src/voice/session/asr_routes.rs": "0fbb60fbb7671b3c7594188836f2bd5ea126b6edbbcc40a9cd559bbbe824b3be",
         "src-tauri/src/voice/streaming_asr/batch_engine.rs": "8b15fc6b2f04801d42ed4f066ea13104533808b6ce7c115dfc9f0e33aa2dd057",
-        "src-tauri/src/voice/streaming_asr/batch_runtime.rs": "0ddf0d52d9a84975d98baab076085338407fb541bd787be22aaa7c9df1f9631a",
+        "src-tauri/src/voice/streaming_asr/batch_runtime.rs": "a497d0143c5bd7add2a6510b0cd2e804ce8b7e5c82495b38b0457c55ea49eb8a",
         "src-tauri/src/voice/streaming_asr/commands.rs": "6c3b7c3a9b6f51c8429b3ca9a474f2f156d030990ed7fa7a14dfd86a215272eb",
         "src-tauri/src/voice/streaming_asr/contracts.rs": "0bc2c970a85ffa07044975e829ace10400586e9cc760549c84eac2ced4afb1da",
         "src-tauri/src/voice/streaming_asr/manager.rs": "ebba49146e5a84115dd8296821ea46f9156817bb4d9560585ca10e69d8bce992",
@@ -19,22 +19,22 @@
         "src-tauri/src/voice/streaming_asr/reconciler.rs": "fb242b603d51414bef0cd359223981ecac473725ac0ecda6443bf0f8ad493844",
         "src-tauri/src/voice/streaming_asr/regression_corpus.rs": "c1e321e3218cd6f4f598edd5ca6a4ccc1d1557e61dc0c7ce821a6dd162219e4d",
         "src-tauri/src/voice/streaming_asr/route.rs": "43a27a58e3816277790dcf9a1c27e2b1414c17cf08b2de1816499a20e4ed3837",
-        "src-tauri/src/voice/streaming_asr/session.d/01.rs": "c7e3c44d7f85ae848a8452744cf293575f70ce395e1a313d7b0144fab31d2dd3",
-        "src-tauri/src/voice/streaming_asr/session.d/02.rs": "9e456272ff4d3cd2a38ecdfdbaab3ac4b65f1a4e9140625c7a612babee95bfe7",
+        "src-tauri/src/voice/streaming_asr/session.d/01.rs": "246f75b9f68328c8abf772de09d4ebab21826b27133a2adfe5d3b28a1455f0d6",
+        "src-tauri/src/voice/streaming_asr/session.d/02.rs": "939ecdf54a383f9f222469f9bbca7d79f10b9d7a59083111de75acd203581e24",
         "src-tauri/src/voice/streaming_asr/session.rs": "1eae30c0551c3407413ec09da04a5325d635ce046f9d8136eddcd634f060e866",
         "src-tauri/src/voice/streaming_asr/speaker_gate.rs": "7328655253a373d6ccfbd150a6f04aa8c585b2cbb4e02957e22a21db35b84b34",
         "src-tauri/src/voice/streaming_asr/speaker_gate_runtime.rs": "405478e8f8003410d363b60fc72862acf6ac0c7a9d21b0eb9b20d886c4e81f6f",
         "src/features/voice/ambientVoiceCapture.ts": "41aef0b84dc52abe2db55a949a56243f75c4c852acc026ab5e1e8e48794d8e50",
-        "src/features/voice/ambientVoiceCaptureActions.ts": "f1a3288114e65db51bb187c76bb3d2bb2e565bced0c9d034713c67b77c06897c",
+        "src/features/voice/ambientVoiceCaptureActions.ts": "b83bf169f1a863b618f08042fd2bfd0320f8be92acecde8ecee0cebdf4884c23",
         "src/features/voice/useAmbientVoiceSession.ts": "de6c2326d13a48a8dbe0f43a6904bc89c12ab61878bd699cda545ccddb5726c1",
         "src/features/voice/voiceCaptureSettings.ts": "f23cbcb78821a63cc78d8b45f1fc4546515ff8f7dcdd6199ea5b3534627d2900",
         "src/lib/microphone.ts": "c16d977c6c74916b139f01e69ab2ad2f8ca24f09464715243cebbe0b420a40fa",
-        "src/lib/voiceAsrRuntime.ts": "dd55488f0ba41ec058b7e7a437324fe4e67201a2d7497af63518c369102034e8"
+        "src/lib/voiceAsrRuntime.ts": "801bbb829e5817580a3f33e532a937f6993414ba536faa0e12ff38dc009b8807"
       }
     },
     "initial-response": {
-      "acceptedAt": "2026-09-25T00:50:03.915Z",
-      "reason": "Packed dialogue history is no longer sent as an assistant turn, so Ornith cannot echo RECENT_DIALOGUE_HISTORY as the spoken reply. cargo test conversation_context:: and role_routing::frontend:: passed; bun run quality:check passed.",
+      "acceptedAt": "2026-09-25T11:57:41.734Z",
+      "reason": "Existing conversation context and provider route changes verified with bun run quality:check (4 scenarios and 2 Rust quality tests) and bun run desktop:smoke (packaged macOS frontend, IPC, snapshot, primary conversation and DB ready).",
       "files": {
         "src-tauri/src/persistence/app_commands.rs": "0e93155944cafd837e0eecffc129b327e74093e0876b63db00b305c6c946bdfd",
         "src-tauri/src/persistence/schema.rs": "591633043388875e2ed97008ce1c4a243b93aa22272f4a4d558f6d0a6e3e2a6b",
@@ -93,10 +93,10 @@
         "src-tauri/src/providers/stream/dynamic_lan.rs": "49bea196d499a0331e789f6a183712f44cbda0ab18f9677cf80af24d50539cdb",
         "src-tauri/src/providers/stream/dynamic_lan/initialization.rs": "adcadb9bad24134dc35ae9b800855cb76e3d7c8654066663f2fb6ea60d4da0bc",
         "src-tauri/src/role_routing/schema.rs": "46f681992de92c3ca081b64366368513ff8e78e28dbce4282f20752a412c1790",
-        "src-tauri/src/runtime/conversation_context.rs": "f12fb6dff2d0a8b7dce34991001a55a96ae3aa97a52f393dbb93a0ba7a14c918",
+        "src-tauri/src/runtime/conversation_context.rs": "d549686139041551af5df55235158e8f748b698aadc0eea37f51876cf72901dc",
         "src-tauri/src/runtime/conversation_inputs.rs": "456b824ee2ee129b7acc75865db3362428e86cc316799209d725c9278b16554b",
         "src-tauri/src/runtime/conversation_prepare.rs": "b87c6b91e5e68b0cb1dd967907448ca1be0e8e9bc2cc9b346d923085be8f6b2a",
-        "src-tauri/src/runtime/conversation_provider_route.d/01.rs": "adbebf39f45c38dcfaa48d77de2bc0f9ef683276422edd1faf5b272f9693742a",
+        "src-tauri/src/runtime/conversation_provider_route.d/01.rs": "c51ff953d9330a6db2721eb70896bbb976e79b798211f15fb9a03348433b2d66",
         "src-tauri/src/runtime/conversation_provider_route.d/02.rs": "54632344fd76e18556a79d2ba5fb73fe103331bf6abcb88ad0deb3d5dd51c518",
         "src-tauri/src/runtime/conversation_provider_route.rs": "82f2d7eef01f7363d479be8d745940f6de4cd28f20d6dc4a31dbcb9f96d5d065",
         "src-tauri/src/runtime/conversation_turn.rs": "f40ba5c14d76c13fbcd94a46e7cf20ec1cce48d16aa7d3d742debe839e06adbb",
