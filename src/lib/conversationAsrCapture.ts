@@ -1,6 +1,7 @@
-import { startNativeVoiceCapture, stopNativeVoiceCapture } from "./audioBackend";
 import { stageAudioUpload } from "./audioIpc";
 import { recordedAudioPreview } from "./audioPreview";
+import { startBrowserVoiceCapture, type BrowserVoiceCapture } from "./browserVoiceCapture";
+import { microphoneErrorMessage } from "./microphone";
 import { transcribeConversationAudio } from "./runtime";
 
 const CHUNK_SAMPLES = 16_000 * 10;
@@ -27,6 +28,7 @@ const listeners = new Set<() => void>();
 let frames: Float32Array[] = [];
 let sampleCount = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let capture: BrowserVoiceCapture | null = null;
 // Serialize uploads so a slow ASR response never exhausts the bounded staging store.
 let transcriptionQueue: Promise<void> = Promise.resolve();
 
@@ -130,23 +132,29 @@ function flushChunk(reason?: string) {
   });
 }
 
-export async function startConversationAsr() {
+export async function startConversationAsr(inputDeviceId: string, echoCancellation: boolean) {
   if (state.phase !== "idle") return;
   publish({ phase: "starting", error: null });
   try {
-    const status = await startNativeVoiceCapture(addFrame, (reason) => {
-      void stopConversationAsr(reason);
-    });
-    if (!status.captureActive) throw new Error("マイクの録音を開始できませんでした。");
-    if (conversationAsrSnapshot().phase !== "starting") return;
+    const started = await startBrowserVoiceCapture(
+      addFrame,
+      (reason) => void stopConversationAsr(reason),
+      inputDeviceId,
+      echoCancellation,
+    );
+    if (conversationAsrSnapshot().phase !== "starting") {
+      await started.stop();
+      return;
+    }
+    capture = started;
     publish({ phase: "recording" });
     scheduleChunk();
   } catch (cause) {
     if (timer) clearTimeout(timer);
     timer = null;
-    await stopNativeVoiceCapture().catch(() => undefined);
-    flushChunk(String(cause));
-    publish({ phase: "idle", error: String(cause) });
+    const message = microphoneErrorMessage(cause);
+    flushChunk(message);
+    publish({ phase: "idle", error: message });
   }
 }
 
@@ -156,8 +164,10 @@ export async function stopConversationAsr(reason?: string) {
   if (timer) clearTimeout(timer);
   timer = null;
   let error = reason ?? null;
+  const current = capture;
+  capture = null;
   try {
-    await stopNativeVoiceCapture();
+    await current?.stop();
   } catch (cause) {
     error = [error, String(cause)].filter(Boolean).join(" · ");
   }

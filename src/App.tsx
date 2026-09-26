@@ -4,7 +4,7 @@ import "./App.css";
 import { getAppSnapshot, reportFrontendReady } from "./lib/runtime";
 import { applySnapshotLanguage } from "./lib/appLanguage";
 import { toMessage } from "./lib/appHelpers";
-import type { AppSnapshot } from "./lib/contracts";
+import { findSettingsDocument, type AppSnapshot } from "./lib/contracts";
 import { SettingsPage } from "./appPages";
 import { DiagnosisPage } from "./features/diagnosis/DiagnosisPage";
 import { MemoryPage } from "./features/memory/MemoryPage";
@@ -55,6 +55,7 @@ function App() {
     return <main className="boot-screen">{error ?? t("app.booting")}</main>;
   }
   const primaryConversationId = snapshot.primaryConversationId || null;
+  const voiceSettings = findSettingsDocument(snapshot.settings, "voice.runtime", "default")?.valueJson;
   return (
     <main className="app-shell">
       <Suspense fallback={<main className="boot-screen">{t("app.booting")}</main>}>
@@ -82,6 +83,12 @@ function App() {
               <ConversationCheckPage
                 conversationId={primaryConversationId ?? ""}
                 providerLabel={snapshot.effectiveRoute.label}
+                inputDeviceId={
+                  typeof voiceSettings?.inputDeviceId === "string"
+                    ? voiceSettings.inputDeviceId
+                    : "default"
+                }
+                echoCancellation={voiceSettings?.aecEnabled !== false}
                 onOpenSettings={() => setRoute("settings")}
               />
             ) : route === "memory" ? (

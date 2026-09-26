@@ -265,7 +265,7 @@ impl MacEngine {
             return Err("AirPlay output does not use VoiceProcessing AEC".into());
         }
         if transport == TRANSPORT_BLUETOOTH && !config.vpio_on_bluetooth {
-            return Err("Bluetooth headsets skip VoiceProcessing by default".into());
+            return Err("Bluetooth output skips VoiceProcessing by default".into());
         }
         self.stop_capture();
         *self.config.lock().unwrap_or_else(|e| e.into_inner()) = config;

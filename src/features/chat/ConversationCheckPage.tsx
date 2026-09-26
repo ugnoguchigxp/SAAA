@@ -19,10 +19,14 @@ import "./conversationCheckPage.css";
 export function ConversationCheckPage({
   conversationId,
   providerLabel,
+  inputDeviceId,
+  echoCancellation,
   onOpenSettings,
 }: {
   conversationId: string;
   providerLabel: string;
+  inputDeviceId: string;
+  echoCancellation: boolean;
   onOpenSettings: () => void;
 }) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -133,7 +137,9 @@ export function ConversationCheckPage({
           type="button"
           disabled={audio.phase === "starting" || audio.phase === "stopping"}
           onClick={() =>
-            void (audio.phase === "recording" ? stopConversationAsr() : startConversationAsr())
+            void (audio.phase === "recording"
+              ? stopConversationAsr()
+              : startConversationAsr(inputDeviceId, echoCancellation))
           }
         >
           {audio.phase === "recording" ? "録音を停止" : "録音を開始"}
