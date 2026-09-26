@@ -465,6 +465,35 @@ impl Session {
             _capacity_permit: permit,
         })
     }
+    /// Read the connection resource before reusing a long-lived desktop session.
+    /// A terminal status means LARM has released the provider bundle (for example,
+    /// after its foreground-idle deadline) and the owner must create a new session.
+    pub async fn ensure_active(&self) -> Result<bool, &'static str> {
+        if self.closed.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        let value = http::json(
+            self.authorize(
+                self.client
+                    .get(self.connection.clone())
+                    .timeout(Duration::from_secs(5)),
+            )?,
+            &[200],
+        )
+        .await?;
+        if value["id"] != self.id {
+            return Err("larm_connection_mismatch");
+        }
+        let active = matches!(
+            value["status"].as_str(),
+            Some("ready" | "pending" | "probing")
+        );
+        if !active {
+            self.closed.store(true, Ordering::Release);
+            self.stop.send_replace(true);
+        }
+        Ok(active)
+    }
     pub async fn renew_if_due(self: &Arc<Self>) -> Result<(), &'static str> {
         let due =
             self.snapshot.read().await.as_ref().is_some_and(|s| {

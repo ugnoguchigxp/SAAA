@@ -119,7 +119,9 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             )
                 .into_response();
         }
-        return Json(fake.state(if fake.pending.load(Ordering::SeqCst) {
+        return Json(fake.state(if fake.released.load(Ordering::SeqCst) {
+            "released"
+        } else if fake.pending.load(Ordering::SeqCst) {
             "probing"
         } else {
             "ready"
@@ -274,6 +276,22 @@ async fn released_provider_tokens_are_rejected() {
         .unwrap()
         .status();
     assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    server.abort();
+}
+
+#[tokio::test]
+async fn status_poll_detects_a_server_side_idle_release() {
+    let (fake, server) = fixture().await;
+    let (_stop, receiver) = watch::channel(false);
+    let session = Session::connect(&fake.base, receiver).await.unwrap();
+    assert!(session.ensure_active().await.unwrap());
+    fake.released.store(true, Ordering::SeqCst);
+    assert!(!session.ensure_active().await.unwrap());
+    assert!(matches!(
+        session.acquire("llm").await,
+        Err("larm_session_closed")
+    ));
+    session.close().await.unwrap();
     server.abort();
 }
 

@@ -61,10 +61,20 @@ pub(crate) async fn begin_larm_voice_session(
         return Err("LARM voice runtime is shutting down".into());
     }
     if let Some(previous) = current.as_ref() {
+        let inactive = match previous.ready.get() {
+            Some(Ok(ready)) => !ready
+                .session
+                .ensure_active()
+                .await
+                .map_err(str::to_string)?,
+            Some(Err(_)) => true,
+            None => false,
+        };
         if previous.id != owner_id
             || previous.conversation != conversation_id
             || previous.base != base
             || previous.profile != profile
+            || inactive
         {
             previous.cancel.send_replace(true);
             close_owner(previous).await?;
@@ -202,10 +212,16 @@ pub(crate) async fn current_at(
         if owner.conversation != conversation {
             return Err("LARM voice session mismatch".into());
         }
-        if owner.base != settings.address
-            || owner.profile != profile
-            || owner.ready.get().is_some_and(Result::is_err)
-        {
+        let inactive = match owner.ready.get() {
+            Some(Ok(ready)) => !ready
+                .session
+                .ensure_active()
+                .await
+                .map_err(str::to_string)?,
+            Some(Err(_)) => true,
+            None => false,
+        };
+        if owner.base != settings.address || owner.profile != profile || inactive {
             owner.cancel.send_replace(true);
             close_owner(owner).await?;
             let lease_key = current_lease_key(&owner.sqlite_writer)?;
