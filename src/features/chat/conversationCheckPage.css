@@ -1,0 +1,117 @@
+.conversation-check {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 54px 18px 18px;
+  gap: 12px;
+  color: #d8e1eb;
+}
+.conversation-check-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.conversation-check-header h1 {
+  margin: 0 0 4px;
+  font-size: 1.2rem;
+}
+.conversation-check-actions {
+  display: flex;
+  gap: 8px;
+}
+.conversation-check-header p,
+.conversation-check-model {
+  margin: 0;
+  color: #9aabba;
+  font-size: 0.8rem;
+}
+.conversation-check-header button,
+.conversation-check-composer button {
+  border: 1px solid #39756d;
+  border-radius: 8px;
+  background: #1c4d47;
+  color: #e7fffb;
+  padding: 8px 12px;
+}
+.conversation-check-note {
+  margin: 0;
+  border: 1px solid #34404f;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #b8c8d8;
+  font-size: 0.8rem;
+}
+.conversation-check-history {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #283340;
+  border-radius: 10px;
+  padding: 16px;
+  background: #121820;
+}
+.conversation-check-message {
+  max-width: 82%;
+  margin: 0 0 14px;
+  padding: 10px 13px;
+  border: 1px solid #34404f;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.conversation-check-message.user {
+  margin-left: auto;
+  background: #20313d;
+}
+.conversation-check-message.assistant {
+  background: #19232e;
+}
+.conversation-check-message strong {
+  font-size: 0.72rem;
+  color: #8fc9d0;
+}
+.conversation-check-message p {
+  margin: 5px 0 0;
+  line-height: 1.55;
+}
+.conversation-check-error {
+  margin: 0;
+  color: #f2aeb7;
+}
+.conversation-check-composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+.conversation-check-composer label {
+  grid-column: 1 / -1;
+  font-size: 0.75rem;
+}
+.conversation-check-composer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 68px;
+  border: 1px solid #34404f;
+  border-radius: 8px;
+  background: #121820;
+  color: #d8e1eb;
+  padding: 9px;
+  font: inherit;
+}
+.conversation-check-composer select {
+  grid-column: 1 / -1;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid #34404f;
+  border-radius: 8px;
+  background: #121820;
+  color: #d8e1eb;
+  padding: 7px;
+}
+.conversation-check-composer button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -131,6 +131,18 @@ export async function listMessages(
   );
 }
 
+export async function submitConversationText(
+  inputId: string,
+  text: string,
+  source: "configured" | "larm",
+): Promise<{
+  content: string;
+  model: string;
+  providerLabel: string;
+}> {
+  return invoke("submit_conversation_text", { input: { inputId, text, source } });
+}
+
 export async function prepareComposerImage(png: Uint8Array): Promise<{
   id: string;
   width: number;

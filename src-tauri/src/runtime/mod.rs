@@ -11,6 +11,7 @@ pub(crate) mod codex_supervise;
 pub(crate) mod codex_turn;
 pub(crate) mod context;
 pub mod contracts;
+pub(crate) mod conversation_check;
 pub(crate) mod event_hub;
 pub(crate) mod image_input;
 pub(crate) mod pi;

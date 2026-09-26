@@ -22,6 +22,32 @@ pub(crate) async fn run_with_options(
     mode: RequestMode,
     options: &saaa_larm_session::http_api::LlmOptions,
 ) -> Result<String, ProviderAttemptError> {
+    run_with_proxy_policy(
+        endpoint,
+        authorization,
+        model,
+        history,
+        timeout_ms,
+        context,
+        mode,
+        options,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_with_proxy_policy(
+    endpoint: &str,
+    authorization: Option<&str>,
+    model: &str,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    context: ModelStreamContext<'_>,
+    mode: RequestMode,
+    options: &saaa_larm_session::http_api::LlmOptions,
+    no_proxy: bool,
+) -> Result<String, ProviderAttemptError> {
     use ProviderFailureKind as Failure;
     if context.cancellation.is_cancelled() {
         return Err(ProviderAttemptError::Cancelled {
@@ -54,9 +80,13 @@ pub(crate) async fn run_with_options(
         context.max_output_tokens,
         context.reasoning_effort,
     );
-    let client = reqwest::Client::builder()
+    let mut client_builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(5))
+        .connect_timeout(Duration::from_secs(5));
+    if no_proxy {
+        client_builder = client_builder.no_proxy();
+    }
+    let client = client_builder
         .build()
         .map_err(|_| ProviderAttemptError::failed(Failure::Internal, false))?;
     let mut request = client.post(url).json(&body);

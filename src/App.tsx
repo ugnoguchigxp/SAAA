@@ -12,6 +12,7 @@ import { WorkPage } from "./features/work/WorkPage";
 import { RecordsPage } from "./features/records/RecordsPage";
 import { AuditLogPage } from "./features/audit/AuditLogPage";
 import { ArtifactWorkspaceProvider } from "./features/chat/artifacts/ArtifactDrawer";
+import { ConversationCheckPage } from "./features/chat/ConversationCheckPage";
 import { DesignSystemProvider } from "./design-system";
 import "./design-system/styles.css";
 import { AppShell } from "./shell/AppShell";
@@ -34,7 +35,9 @@ function App() {
         void reportFrontendReady().catch((cause) => setError(toMessage(cause)));
       })
       .catch((cause) => active && setError(toMessage(cause)));
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, []);
 
   async function refreshSnapshot() {
@@ -68,27 +71,40 @@ function App() {
                 voiceError={null}
                 onToggleVoiceListening={() => undefined}
                 onSaved={(settings) => {
-                  setSnapshot((current) => current && ({ ...current, settings }));
+                  setSnapshot((current) => current && { ...current, settings });
                   void refreshSnapshot();
                 }}
                 onVoiceProfileChanged={(voiceProfile) =>
-                  setSnapshot((current) => current && ({ ...current, voiceProfile }))
+                  setSnapshot((current) => current && { ...current, voiceProfile })
                 }
+              />
+            ) : route === "conversation" ? (
+              <ConversationCheckPage
+                conversationId={primaryConversationId ?? ""}
+                providerLabel={snapshot.effectiveRoute.label}
+                onOpenSettings={() => setRoute("settings")}
               />
             ) : route === "memory" ? (
               <MemoryPage
-                onOpenRecord={(id) => { setRecordTargetId(id); setRoute("records"); }}
-                onCorrect={() => setError("会話Runtimeの再構築中は記憶の訂正依頼を受け付けられません。")}
+                onOpenRecord={(id) => {
+                  setRecordTargetId(id);
+                  setRoute("records");
+                }}
+                onCorrect={() =>
+                  setError("会話Runtimeの再構築中は記憶の訂正依頼を受け付けられません。")
+                }
               />
             ) : route === "work" ? (
-              <WorkPage conversationId={primaryConversationId ?? undefined} onOpenSettings={() => setRoute("settings")} />
+              <WorkPage
+                conversationId={primaryConversationId ?? undefined}
+                onOpenSettings={() => setRoute("settings")}
+              />
             ) : route === "audit" ? (
               <AuditLogPage />
             ) : route === "diagnosis" ? (
               <DiagnosisPage />
             ) : (
               <>
-                {route === "conversation" && <p role="status">回答Runtimeは再構築中です。過去の会話は引き続き閲覧できます。</p>}
                 <RecordsPage
                   conversations={snapshot.conversations}
                   initialConversationId={primaryConversationId}
@@ -106,5 +122,9 @@ function App() {
 }
 
 export default function DesignSystemApp() {
-  return <DesignSystemProvider><App /></DesignSystemProvider>;
+  return (
+    <DesignSystemProvider>
+      <App />
+    </DesignSystemProvider>
+  );
 }
