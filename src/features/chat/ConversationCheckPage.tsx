@@ -38,6 +38,12 @@ export function ConversationCheckPage({
   const [lastModel, setLastModel] = useState<string | null>(null);
   const audio = useSyncExternalStore(subscribeConversationAsr, conversationAsrSnapshot);
   const captures = audio.entries;
+  const fullTranscript = captures
+    .slice()
+    .reverse()
+    .map((capture) => capture.text)
+    .filter((value): value is string => value !== null && value.length > 0)
+    .join("\n");
   const pendingId = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -117,7 +123,7 @@ export function ConversationCheckPage({
         </div>
       </header>
       <p className="conversation-check-note" role="status">
-        録音開始後は停止するまで音声を取り込み、10秒ごとに保存済みのASRルートへ送ります。各区間の音声と結果を表示します。推論用LLMと読み上げは未接続です。
+        録音開始後は停止するまで音声を取り込み、10秒ごとに保存済みのASRルートへ送ります。文字起こしの全文を下に表示します。推論用LLMと読み上げは未接続です。
       </p>
       <div className="conversation-check-history" aria-live="polite">
         {loading && <p>会話を読み込み中…</p>}
@@ -154,45 +160,23 @@ export function ConversationCheckPage({
                 : "停止中"}
         </span>
         {audio.error && <p role="alert" className="conversation-check-error">{audio.error}</p>}
-        <div className="conversation-check-capture-list" aria-label="ASRの録音と結果">
-          <h2>録音・ASR結果（この起動中の全件）</h2>
-          {captures.length === 0 && (
-            <p>録音した音声と文字起こしを、このアプリの起動中すべて表示します。</p>
-          )}
+        <section className="conversation-check-transcript" aria-label="文字起こし全文" aria-live="polite">
+          <h2>文字起こし全文（この起動中）</h2>
+          <pre>{fullTranscript || "文字起こし結果を待っています。"}</pre>
+        </section>
+        <div className="conversation-check-capture-list" aria-label="ASRの区間ごとの結果">
+          <h2>区間ごとの結果</h2>
           {captures.map((capture, index) => (
-            <article key={capture.id} className="conversation-check-audio-preview">
+            <article key={capture.id} className="conversation-check-capture-entry">
               <strong>
-                録音 {captures.length - index} · {capture.recordedAt}
+                区間 {captures.length - index} · {capture.recordedAt} · {capture.seconds.toFixed(1)}秒
               </strong>
-              {capture.preview ? (
-                <>
-                  <span>ASRへ送った音声 · {capture.preview.seconds.toFixed(1)}秒</span>
-                  <svg viewBox="0 0 256 48" role="img" aria-label="録音した音声の波形">
-                    {capture.preview.peaks.map((peak, peakIndex) => {
-                      const height = Math.max(2, Math.min(46, peak * 46));
-                      return (
-                        <rect
-                          key={peakIndex}
-                          x={peakIndex * 4}
-                          y={(48 - height) / 2}
-                          width="2"
-                          height={height}
-                        />
-                      );
-                    })}
-                  </svg>
-                  <audio
-                    controls
-                    src={capture.preview.url}
-                    aria-label={`録音 ${captures.length - index} を再生`}
-                  />
-                </>
-              ) : (
-                <span>マイクから音声データを受け取れませんでした。</span>
-              )}
               <p>
-                ASR結果:{" "}
-                {capture.status === "transcribing" ? "処理中…" : (capture.text ?? "文字起こしなし")}
+                {capture.status === "transcribing"
+                  ? "文字起こし中…"
+                  : capture.text
+                    ? "文字起こし完了"
+                    : "文字起こしなし"}
               </p>
               {capture.text && (
                 <button

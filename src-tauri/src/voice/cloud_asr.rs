@@ -7,10 +7,12 @@ use crate::{bounded_text, CloudAsrProviderSettings, RunCancellation};
 use zeroize::Zeroizing;
 
 const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
+const MAX_FULL_RESPONSE_BYTES: usize = 256 * 1_024;
 const TRANSCRIPTION_RESPONSE_FORMAT: &str = "json";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct TranscriptionResponse {
+    #[serde(default)]
     pub(crate) text: String,
     language: Option<String>,
     #[serde(default)]
@@ -35,6 +37,7 @@ impl TranscriptionResponse {
 #[derive(Debug, Deserialize)]
 struct TranscriptionSegment {
     no_speech_prob: Option<f32>,
+    text: Option<String>,
 }
 
 pub(crate) async fn probe(provider: &CloudAsrProviderSettings) -> Result<String, String> {
@@ -75,6 +78,47 @@ pub(crate) async fn transcribe_with_api_key(
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
     claim_key: Option<&str>,
+) -> Result<(String, Option<String>), String> {
+    transcribe_impl(
+        provider,
+        samples,
+        sample_rate,
+        timeout_ms,
+        cancellation,
+        claim_key,
+        false,
+    )
+    .await
+}
+
+pub(crate) async fn transcribe_full(
+    provider: &CloudAsrProviderSettings,
+    samples: &[f32],
+    sample_rate: u32,
+    timeout_ms: u64,
+    cancellation: Arc<RunCancellation>,
+    claim_key: Option<&str>,
+) -> Result<(String, Option<String>), String> {
+    transcribe_impl(
+        provider,
+        samples,
+        sample_rate,
+        timeout_ms,
+        cancellation,
+        claim_key,
+        true,
+    )
+    .await
+}
+
+async fn transcribe_impl(
+    provider: &CloudAsrProviderSettings,
+    samples: &[f32],
+    sample_rate: u32,
+    timeout_ms: u64,
+    cancellation: Arc<RunCancellation>,
+    claim_key: Option<&str>,
+    preserve_full_text: bool,
 ) -> Result<(String, Option<String>), String> {
     let request_started = std::time::Instant::now();
     if cancellation.is_cancelled() {
@@ -120,24 +164,53 @@ pub(crate) async fn transcribe_with_api_key(
         )
         .await
         .map_err(|kind| kind.public_message().as_str().to_string())?;
-        bounded_body(response, &cancellation).await
+        bounded_body(
+            response,
+            &cancellation,
+            if preserve_full_text {
+                MAX_FULL_RESPONSE_BYTES
+            } else {
+                MAX_RESPONSE_BYTES
+            },
+        )
+        .await
     };
     let body = tokio::time::timeout(Duration::from_millis(timeout_ms), operation)
         .await
         .map_err(|_| "HTTP ASR request timed out".to_string())??;
     let result: TranscriptionResponse = serde_json::from_slice(&body)
         .map_err(|_| "Cloud ASR returned an invalid transcription response".to_string())?;
-    let text = result.text.trim();
-    if response_is_no_speech(&result.segments) {
-        return Err(
-            "ASR_NO_SPEECH: The ASR service classified the audio as non-speech".to_string(),
-        );
-    }
-    if text.is_empty() {
-        return Err("ASR_NO_SPEECH: Cloud ASR completed without a transcript".to_string());
-    }
+    let transcript = select_transcript(result, preserve_full_text)?;
     crate::providers::http_metrics::record("asrUploadToFinalText", request_started.elapsed());
-    Ok((bounded_text(text, 16_000), result.detected_language()))
+    Ok(transcript)
+}
+
+fn select_transcript(
+    result: TranscriptionResponse,
+    preserve_full_text: bool,
+) -> Result<(String, Option<String>), String> {
+    let language = result.detected_language();
+    if !preserve_full_text && response_is_no_speech(&result.segments) {
+        return Err("ASR_NO_SPEECH: The ASR service classified the audio as non-speech".into());
+    }
+    let text = if preserve_full_text && result.text.trim().is_empty() {
+        result
+            .segments
+            .iter()
+            .filter_map(|segment| segment.text.as_deref())
+            .collect::<String>()
+    } else {
+        result.text
+    };
+    if text.trim().is_empty() {
+        return Err("ASR_NO_SPEECH: Cloud ASR completed without a transcript".into());
+    }
+    let text = if preserve_full_text {
+        text
+    } else {
+        bounded_text(text.trim(), 16_000)
+    };
+    Ok((text, language))
 }
 
 fn response_is_no_speech(segments: &[TranscriptionSegment]) -> bool {
@@ -179,10 +252,11 @@ fn operation_url(endpoint: &str, operation: &str) -> Result<String, String> {
 async fn bounded_body(
     response: reqwest::Response,
     cancellation: &RunCancellation,
+    max_response_bytes: usize,
 ) -> Result<Zeroizing<Vec<u8>>, String> {
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+        .is_some_and(|length| length > max_response_bytes as u64)
     {
         return Err("Cloud ASR response exceeded the size limit".to_string());
     }
@@ -195,7 +269,7 @@ async fn bounded_body(
         };
         let Some(chunk) = chunk else { break };
         let chunk = chunk.map_err(|_| "Cloud ASR response was interrupted".to_string())?;
-        if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+        if body.len().saturating_add(chunk.len()) > max_response_bytes {
             return Err("Cloud ASR response exceeded the size limit".to_string());
         }
         body.extend_from_slice(&chunk);
@@ -230,6 +304,7 @@ mod tests {
     fn rejects_only_consistently_high_no_speech_probabilities() {
         let segment = |probability| TranscriptionSegment {
             no_speech_prob: probability,
+            text: None,
         };
         assert!(response_is_no_speech(&[
             segment(Some(0.9)),
@@ -241,6 +316,31 @@ mod tests {
         ]));
         assert!(!response_is_no_speech(&[segment(None)]));
         assert!(!response_is_no_speech(&[]));
+    }
+
+    #[test]
+    fn conversation_transcript_preserves_full_text_even_with_no_speech_metadata() {
+        let text = "聞き取った全文".repeat(6_000);
+        let response: TranscriptionResponse = serde_json::from_value(serde_json::json!({
+            "text": text,
+            "language": "ja",
+            "segments": [{"no_speech_prob": 0.9}]
+        }))
+        .unwrap();
+        let (actual, language) = select_transcript(response, true).unwrap();
+        assert_eq!(actual, text);
+        assert_eq!(language.as_deref(), Some("ja"));
+    }
+
+    #[test]
+    fn conversation_transcript_uses_segment_text_when_top_level_is_empty() {
+        let response: TranscriptionResponse =
+            serde_json::from_str(r#"{"segments":[{"text":"こんにちは"},{"text":"、世界"}]}"#)
+                .unwrap();
+        assert_eq!(
+            select_transcript(response, true).unwrap().0,
+            "こんにちは、世界"
+        );
     }
 
     #[tokio::test]

@@ -97,7 +97,7 @@ pub(crate) async fn transcribe_conversation_audio(
                 ))
                 .map_err(str::to_string)?;
             let provider = crate::providers::larm_resources::audio::asr_settings(lease.provider());
-            crate::voice::cloud_asr::transcribe_with_api_key(
+            crate::voice::cloud_asr::transcribe_full(
                 &provider,
                 &samples,
                 16_000,
@@ -124,12 +124,13 @@ pub(crate) async fn transcribe_conversation_audio(
         let ModelProviderSettings::CloudAsr(provider) = provider else {
             return Err("設定済みの音声入力ルートはASR Providerではありません。".into());
         };
-        let (text, language) = crate::voice::cloud_asr::transcribe(
+        let (text, language) = crate::voice::cloud_asr::transcribe_full(
             provider,
             &samples,
             16_000,
             route.timeout_ms.min(120_000),
             cancellation,
+            None,
         )
         .await?;
         (text, language, provider.label.clone())

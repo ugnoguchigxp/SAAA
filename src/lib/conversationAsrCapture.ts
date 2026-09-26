@@ -1,5 +1,4 @@
 import { stageAudioUpload } from "./audioIpc";
-import { recordedAudioPreview } from "./audioPreview";
 import { startBrowserVoiceCapture, type BrowserVoiceCapture } from "./browserVoiceCapture";
 import { microphoneErrorMessage } from "./microphone";
 import { transcribeConversationAudio } from "./runtime";
@@ -9,7 +8,7 @@ const CHUNK_SAMPLES = 16_000 * 10;
 export type CaptureEntry = {
   id: string;
   recordedAt: string;
-  preview: ReturnType<typeof recordedAudioPreview> | null;
+  seconds: number;
   status: "transcribing" | "completed" | "failed";
   text: string | null;
   language: string | null;
@@ -88,16 +87,10 @@ function flushChunk(reason?: string) {
   sampleCount = 0;
   if (state.phase === "recording") scheduleChunk();
   const id = crypto.randomUUID();
-  let preview: ReturnType<typeof recordedAudioPreview> | null = null;
-  try {
-    preview = recordedAudioPreview(samples);
-  } catch (cause) {
-    reason = [reason, String(cause)].filter(Boolean).join(" · ");
-  }
   const entry: CaptureEntry = {
     id,
     recordedAt: new Date().toLocaleString(),
-    preview,
+    seconds: samples.length / 16_000,
     status: "transcribing",
     text: null,
     language: null,
