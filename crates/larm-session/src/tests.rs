@@ -12,6 +12,7 @@ struct Fake {
     generation: AtomicUsize,
     log: Mutex<Vec<String>>,
     bad_claim: AtomicBool,
+    reject_claim: AtomicBool,
     pending: AtomicBool,
     stale_health: AtomicBool,
     bad_protocol: AtomicBool,
@@ -72,6 +73,16 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
                 serde_json::from_slice::<Value>(&body).unwrap(),
                 json!({"format":"openai-provider-v1"})
             );
+            if fake.reject_claim.load(Ordering::SeqCst) {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    Json(json!({"error": {
+                        "code": "invalid_request",
+                        "message": "invalid claim request"
+                    }})),
+                )
+                    .into_response();
+            }
             if fake.slow_claim.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
@@ -171,6 +182,7 @@ async fn fixture() -> (Arc<Fake>, tokio::task::JoinHandle<()>) {
         generation: AtomicUsize::new(0),
         log: Mutex::new(vec![]),
         bad_claim: AtomicBool::new(false),
+        reject_claim: AtomicBool::new(false),
         pending: AtomicBool::new(false),
         stale_health: AtomicBool::new(false),
         bad_protocol: AtomicBool::new(false),
@@ -425,6 +437,30 @@ async fn startup_failure_and_cancel_both_release_the_created_id() {
             .any(|l| l.starts_with("DELETE")));
         server.abort();
     }
+}
+#[tokio::test]
+async fn claim_http_400_preserves_the_safe_reason_and_releases_the_created_id() {
+    let (fake, server) = fixture().await;
+    fake.reject_claim.store(true, Ordering::SeqCst);
+    let (_stop, receiver) = watch::channel(false);
+    let error = Session::connect(&fake.base, receiver)
+        .await
+        .err()
+        .expect("claim must fail");
+    assert_eq!(error.code, "larm_invalid_claim_request");
+    assert!(error.cleanup.is_none());
+    assert!(fake.released.load(Ordering::SeqCst));
+    assert_eq!(count(&fake, "/claim"), 1);
+    assert_eq!(
+        fake.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|line| line.starts_with("DELETE"))
+            .count(),
+        1
+    );
+    server.abort();
 }
 #[tokio::test]
 async fn health_failure_is_confined_to_the_requested_capability() {
