@@ -1,32 +1,59 @@
 use super::checks;
-use super::contract::{DiagnosisItem, DiagnosisReport, DiagnosisSeverity, DiagnosisStatus};
+use super::contract::{
+    DiagnosisItem, DiagnosisMode, DiagnosisReport, DiagnosisSeverity, DiagnosisStatus,
+};
 use crate::AppState;
 use tauri::{Emitter, Manager};
 
 const GROUP_ORDER: [&str; 6] = ["storage", "settings", "llm", "voice", "harness", "memory"];
+const FAST_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+const OPERATIONAL_LIMIT: std::time::Duration = std::time::Duration::from_secs(75);
 
 pub(crate) fn spawn_startup(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        run_and_publish(&app).await;
+        run_and_publish(&app, DiagnosisMode::Fast).await;
     });
 }
 
-pub(crate) async fn run_and_publish(app: &tauri::AppHandle) -> DiagnosisReport {
+pub(crate) async fn run_and_publish(
+    app: &tauri::AppHandle,
+    mode: DiagnosisMode,
+) -> DiagnosisReport {
     let state = app.state::<AppState>();
     let store = std::sync::Arc::clone(&state.diagnosis);
-    let Some(revision) = store.try_begin() else {
+    let revision = loop {
+        if let Some(revision) = store.try_begin() {
+            break revision;
+        }
         store.wait_finished().await;
-        return store.snapshot();
     };
     let started_at = crate::now_iso();
-    let mut flight = InFlight::start(Some(app.clone()), store, revision, started_at);
+    let mut flight = InFlight::start(Some(app.clone()), store, revision, started_at, mode);
     let mut items = Vec::new();
-    stream(&state, |batch| {
-        items.extend(batch);
-        items.sort_by_key(|item| group_rank(&item.group));
-        flight.progress(items.clone(), app);
-    })
+    let limit = match mode {
+        DiagnosisMode::Fast => FAST_LIMIT,
+        DiagnosisMode::Operational => OPERATIONAL_LIMIT,
+    };
+    let outcome = tokio::time::timeout(
+        limit,
+        stream(&state, mode, |batch| {
+            items.extend(batch);
+            items.sort_by_key(|item| group_rank(&item.group));
+            flight.progress(items.clone(), app);
+        }),
+    )
     .await;
+    if outcome.is_err() {
+        items.push(checks::item(
+            "diagnosis.timeout",
+            "storage",
+            "Diagnosis timeout",
+            DiagnosisStatus::Fail,
+            DiagnosisSeverity::Degraded,
+            "Diagnosis exceeded its time limit",
+            Some(limit.as_millis() as u64),
+        ));
+    }
     let report = flight.finish(items);
     let _ = app.emit("diagnosis-updated", &report);
     eprintln!(
@@ -42,6 +69,7 @@ struct InFlight {
     store: std::sync::Arc<super::store::DiagnosisStore>,
     revision: u64,
     started_at: String,
+    mode: DiagnosisMode,
     finished: bool,
 }
 
@@ -51,18 +79,20 @@ impl InFlight {
         store: std::sync::Arc<super::store::DiagnosisStore>,
         revision: u64,
         started_at: String,
+        mode: DiagnosisMode,
     ) -> Self {
         Self {
             app,
             store,
             revision,
             started_at,
+            mode,
             finished: false,
         }
     }
 
     fn progress(&mut self, items: Vec<DiagnosisItem>, app: &tauri::AppHandle) {
-        let mut report = report_from(self.revision, self.started_at.clone(), items);
+        let mut report = report_from(self.revision, self.started_at.clone(), self.mode, items);
         report.running = true;
         report.finished_at = None;
         report.overall = DiagnosisStatus::Running;
@@ -71,7 +101,7 @@ impl InFlight {
     }
 
     fn finish(&mut self, items: Vec<DiagnosisItem>) -> DiagnosisReport {
-        let report = report_from(self.revision, self.started_at.clone(), items);
+        let report = report_from(self.revision, self.started_at.clone(), self.mode, items);
         self.store.publish(report.clone());
         self.finished = true;
         report
@@ -86,6 +116,7 @@ impl Drop for InFlight {
         let report = report_from(
             self.revision,
             self.started_at.clone(),
+            self.mode,
             vec![checks::item(
                 "diagnosis.interrupted",
                 "storage",
@@ -108,7 +139,24 @@ impl Drop for InFlight {
     }
 }
 
-fn report_from(revision: u64, started_at: String, items: Vec<DiagnosisItem>) -> DiagnosisReport {
+fn report_from(
+    revision: u64,
+    started_at: String,
+    mode: DiagnosisMode,
+    mut items: Vec<DiagnosisItem>,
+) -> DiagnosisReport {
+    items.push(checks::item(
+        match mode {
+            DiagnosisMode::Fast => "diagnosis.mode.fast",
+            DiagnosisMode::Operational => "diagnosis.mode.operational",
+        },
+        "settings",
+        "Diagnosis mode",
+        DiagnosisStatus::Skipped,
+        DiagnosisSeverity::Info,
+        "",
+        None,
+    ));
     DiagnosisReport {
         revision,
         started_at,
@@ -121,35 +169,82 @@ fn report_from(revision: u64, started_at: String, items: Vec<DiagnosisItem>) -> 
 
 pub(crate) async fn collect(state: &AppState) -> Vec<DiagnosisItem> {
     let mut items = Vec::new();
-    stream(state, |batch| items.extend(batch)).await;
+    stream(state, DiagnosisMode::Operational, |batch| {
+        items.extend(batch)
+    })
+    .await;
     items.sort_by_key(|item| group_rank(&item.group));
     items
 }
 
-async fn stream(state: &AppState, mut on_batch: impl FnMut(Vec<DiagnosisItem>)) {
+async fn stream(
+    state: &AppState,
+    mode: DiagnosisMode,
+    mut on_batch: impl FnMut(Vec<DiagnosisItem>),
+) {
     let enabled = checks::providers::enabled_providers(state);
     let mut pending: Vec<
         std::pin::Pin<Box<dyn std::future::Future<Output = Vec<DiagnosisItem>> + Send + '_>>,
     > = vec![
         // select_all polls in list order. Begin LARM readiness before other
         // diagnosis checks, then let them proceed while LARM is pending.
-        Box::pin(async { checks::harness::harness(state).await }),
+        Box::pin(async move {
+            match mode {
+                DiagnosisMode::Fast => checks::harness::fast(state).await,
+                DiagnosisMode::Operational => checks::harness::harness(state).await,
+            }
+        }),
         Box::pin(async { vec![checks::sqlite::sqlite(state)] }),
         Box::pin(async { vec![checks::settings::settings(state)] }),
         Box::pin(async { checks::memory::memory(state) }),
     ];
-    for provider in &enabled {
-        let provider = provider.clone();
-        pending.push(Box::pin(async move {
-            checks::providers::probe_one(state, &provider).await
+    if mode == DiagnosisMode::Fast {
+        for provider in &enabled {
+            let group = match provider {
+                crate::ModelProviderSettings::CloudAsr(_)
+                | crate::ModelProviderSettings::CloudTts(_)
+                | crate::ModelProviderSettings::SystemTts(_) => "voice",
+                _ => "llm",
+            };
+            on_batch(vec![checks::item(
+                &format!("provider.{}", provider.id()),
+                group,
+                provider.label(),
+                DiagnosisStatus::Skipped,
+                DiagnosisSeverity::Info,
+                "Run operational diagnosis to test this provider",
+                None,
+            )]);
+        }
+        if state
+            .sqlite_readers
+            .read(crate::persistence::load_codex_settings)
+            .is_ok_and(|settings| settings.enabled)
+        {
+            on_batch(vec![checks::item(
+                "provider.codex-sdk",
+                "llm",
+                "Codex SDK",
+                DiagnosisStatus::Skipped,
+                DiagnosisSeverity::Info,
+                "Run operational diagnosis to test the Codex SDK",
+                None,
+            )]);
+        }
+    } else {
+        for provider in &enabled {
+            let provider = provider.clone();
+            pending.push(Box::pin(async move {
+                checks::providers::probe_one(state, &provider).await
+            }));
+        }
+        pending.push(Box::pin(async {
+            checks::providers::codex_item(state)
+                .await
+                .into_iter()
+                .collect()
         }));
     }
-    pending.push(Box::pin(async {
-        checks::providers::codex_item(state)
-            .await
-            .into_iter()
-            .collect()
-    }));
     while !pending.is_empty() {
         let (batch, _index, rest) = futures_util::future::select_all(pending).await;
         pending = rest;
@@ -265,6 +360,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn report_identifies_diagnosis_mode_without_changing_ipc_shape() {
+        for (mode, id) in [
+            (DiagnosisMode::Fast, "diagnosis.mode.fast"),
+            (DiagnosisMode::Operational, "diagnosis.mode.operational"),
+        ] {
+            let report = report_from(1, "now".into(), mode, Vec::new());
+            assert_eq!(report.items.len(), 1);
+            assert_eq!(report.items[0].id, id);
+        }
+    }
+
     #[tokio::test]
     async fn dg_08_collect_orders_groups() {
         let state = fresh();
@@ -296,6 +403,21 @@ mod tests {
         assert!(!items.is_empty());
     }
 
+    #[tokio::test]
+    async fn startup_fast_diagnosis_skips_provider_requests() {
+        let state = fresh();
+        quiet_external(&state);
+        let mut items = Vec::new();
+        stream(&state, DiagnosisMode::Fast, |batch| items.extend(batch)).await;
+        let provider = items
+            .iter()
+            .find(|item| item.id == "provider.local-llm")
+            .expect("configured provider is represented");
+        assert_eq!(provider.status, DiagnosisStatus::Skipped);
+        assert!(provider.latency_ms.is_none());
+        assert!(items.iter().all(|item| item.id != "harness.larm.create"));
+    }
+
     #[test]
     fn interrupted_run_unlocks_with_a_warning() {
         let store = std::sync::Arc::new(crate::diagnosis::store::DiagnosisStore::new());
@@ -305,6 +427,7 @@ mod tests {
             std::sync::Arc::clone(&store),
             revision,
             "t".into(),
+            DiagnosisMode::Fast,
         ));
         let snapshot = store.snapshot();
         assert!(!snapshot.running);

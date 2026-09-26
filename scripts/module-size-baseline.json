@@ -1334,8 +1334,12 @@
       "production": 323
     },
     "src-tauri/src/persistence/audit/tests.rs": {
-      "total": 312,
-      "production": 312
+      "total": 410,
+      "production": 410
+    },
+    "src-tauri/src/persistence/audit/voice_frontend_observer.rs": {
+      "total": 229,
+      "production": 229
     },
     "src-tauri/src/persistence/conversation_page.rs": {
       "total": 250,
@@ -2641,6 +2645,10 @@
       "total": 40,
       "production": 21
     },
+    "src-tauri/src/runtime/qwen_control_stream.rs": {
+      "total": 186,
+      "production": 123
+    },
     "src-tauri/src/runtime/reasoning_ack.rs": {
       "total": 144,
       "production": 118
@@ -2680,6 +2688,10 @@
     "src-tauri/src/runtime/turns/prepare_runtime_run.rs": {
       "total": 349,
       "production": 349
+    },
+    "src-tauri/src/runtime/voice_frontend.rs": {
+      "total": 370,
+      "production": 213
     },
     "src-tauri/src/runtime/voice_response_state.rs": {
       "total": 106,

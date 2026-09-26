@@ -294,6 +294,7 @@ function App() {
                 onReturnToLatest={turn.returnToLatestMessages}
                 streamingText={turn.streamingText}
                 voiceState={voiceState}
+                voiceReady={voice.voiceReady}
                 voiceActivityLevel={voice.voiceActivityLevel}
                 voiceActivityDetected={voice.voiceActivityDetected}
                 listeningEnabled={voice.listeningEnabled}

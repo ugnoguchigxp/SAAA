@@ -1,7 +1,4 @@
-import {
-  createAmbientVoiceCaptureActions,
-  type SuspensionReason,
-} from "./ambientVoiceCaptureActions";
+import { createAmbientVoiceCaptureActions } from "./ambientVoiceCaptureActions";
 import type { AmbientVoiceSessionOptions } from "./ambientVoiceTypes";
 import { effectiveCaptureSettings, voiceStartupMessage } from "./voiceCaptureSettings";
 import { idleCaptureShouldStart } from "./idleVoiceCapture";
@@ -70,7 +67,6 @@ export function useAmbientVoiceSession({
   const voiceActivityUpdatedAtRef = useRef(0);
   const voiceSessionRef = useRef(initialVoiceSession);
   const voiceToggleGenerationRef = useRef(0);
-  const suspensionReasonRef = useRef<SuspensionReason | null>(null);
   const speechResumeTokenRef = useRef<string | null>(null);
   const ttsStartedAtRef = useRef(0);
   const [resources] = useState(() => new VoiceCaptureResources());
@@ -78,6 +74,7 @@ export function useAmbientVoiceSession({
     voiceStreamRef,
     voiceContextRef,
     voiceActivityDetectorRef,
+    voiceAsrSessionIdRef,
     acceptedVoiceAsrSessionsRef,
     voiceAsrConversationsRef,
     voiceAsrProjectionRef,
@@ -105,6 +102,12 @@ export function useAmbientVoiceSession({
 
   const voiceState = voiceCaptureState(voiceSession, listeningEnabled);
   const voiceAvailability = voiceState;
+  const voiceReady =
+    voiceState === "listening" &&
+    voiceSession.capture === "recording" &&
+    !voiceSession.finalizing &&
+    asrProjection.status === "active" &&
+    asrProjection.sessionId === voiceAsrSessionIdRef.current;
 
   useEffect(() => {
     if (voiceState === "listening") return;
@@ -138,7 +141,6 @@ export function useAmbientVoiceSession({
       voiceSettingsRef,
       voicePolicyRef,
       voiceSessionRef,
-      suspensionReasonRef,
       speechResumeTokenRef,
       voiceActivityLevelRef,
       voiceActivityDetectedRef,
@@ -219,8 +221,6 @@ export function useAmbientVoiceSession({
         listeningEnabled,
         selectedConversationId,
         voiceSettings,
-        situationHold: voicePolicy?.speechReasonCode === "situation_hold",
-        speechRunId: conversationSessionRef.current.speechRunId,
         capture: voiceSessionRef.current.capture,
         hasStream: Boolean(voiceStreamRef.current || nativeCaptureRef.current),
         actionInProgress: voiceSession.actionInProgress,
@@ -231,7 +231,6 @@ export function useAmbientVoiceSession({
   }, [
     listeningEnabled,
     selectedConversationId,
-    voicePolicy?.speechReasonCode,
     voiceSettings,
     conversationSessionRef,
     attachVoiceCaptureCommitted,
@@ -279,15 +278,6 @@ export function useAmbientVoiceSession({
         return;
       }
       if (voiceSessionRef.current.finalizing) return;
-      if (conversationSessionRef.current.speechRunId) {
-        await stopSpeech();
-        if (
-          generation !== voiceToggleGenerationRef.current ||
-          !listeningEnabledRef.current ||
-          conversationSessionRef.current.speechRunId
-        )
-          return;
-      }
       let skipGetUserMedia = false;
       try {
         const status = await audioBackendStatus();
@@ -334,7 +324,6 @@ export function useAmbientVoiceSession({
   async function pauseAmbientCapture(persist: boolean) {
     updateListeningEnabled(false);
     setInterimTranscript("");
-    suspensionReasonRef.current = null;
     speechResumeTokenRef.current = null;
     let persistenceFailure: unknown = null;
     const persistence = persist
@@ -372,7 +361,7 @@ export function useAmbientVoiceSession({
       disposedRef.current ||
       !listeningEnabledRef.current ||
       voiceSettingsRef.current?.inputDeviceId !== inputDeviceId ||
-      conversationSessionRef.current.speechRunId
+      !selectedConversationIdRef.current
     )
       return;
     await attachVoiceCapture();
@@ -384,8 +373,7 @@ export function useAmbientVoiceSession({
     if (
       disposedRef.current ||
       !listeningEnabledRef.current ||
-      !selectedConversationIdRef.current ||
-      conversationSessionRef.current.speechRunId
+      !selectedConversationIdRef.current
     )
       return;
     await attachVoiceCapture();
@@ -396,6 +384,7 @@ export function useAmbientVoiceSession({
     voiceActionInProgress: voiceSession.actionInProgress,
     voiceAvailability,
     voiceState,
+    voiceReady,
     voiceBusy: voiceSessionBusy(voiceSession),
     voiceProcessing: voiceSessionProcessing(voiceSession),
     voiceActivityLevel,

@@ -2,8 +2,8 @@
   "version": 1,
   "domains": {
     "asr": {
-      "acceptedAt": "2026-09-26T03:38:34.144Z",
-      "reason": "Start Harness ASR while LARM conversation lease prepares; Bun ASR regressions 27 passed and Rust streaming ASR 38 passed.",
+      "acceptedAt": "2026-09-26T11:14:39.248Z",
+      "reason": "Retain suppression when ASR becomes ready during TTS and its final arrives after playback",
       "files": {
         "src-tauri/src/voice/network_asr.rs": "53e14d522b058a6bd4a2a3b949d44ce11f095d6315314b06aec67f7025abfcf4",
         "src-tauri/src/voice/network_asr/discovery.rs": "2010c7a177dd3dd0e5056cefcb1eb823721f7878bd41fb77e47b0cab86a94063",
@@ -24,16 +24,16 @@
         "src-tauri/src/voice/streaming_asr/speaker_gate.rs": "7328655253a373d6ccfbd150a6f04aa8c585b2cbb4e02957e22a21db35b84b34",
         "src-tauri/src/voice/streaming_asr/speaker_gate_runtime.rs": "405478e8f8003410d363b60fc72862acf6ac0c7a9d21b0eb9b20d886c4e81f6f",
         "src/features/voice/ambientVoiceCapture.ts": "41aef0b84dc52abe2db55a949a56243f75c4c852acc026ab5e1e8e48794d8e50",
-        "src/features/voice/ambientVoiceCaptureActions.ts": "b83bf169f1a863b618f08042fd2bfd0320f8be92acecde8ecee0cebdf4884c23",
-        "src/features/voice/useAmbientVoiceSession.ts": "de6c2326d13a48a8dbe0f43a6904bc89c12ab61878bd699cda545ccddb5726c1",
+        "src/features/voice/ambientVoiceCaptureActions.ts": "af70cd76742747ac83f325d1d03bb9dd904d4f67f811c7341bcb807056b1004d",
+        "src/features/voice/useAmbientVoiceSession.ts": "f3f4976785b7b2ea32583adf6217f1fcb78745ceedab65ff6b240d751ceffe8f",
         "src/features/voice/voiceCaptureSettings.ts": "f23cbcb78821a63cc78d8b45f1fc4546515ff8f7dcdd6199ea5b3534627d2900",
         "src/lib/microphone.ts": "c16d977c6c74916b139f01e69ab2ad2f8ca24f09464715243cebbe0b420a40fa",
         "src/lib/voiceAsrRuntime.ts": "e86f35072591ea6cdef7b8049feeac67dc71e66cb0d4970b241521d022d6c769"
       }
     },
     "initial-response": {
-      "acceptedAt": "2026-09-26T04:10:29.501Z",
-      "reason": "Review LARM claim compatibility: embedding daemonURL no longer blocks LLM claim parsing; Dynamic LAN tests 46 passed and quality check passed; macOS smoke follows.",
+      "acceptedAt": "2026-09-26T11:13:20.564Z",
+      "reason": "Format reviewed ornith handoff streaming code and preserve the validated cancellation and timeout path",
       "files": {
         "src-tauri/src/persistence/app_commands.rs": "0e93155944cafd837e0eecffc129b327e74093e0876b63db00b305c6c946bdfd",
         "src-tauri/src/persistence/schema.rs": "591633043388875e2ed97008ce1c4a243b93aa22272f4a4d558f6d0a6e3e2a6b",
@@ -97,11 +97,11 @@
         "src-tauri/src/runtime/conversation_context.rs": "d549686139041551af5df55235158e8f748b698aadc0eea37f51876cf72901dc",
         "src-tauri/src/runtime/conversation_inputs.rs": "456b824ee2ee129b7acc75865db3362428e86cc316799209d725c9278b16554b",
         "src-tauri/src/runtime/conversation_prepare.rs": "b87c6b91e5e68b0cb1dd967907448ca1be0e8e9bc2cc9b346d923085be8f6b2a",
-        "src-tauri/src/runtime/conversation_provider_route.d/01.rs": "e3e951b83c77261228bc6ee7dec37c36250c056f12ec0f3c46fadae475369489",
+        "src-tauri/src/runtime/conversation_provider_route.d/01.rs": "465e6ea24a62bd23266bfc5a265f874f66e7b536d487dbb2e0e0f5a651f331dc",
         "src-tauri/src/runtime/conversation_provider_route.d/02.rs": "54632344fd76e18556a79d2ba5fb73fe103331bf6abcb88ad0deb3d5dd51c518",
-        "src-tauri/src/runtime/conversation_provider_route.rs": "82f2d7eef01f7363d479be8d745940f6de4cd28f20d6dc4a31dbcb9f96d5d065",
+        "src-tauri/src/runtime/conversation_provider_route.rs": "3c68e1b94d70b87c632484556a1ba0e45e845c03e19148db66f31063c1de46d9",
         "src-tauri/src/runtime/conversation_turn.rs": "f40ba5c14d76c13fbcd94a46e7cf20ec1cce48d16aa7d3d742debe839e06adbb",
-        "src/App.tsx": "441d23cb068c9df69b27068b4e7162061fa18539880db8839003e1d6bc67ec9a",
+        "src/App.tsx": "b68883cbf4a9dac9f94f32f5e605305e49f9354258f0a4f56f9c6ac069c785d3",
         "src/lib/ipcValidation.ts": "5d0fb7595ec2e9925a8fd3e9008bf4c219090b5d19f32f9b21478cde4d1c6ee1"
       }
     }

@@ -53,7 +53,24 @@ pub(super) async fn execute(
     {
         return Ok(message);
     }
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(route.timeout_ms);
+    let route_budget_ms = if active_provider_step.is_some() {
+        let root_deadline = state.sqlite_readers.read(|connection| {
+            connection.query_row(
+                "SELECT deadline_at_ms FROM rr_roots WHERE root_id=?1",
+                [&input.run_id],
+                |row| row.get::<_, Option<i64>>(0),
+            ).optional().map_err(|error| error.to_string())
+        })?;
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(i64::MAX);
+        root_deadline.flatten().map(|value| value.saturating_sub(now_ms).max(0) as u64)
+            .unwrap_or(route.timeout_ms).min(route.timeout_ms)
+    } else {
+        route.timeout_ms
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(route_budget_ms);
     let reasoning_effort = providers.reasoning_effort.clone();
     let max_output_tokens = crate::providers::completion::DEFAULT_MAX_OUTPUT_TOKENS;
     let route_ids = effective_conversation_route_ids(&providers, &route, &security);
@@ -187,6 +204,11 @@ pub(super) async fn execute(
                 return Err(TurnExecutionFailure::configuration(error));
             }
         };
+        let larm_reasoner_step = larm_provider == "llm"
+            && active_provider_step.is_some_and(|step| step.purpose == "respond");
+        if larm_reasoner_step {
+            record_role_stage(state, input, "ornith-context-started", "start", None, None, None);
+        }
         let FreshProviderContext {
             envelope,
             world: world_live,
@@ -194,6 +216,9 @@ pub(super) async fn execute(
         } = match compose_after_connect(state, input, &identity, &regional, budget) {
             Ok(context) => context,
             Err(error) => {
+                if larm_reasoner_step {
+                    record_role_stage(state, input, "ornith-context-finished", "terminal", Some("failure"), Some("context-unavailable"), None);
+                }
                 finish_provider_session(
                     state,
                     &session_id,
@@ -205,6 +230,9 @@ pub(super) async fn execute(
                 ));
             }
         };
+        if larm_reasoner_step {
+            record_role_stage(state, input, "ornith-context-finished", "terminal", Some("success"), None, None);
+        }
         if state_query {
             history.insert(
                 0,
@@ -643,6 +671,23 @@ pub(super) async fn execute(
                 } else {
                     finish_provider_session(state, &session_id, "failed", Some(kind))?;
                 }
+                if larm_reasoner_step && kind == ProviderFailureKind::PreparationDeferred {
+                    record_role_stage(state, input, "ornith-handoff-finished", "terminal", Some("degraded"), Some("preparation-deferred"), None);
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|duration| duration.as_millis() as i64)
+                        .unwrap_or(0);
+                    return persist_conversation_success_with_state(
+                        state,
+                        input,
+                        "回答用の接続を準備中です。少し後に、内容を確認してもう一度お試しください。",
+                        |connection, message| {
+                            crate::role_routing::repository::accept_provider_turn_with_status(
+                                connection, &input.run_id, &message.id, now_ms, "cancelled",
+                            )
+                        },
+                    ).map_err(Into::into);
+                }
                 if state_query
                     && matches!(
                         kind,
@@ -679,8 +724,6 @@ enum ReasonerWait {
     TimedOut(crate::CleanupOutcome),
 }
 
-const FILLER: &str = "はい。";
-
 async fn wait_for_reasoner(
     provider: &ModelProviderSettings,
     history: &[ConversationMessage],
@@ -689,7 +732,7 @@ async fn wait_for_reasoner(
     harness: &crate::HarnessSettings,
     shared_larm_voice: bool,
     larm_provider: &'static str,
-    state: &AppState,
+    _state: &AppState,
     on_event: &dyn RuntimeEventSender,
     parent: &Arc<RunCancellation>,
 ) -> ReasonerWait {
@@ -725,61 +768,44 @@ async fn wait_for_reasoner(
         larm_provider,
     );
     tokio::pin!(attempt);
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     interval.tick().await;
-    let mut tick = 0u32;
-    let mut deferred = false;
     loop {
-        let mut speak = false;
         tokio::select! {
             biased;
             _ = parent.cancelled() => {
                 step_cancel.cancel();
-                return ReasonerWait::Finished(attempt.await);
+                let cleanup = match tokio::time::timeout(std::time::Duration::from_secs(5), &mut attempt).await {
+                    Ok(ProviderAttemptOutcome::Completed { cleanup, .. })
+                    | Ok(ProviderAttemptOutcome::Cancelled { cleanup, .. })
+                    | Ok(ProviderAttemptOutcome::Failed { cleanup, .. }) => cleanup,
+                    Err(_) => crate::CleanupOutcome::NotApplicable,
+                };
+                return ReasonerWait::Finished(ProviderAttemptOutcome::Cancelled {
+                    output_started: false,
+                    cleanup,
+                });
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                step_cancel.cancel();
+                let cleanup = match tokio::time::timeout(std::time::Duration::from_secs(5), &mut attempt).await {
+                    Ok(ProviderAttemptOutcome::Completed { cleanup, .. })
+                    | Ok(ProviderAttemptOutcome::Cancelled { cleanup, .. })
+                    | Ok(ProviderAttemptOutcome::Failed { cleanup, .. }) => cleanup,
+                    Err(_) => crate::CleanupOutcome::NotApplicable,
+                };
+                return ReasonerWait::TimedOut(cleanup);
             }
             _ = interval.tick() => {
-                tick += 1;
-                #[cfg(test)]
-                crate::runtime::event_hub::reasoning_ack::observe_filler_tick(&input.run_id, tick);
-                if tick >= timeout_ms.div_ceil(2_000).max(1) as u32 {
-                    step_cancel.cancel();
-                    let cleanup = match attempt.await {
-                        ProviderAttemptOutcome::Completed { cleanup, .. }
-                        | ProviderAttemptOutcome::Cancelled { cleanup, .. }
-                        | ProviderAttemptOutcome::Failed { cleanup, .. } => cleanup,
-                    };
-                    return ReasonerWait::TimedOut(cleanup);
-                }
-                let playing =
-                    crate::runtime::event_hub::reasoning_ack::speech_still_playing(&input.run_id);
-                let (due, next_deferred) =
-                    crate::role_routing::frontend::filler_decision(tick, playing, deferred);
-                deferred = next_deferred;
-                speak = due;
-                if speak {
-                    #[cfg(test)]
-                    crate::role_routing::frontend::record_filler_tick(tick);
-                }
+                let _ = on_event.send(RuntimeEvent::Activity {
+                    run_id: input.run_id.clone(),
+                    kind: "reasoner-wait".into(),
+                    summary: "回答を準備しています。".into(),
+                });
             }
             outcome = &mut attempt => return ReasonerWait::Finished(outcome),
-        }
-        if speak {
-            tokio::select! {
-                biased;
-                _ = parent.cancelled() => {
-                    step_cancel.cancel();
-                    return ReasonerWait::Finished(attempt.await);
-                }
-                outcome = &mut attempt => return ReasonerWait::Finished(outcome),
-                _ = on_event.acknowledge_hold(
-                    state,
-                    &input.run_id,
-                    &input.conversation_id,
-                    FILLER.to_string(),
-                    parent.clone(),
-                ) => {}
-            }
         }
     }
 }
@@ -800,7 +826,11 @@ async fn complete_frontend_step(
         provider_id: frontend_provider_id(state),
     });
     let (content, ack) = if shared_larm_voice {
-        frontend_model_output(state, input, &cancellation, larm_provider).await
+        frontend_model_output(state, input, &cancellation, larm_provider)
+            .await
+            .map_err(|failure| {
+                TurnExecutionFailure::provider(failure.kind, failure.code.to_string())
+            })?
     } else {
         (String::new(), None)
     };
@@ -962,72 +992,159 @@ async fn frontend_model_output(
     input: &StartTurnInput,
     cancellation: &Arc<RunCancellation>,
     larm_provider: &'static str,
-) -> (String, Option<String>) {
-    let timeout_ms = state
+) -> Result<(String, Option<String>), FrontendStepFailure> {
+    let (mut timeout_ms, max_ack_chars) = state
         .sqlite_readers
         .read(|connection| {
-            Ok(crate::persistence::load_role_routing_settings(connection)?
-                .limits
-                .frontend_timeout_ms)
+            let roles = crate::persistence::load_role_routing_settings(connection)?;
+            Ok((
+                roles.limits.frontend_timeout_ms,
+                roles.speech.max_ack_chars,
+            ))
         })
-        .unwrap_or(1_200);
-    let max_ack_chars = state
-        .sqlite_readers
-        .read(|connection| {
-            Ok(crate::persistence::load_role_routing_settings(connection)?
-                .speech
-                .max_ack_chars)
-        })
-        .unwrap_or(80);
+        .unwrap_or((1_200, 80));
+    let root_deadline = state.sqlite_readers.read(|connection| {
+        connection.query_row(
+            "SELECT deadline_at_ms FROM rr_roots WHERE root_id=?1",
+            [&input.run_id],
+            |row| row.get::<_, Option<i64>>(0),
+        ).optional().map_err(|error| error.to_string())
+    }).map_err(|_| FrontendStepFailure::new("qwen-root-unavailable", ProviderFailureKind::Contract))?;
+    if let Some(root_deadline) = root_deadline.flatten() {
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64).unwrap_or(i64::MAX);
+        timeout_ms = timeout_ms.min(root_deadline.saturating_sub(now_ms).max(0) as u64);
+    }
+    if timeout_ms == 0 {
+        return Err(FrontendStepFailure::new("qwen-root-timeout", ProviderFailureKind::Timeout));
+    }
     let settings = match state
         .sqlite_readers
         .read(|connection| Ok(crate::persistence::load_model_providers(connection)?.harness))
     {
         Ok(settings) => settings,
-        Err(_) => return (String::new(), None),
+        Err(_) => return Err(FrontendStepFailure::new("qwen-settings-unavailable", ProviderFailureKind::Contract)),
     };
     if cancellation.is_cancelled() {
-        return (String::new(), None);
+        return Err(FrontendStepFailure::new("qwen-cancelled", ProviderFailureKind::Cancelled));
     }
-    let call = frontend_completion(input, &settings, larm_provider, timeout_ms, cancellation);
-    let raw = match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), call).await {
-        Ok(Ok(raw)) => raw,
-        _ => return (String::new(), None),
+    if larm_provider != "backchannel" {
+        return Err(FrontendStepFailure::new("qwen-route-invalid", ProviderFailureKind::Contract));
+    }
+    record_role_stage(state, input, "qwen-first-response-started", "start", None, None, None);
+    // The shared Agent Connection waits for Ornith and other profile resources. Qwen's
+    // first reply uses LARM's independently advertised HTTP model route.
+    let call = frontend_completion(state, input, &settings);
+    let raw: Result<String, FrontendStepFailure> = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(FrontendStepFailure::new("qwen-cancelled", ProviderFailureKind::Cancelled)),
+        result = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), call) => {
+            result.unwrap_or_else(|_| Err(FrontendStepFailure::new("qwen-timeout", ProviderFailureKind::Timeout)))
+        },
     };
-    let Ok(parsed) = crate::role_routing::frontend::parse(&raw) else {
-        return (String::new(), None);
+    let raw = match raw {
+        Ok(raw) => raw,
+        Err(failure) => {
+            record_role_stage(state, input, "qwen-first-response-finished", "terminal", Some("failure"), Some(failure.code), None);
+            return Err(failure);
+        }
     };
+    let parsed = match crate::role_routing::frontend::parse(&raw) {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            record_role_stage(state, input, "qwen-first-response-finished", "terminal", Some("failure"), Some("qwen-response-invalid"), None);
+            return Err(FrontendStepFailure::new("qwen-response-invalid", ProviderFailureKind::Protocol));
+        }
+    };
+    let parsed = crate::role_routing::frontend::guard_for_input(parsed, &input.content);
     let ack = crate::role_routing::frontend::spoken_line(&parsed)
         .filter(|text| text.chars().count() <= usize::from(max_ack_chars));
+    if ack.is_none() {
+        record_role_stage(state, input, "qwen-first-response-finished", "terminal", Some("failure"), Some("qwen-reply-invalid"), None);
+        return Err(FrontendStepFailure::new("qwen-reply-invalid", ProviderFailureKind::Protocol));
+    }
     let recorded = serde_json::json!({
         "kind": parsed.kind,
         "reply": ack.clone().unwrap_or_default(),
     })
     .to_string();
-    (recorded, ack)
+    let decision = match parsed.kind {
+        crate::role_routing::frontend::FrontendKind::Greeting => "greeting",
+        crate::role_routing::frontend::FrontendKind::Thanks => "thanks",
+        crate::role_routing::frontend::FrontendKind::Nod => "nod",
+        crate::role_routing::frontend::FrontendKind::Answer => "answer",
+        crate::role_routing::frontend::FrontendKind::Handoff => "handoff",
+    };
+    record_role_stage(state, input, "qwen-first-response-finished", "terminal", Some("success"), None, Some(decision));
+    Ok((recorded, ack))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FrontendStepFailure {
+    code: &'static str,
+    kind: ProviderFailureKind,
+}
+
+impl FrontendStepFailure {
+    fn new(code: &'static str, kind: ProviderFailureKind) -> Self {
+        Self { code, kind }
+    }
+}
+
+fn record_role_stage(
+    state: &AppState,
+    input: &StartTurnInput,
+    event_name: &str,
+    phase: &str,
+    outcome: Option<&str>,
+    failure_code: Option<&str>,
+    result_code: Option<&str>,
+) {
+    let mut attributes = std::collections::BTreeMap::new();
+    if let Some(result_code) = result_code {
+        attributes.insert("resultCode".into(), crate::persistence::audit::AuditAttributeValue::Tag(result_code.into()));
+    }
+    let _ = crate::persistence::audit::record_frontend_event(
+        state,
+        &crate::persistence::audit::FrontendAuditEventInput {
+            component: "provider".into(),
+            event_name: event_name.into(),
+            phase: phase.into(),
+            outcome: outcome.map(str::to_string),
+            correlation_id: Some(input.run_id.clone()),
+            causation_id: None,
+            conversation_id: Some(input.conversation_id.clone()),
+            runtime_run_id: Some(input.run_id.clone()),
+            session_id: None,
+            subject_id: Some(input.run_id.clone()),
+            failure_code: failure_code.map(str::to_string),
+            attributes,
+        },
+    );
 }
 
 async fn frontend_completion(
+    state: &AppState,
     input: &StartTurnInput,
     settings: &crate::HarnessSettings,
-    larm_provider: &'static str,
-    timeout_ms: u64,
-    cancellation: &Arc<RunCancellation>,
-) -> Result<String, ()> {
-    let ready = tokio::select! {
-        biased;
-        _ = cancellation.cancelled() => return Err(()),
-        result = crate::larm_voice::current_at(&input.conversation_id, settings) => result.map_err(|_| ())?,
-    };
-    let lease = tokio::select! {
-        biased;
-        _ = cancellation.cancelled() => return Err(()),
-        result = ready.session.acquire(larm_provider) => result.map_err(|_| ())?,
-    };
-    let provider = lease.provider();
-    let url = provider.endpoint("chat/completions").map_err(|_| ())?;
+) -> Result<String, FrontendStepFailure> {
+    let mut url = url::Url::parse(&settings.address)
+        .map_err(|_| FrontendStepFailure::new("qwen-url-invalid", ProviderFailureKind::Contract))?;
+    if !saaa_larm_session::local_url(&url) || url.path() != "/" {
+        return Err(FrontendStepFailure::new("qwen-url-invalid", ProviderFailureKind::Contract));
+    }
+    url.set_path("/v1/chat/completions");
+    #[cfg(not(test))]
+    let token = zeroize::Zeroizing::new(
+        crate::providers::dynamic_lan::credential::load()
+            .map_err(|_| FrontendStepFailure::new("qwen-credential-unavailable", ProviderFailureKind::Authentication))?
+            .token()
+            .to_string(),
+    );
+    #[cfg(test)]
+    let token = zeroize::Zeroizing::new("test-control-token".to_string());
     let body = serde_json::json!({
-        "model": provider.model,
+        "model": "backchannel-qwen35-2b",
         "stream": true,
         "max_tokens": 128,
         "temperature": 0.0,
@@ -1038,47 +1155,55 @@ async fn frontend_completion(
             {"role": "user", "content": input.content}
         ]
     });
-    let client = reqwest::Client::new();
-    let token = provider.token().to_string();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|_| FrontendStepFailure::new("qwen-client-invalid", ProviderFailureKind::Internal))?;
+    record_role_stage(state, input, "qwen-http-sending", "request", None, None, None);
     let first = client
         .post(url.clone())
-        .bearer_auth(&token)
-        .timeout(std::time::Duration::from_millis(timeout_ms.max(1)))
+        .bearer_auth(token.as_str())
         .json(&body)
         .send()
         .await
-        .map_err(|_| ())?;
+        .map_err(|_| FrontendStepFailure::new("qwen-transport-failed", ProviderFailureKind::Network))?;
+    record_role_stage(state, input, "qwen-http-headers", "progress", None, None, None);
     let mut response = if matches!(first.status(), reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::UNPROCESSABLE_ENTITY)
     {
         let mut retry = body;
         retry.as_object_mut().map(|object| object.remove("response_format"));
         client
             .post(url)
-            .bearer_auth(token)
-            .timeout(std::time::Duration::from_millis(timeout_ms.max(1)))
+            .bearer_auth(token.as_str())
             .json(&retry)
             .send()
             .await
-            .map_err(|_| ())?
+            .map_err(|_| FrontendStepFailure::new("qwen-transport-failed", ProviderFailureKind::Network))?
     } else {
         first
     };
     if !response.status().is_success() {
-        return Err(());
+        return Err(FrontendStepFailure::new("qwen-http-failed", ProviderFailureKind::Upstream));
     }
     let mut bytes = Vec::new();
     loop {
         if bytes.len() >= 65_536 {
             break;
         }
-        let Some(chunk) = response.chunk().await.map_err(|_| ())? else {
+        let Some(chunk) = response.chunk().await.map_err(|_| FrontendStepFailure::new("qwen-stream-failed", ProviderFailureKind::ResponseInterrupted))? else {
             break;
         };
         let room = 65_536 - bytes.len();
         let take = chunk.len().min(room);
         bytes.extend_from_slice(&chunk[..take]);
     }
-    Ok(collect_completion_text(&bytes))
+    let content = collect_completion_text(&bytes);
+    if content.trim().is_empty() {
+        return Err(FrontendStepFailure::new("qwen-empty-response", ProviderFailureKind::Protocol));
+    }
+    Ok(content)
 }
 
 fn collect_completion_text(bytes: &[u8]) -> String {

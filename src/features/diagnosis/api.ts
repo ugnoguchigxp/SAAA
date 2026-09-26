@@ -37,3 +37,7 @@ export async function getDiagnosisReport(): Promise<DiagnosisReport> {
 export async function runDiagnosis(): Promise<DiagnosisReport> {
   return parseDiagnosisReport(await invoke("run_diagnosis"));
 }
+
+export async function runFastDiagnosis(): Promise<DiagnosisReport> {
+  return parseDiagnosisReport(await invoke("run_fast_diagnosis"));
+}

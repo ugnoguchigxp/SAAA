@@ -19,6 +19,15 @@ const ready = {
   overall: "warn",
   items: [
     {
+      id: "diagnosis.mode.operational",
+      group: "settings",
+      label: "Diagnosis mode",
+      status: "skipped",
+      severity: "info",
+      message: "",
+      latencyMs: null,
+    },
+    {
       id: "sqlite",
       group: "storage",
       label: "SQLite",
@@ -125,6 +134,7 @@ async function renderPage(report: typeof ready | null) {
   resetTauriCoreMock();
   invokeImpl.handler = async (command) => {
     if (command === "run_diagnosis") return report;
+    if (command === "get_diagnosis_report") return { ...ready, revision: 0 };
     return null;
   };
   restore = installJsdom().restore;
@@ -140,15 +150,15 @@ async function renderPage(report: typeof ready | null) {
 
 test("diagnosis page shows stages, item list, and blocks rerun while running", async () => {
   await renderPage(ready);
-  expect(document.body.textContent).toContain("診断開始");
-  expect(document.body.textContent).not.toContain("データベース");
+  expect(document.body.textContent).toContain("実動作診断");
   const start = [...document.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("診断開始"),
+    button.textContent?.includes("実動作診断"),
   );
   await act(async () => {
     start?.click();
     await Promise.resolve();
   });
+  expect(document.body.textContent).toContain("実動作診断の結果");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   const services = document.querySelector(".diagnosis-services")?.textContent ?? "";
   const response = [...document.querySelectorAll(".diagnosis-services article")].find(
@@ -187,7 +197,7 @@ test("diagnosis page shows stages, item list, and blocks rerun while running", a
   expect(document.body.textContent).toContain("データベース");
   expect(document.body.textContent).toContain("モデルプロバイダ設定");
   const rerun = [...document.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("再診断"),
+    button.textContent?.includes("実動作診断"),
   );
   expect(rerun?.hasAttribute("disabled")).toBe(false);
 
@@ -200,14 +210,14 @@ test("diagnosis page shows stages, item list, and blocks rerun while running", a
   root = createRoot(document.getElementById("root")!);
   await act(async () => root!.render(createElement(DiagnosisPage)));
   const pendingStart = [...document.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("診断開始"),
+    button.textContent?.includes("実動作診断"),
   );
   await act(async () => {
     pendingStart?.click();
     await Promise.resolve();
   });
   const busy = [...document.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("診断中"),
+    button.textContent?.includes("実動作診断"),
   );
   expect(busy?.hasAttribute("disabled")).toBe(true);
 });

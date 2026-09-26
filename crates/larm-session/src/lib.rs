@@ -149,6 +149,11 @@ impl Use {
     }
 }
 impl Session {
+    /// Credential-free identifier for correlating connection lifecycle events.
+    pub fn connection_id(&self) -> &str {
+        &self.id
+    }
+
     pub async fn connect(
         base: &str,
         cancellation: watch::Receiver<bool>,

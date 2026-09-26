@@ -302,9 +302,20 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
             value["status"] = json!("released");
             value["reason"] = json!("foreground_idle_timeout");
         }
+        if f.route == "butler" && f.transition == "connection-pending" {
+            value["status"] = json!("pending");
+            for provider in value["providers"].as_array_mut().expect("providers") {
+                provider["readiness"] = json!("pending");
+                provider["claimable"] = json!(false);
+            }
+        }
         return (
             if is_create {
-                axum::http::StatusCode::CREATED
+                if f.route == "butler" && f.transition == "connection-pending" {
+                    axum::http::StatusCode::ACCEPTED
+                } else {
+                    axum::http::StatusCode::CREATED
+                }
             } else {
                 axum::http::StatusCode::OK
             },
@@ -312,16 +323,21 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
         )
             .into_response();
     }
-    let name = if f.route == "dynamic-lan" {
+    let direct_frontend = f.route == "butler" && path == "/v1/chat/completions";
+    let name = if direct_frontend {
+        "backchannel"
+    } else if f.route == "dynamic-lan" {
         "llm"
     } else {
         path.split('/').nth(1).unwrap()
     };
     if f.route != "openai-compatible" {
-        assert_eq!(
-            request.headers()["authorization"],
+        let expected = if direct_frontend {
+            "Bearer test-control-token".to_string()
+        } else {
             format!("Bearer token-{name}")
-        );
+        };
+        assert_eq!(request.headers()["authorization"], expected);
     }
     if f.transition == "idle-provider-reject"
         && name == "llm"
@@ -376,11 +392,15 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
         bodies.len()
     };
     if f.route == "butler" && name == "backchannel" {
+        assert_eq!(body["model"], "backchannel-qwen35-2b");
         let content = match f.transition {
             "frontend-bad" => "not-json",
             "frontend-nod" => r#"{"kind":"nod","reply":"x"}"#,
+            "frontend-misclassified-request" => r#"{"kind":"nod","reply":"待ってください。"}"#,
             "frontend-thanks" => r#"{"kind":"thanks","reply":"x"}"#,
             "frontend-greeting" => r#"{"kind":"greeting","reply":"x"}"#,
+            "frontend-answer" => r#"{"kind":"answer","reply":"2です。"}"#,
+            "frontend-direct-no-lease" => r#"{"kind":"greeting","reply":"おはようございます。"}"#,
             "frontend-low" => r#"{"kind":"handoff","reply":"少し考えます。"}"#,
             _ => r#"{"kind":"handoff","reply":"少し考えます。"}"#,
         };

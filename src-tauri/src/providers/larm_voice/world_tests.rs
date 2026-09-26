@@ -6,6 +6,21 @@ use serde_json::{json, Value};
 mod fixture;
 use fixture::Fake;
 include!("butler_route_tests.rs");
+#[test]
+fn eager_claim_is_preserved_when_voice_media_uses_the_shared_route() {
+    let h = Harness::new();
+    let mut routing = h
+        .state
+        .sqlite_readers
+        .read(crate::persistence::load_routing_settings)
+        .unwrap();
+    assert!(should_defer_claim(&routing));
+    routing.voice_transcribe.source = "provider".into();
+    assert!(!should_defer_claim(&routing));
+    routing.voice_transcribe.source = "harness".into();
+    routing.voice_speak.provider_id = Some(crate::DYNAMIC_LAN_PROVIDER_ID.into());
+    assert!(!should_defer_claim(&routing));
+}
 #[tokio::test]
 async fn voice_session_restart_keeps_media_variant() {
     let _environment = crate::test_environment::larm_lock().lock().await;

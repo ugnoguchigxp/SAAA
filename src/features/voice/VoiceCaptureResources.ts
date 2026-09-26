@@ -24,6 +24,9 @@ export class VoiceCaptureResources {
   readonly voiceAsrStopWaitersRef = { current: new Map<string, VoiceAsrStopWaiter>() };
   readonly voiceAsrPacketCountRef = { current: 0 };
   readonly voiceAsrProjectionRef = { current: initialVoiceAsrProjection };
+  readonly speechSuppressedUtteranceIdsRef = { current: new Set<string>() };
+  readonly bargeInSpeechSinceRef = { current: 0 };
+  readonly bargeInFiredForRef = { current: null as string | null };
   readonly voiceFinalDeliveryRef = { current: new VoiceFinalDeliveryQueue() };
   readonly disposedRef = { current: false };
   readonly listeningEnabledRef = { current: false };
@@ -126,6 +129,7 @@ export class VoiceCaptureResources {
     this.voiceFlushResolverRef.current?.();
     void this.releaseCapture();
     this.voiceFinalDeliveryRef.current.clear();
+    this.speechSuppressedUtteranceIdsRef.current.clear();
     this.voiceAsrStopWaitersRef.current.forEach((waiter) => waiter.resolve());
     this.voiceAsrStopWaitersRef.current.clear();
     this.acceptedVoiceAsrSessionsRef.current.clear();

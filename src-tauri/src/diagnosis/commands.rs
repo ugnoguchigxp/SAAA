@@ -4,7 +4,12 @@ use crate::AppState;
 
 #[tauri::command]
 pub(crate) async fn run_diagnosis(app: tauri::AppHandle) -> Result<DiagnosisReport, String> {
-    Ok(runner::run_and_publish(&app).await)
+    Ok(runner::run_and_publish(&app, super::contract::DiagnosisMode::Operational).await)
+}
+
+#[tauri::command]
+pub(crate) async fn run_fast_diagnosis(app: tauri::AppHandle) -> Result<DiagnosisReport, String> {
+    Ok(runner::run_and_publish(&app, super::contract::DiagnosisMode::Fast).await)
 }
 
 #[tauri::command]

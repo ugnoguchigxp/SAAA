@@ -64,6 +64,7 @@ pub(crate) struct VoiceAsrAuditChannel {
 pub(super) struct VoiceAsrAuditContext {
     pub(super) connection: Arc<super::SqliteWriter>,
     pub(super) conversation_id: String,
+    observer: super::voice_frontend_observer::ObservationHandle,
 }
 impl VoiceAsrAuditChannel {
     pub(crate) fn new(
@@ -74,6 +75,10 @@ impl VoiceAsrAuditChannel {
         Self {
             channel,
             audit: Some(VoiceAsrAuditContext {
+                observer: super::voice_frontend_observer::ObservationHandle::new(
+                    connection.clone(),
+                    conversation_id.clone(),
+                ),
                 connection,
                 conversation_id,
             }),
@@ -91,6 +96,7 @@ impl VoiceAsrAuditChannel {
     pub(crate) fn send(&self, event: VoiceAsrStreamEvent) -> tauri::Result<()> {
         if let Some(context) = &self.audit {
             context.record(&event);
+            context.observer.observe(&event);
         }
         self.channel.send(event)
     }
@@ -440,6 +446,9 @@ pub(crate) fn record_voice_asr_command(
     failure: Option<&str>,
     attributes: BTreeMap<String, AuditAttributeValue>,
 ) {
+    if event_name == "asr-commit-requested" {
+        super::voice_frontend_observer::observe_boundary(session_id);
+    }
     let event = FrontendAuditEventInput {
         component: "voice-asr".to_string(),
         event_name: event_name.to_string(),

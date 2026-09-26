@@ -83,9 +83,21 @@ pub(crate) async fn begin_larm_voice_session(
     owner_id: String,
     conversation_id: String,
 ) -> Result<(), String> {
+    begin_larm_voice_session_inner(&state, owner_id, conversation_id).await
+}
+
+async fn begin_larm_voice_session_inner(
+    state: &crate::AppState,
+    owner_id: String,
+    conversation_id: String,
+) -> Result<(), String> {
     let harness = state
         .sqlite_readers
         .read(|c| Ok(crate::persistence::load_model_providers(c)?.harness))?;
+    let defer_claim = state.sqlite_readers.read(|connection| {
+        let routing = crate::persistence::load_routing_settings(connection)?;
+        Ok(should_defer_claim(&routing))
+    })?;
     let base = harness.address;
     let preference = profile::preference(harness.larm_profile.as_deref());
     let profile = profile::label(&preference);
@@ -123,11 +135,23 @@ pub(crate) async fn begin_larm_voice_session(
         })
     });
     drop(current);
+    // The configured ASR and TTS paths do not use this Agent Connection. Claiming the entire
+    // profile now would reserve Qwen before its independent first-response request can run.
+    // A handoff to Ornith (or any later shared resource use) initializes the owner on demand.
+    if defer_claim {
+        return Ok(());
+    }
     // The conversation lease claims the complete provider set; ASR starts independently.
     self::current(&conversation_id)
         .await
         .map(|_| ())
         .map_err(|error| format!("larm-session-prepare-failed: {error}"))
+}
+
+fn should_defer_claim(routing: &crate::RoutingSettings) -> bool {
+    routing.voice_transcribe.source == "harness"
+        && routing.voice_speak.source == "provider"
+        && routing.voice_speak.provider_id.as_deref() == Some("system-tts")
 }
 async fn close_owner(owner: &Owner) -> Result<(), String> {
     if owner.started.load(Ordering::Acquire) {

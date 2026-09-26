@@ -18,6 +18,7 @@ pub(crate) enum ProviderFailureKind {
     ResponseInterrupted,
     Network,
     Timeout,
+    PreparationDeferred,
     AllocationLost,
     PartialOutput,
     ClientDisconnected,
@@ -43,6 +44,7 @@ impl ProviderFailureKind {
             Self::ResponseInterrupted => "response-interrupted",
             Self::Network => "network",
             Self::Timeout => "timeout",
+            Self::PreparationDeferred => "preparation-deferred",
             Self::AllocationLost => "allocation-lost",
             Self::PartialOutput => "partial-output",
             Self::ClientDisconnected => "client-disconnected",
@@ -78,6 +80,7 @@ impl ProviderFailureKind {
             }
             Self::Network => "Provider connection ended before the response completed.",
             Self::Timeout => "Provider request reached its timeout.",
+            Self::PreparationDeferred => "The answer connection is still preparing. Try again shortly.",
             Self::AllocationLost => "The selected local runtime allocation is no longer available.",
             Self::PartialOutput => {
                 "Provider reached the output token limit; the response is incomplete."
@@ -92,6 +95,7 @@ impl ProviderFailureKind {
     pub(crate) fn persistence_str(self) -> &'static str {
         match self {
             Self::Connect | Self::ResponseInterrupted => "network",
+            Self::PreparationDeferred => "timeout",
             _ => self.as_str(),
         }
     }

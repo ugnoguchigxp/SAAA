@@ -1,0 +1,90 @@
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{atomic::AtomicBool, Arc, Mutex},
+    time::Instant,
+};
+
+use crate::{
+    memory, persistence, providers, runtime, situation, voice, AppState, RunCancellation,
+    StartTurnInput, PRIMARY_CONVERSATION_ID,
+};
+
+
+pub async fn run() -> Result<(), String> {
+    let path = std::env::var("SAAA_INVESTIGATION_DB").map_err(|e|e.to_string())?;
+    let state = diagnostic_state(&path)?;
+    let providers=state.sqlite_readers.read(crate::persistence::load_model_providers)?;
+    crate::larm_voice::ensure_conversation_owner(PRIMARY_CONVERSATION_ID,&providers.harness,state.sqlite_writer.clone()).await?;
+    let run_id = format!("investigation_{}",uuid::Uuid::new_v4().simple());
+    println!("run_id={run_id}");
+    let turn=StartTurnInput {run_id, conversation_id:PRIMARY_CONVERSATION_ID.into(),content:"寿限無の名前を最初から最後まで教えてください。".into(),workspace_path:None,retry_input_message_id:None,source_id:None,scope_refs:vec![],input_origin:"voice".into(),presentation_mode:"visual".into()};
+    let sink=Sink;
+    let result=runtime::turns::execute_turn(&state,&turn,&sink,Arc::new(RunCancellation::default()),None).await;
+    crate::larm_voice::shutdown().await;
+    result.map_err(|e|e.message)
+}
+#[derive(Clone)]
+struct Sink;
+impl runtime::event_hub::RuntimeEventSender for Sink {
+ fn send(&self,event:crate::ipc_contract::RuntimeEvent)->tauri::Result<()> {println!("event={}",serde_json::to_string(&event).unwrap_or_default());Ok(())}
+ fn clone_box(&self)->Box<dyn runtime::event_hub::RuntimeEventSender>{Box::new(self.clone())}
+}
+fn diagnostic_state(path:&str)->Result<AppState,String>{
+    let connection=Connection::open(path).map_err(crate::database_error)?;
+    let situation_settings = situation::repository::load_settings(&connection)?;
+    let sqlite_writer = Arc::new(persistence::SqliteWriter::from_connection(connection));
+    let sqlite_readers = persistence::SqliteReaders::serialized(sqlite_writer.clone());
+    let generated_capabilities = Arc::new(
+        crate::generated_capabilities::service::CapabilityService::build(
+            sqlite_writer.clone(),
+            &PathBuf::new(),
+            PathBuf::new(),
+            None,
+        ),
+    );
+    let tool_selection = Arc::new(crate::tool_selection::build_service(
+        sqlite_writer.clone(),
+        &crate::tool_selection::ToolSelectionConfig::direct(),
+        Some(generated_capabilities.clone()),
+    ));
+    Ok(AppState {
+        sqlite_writer,
+        sqlite_readers,
+        data_directory: PathBuf::new(),
+        context_still_recall: memory::context_still_recall::ContextStillRecallClient::disabled(),
+        context_still_search: memory::context_still_search::ContextStillSearchClient::disabled(),
+        active_runs: Mutex::new(HashMap::new()),
+        provider_probes: Mutex::new(HashMap::new()),
+        interaction_policy: Mutex::new(()),
+        shutdown_started: AtomicBool::new(false),
+        audio_uploads: voice::audio_upload::AudioUploadStore::default(),
+        streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
+        voice_behavior: crate::voice_behavior::VoiceBehaviorRuntime::default(),
+        situation: Arc::new(situation::SituationRuntime::new(situation_settings, None)?),
+        voice_profile: Arc::new(voice::profile::VoiceProfileRuntime::unavailable_for_tests(
+            PathBuf::new(),
+        )),
+        voice_asr: voice::streaming_asr::AsrSessionManager::default(),
+        generated_capabilities,
+        generation: None,
+        generated_tools: crate::generated_capabilities::publication::GeneratedToolsConfig::disabled(
+        ),
+        tool_selection,
+        mcp_server: std::sync::Mutex::new(None),
+        schedule: Arc::new(crate::schedule::Handle::default()),
+        steward_wake: crate::steward::pump::Wake::default(),
+        artifact_preview: crate::artifact_preview::PreviewRuntime::default(),
+        reachability: std::sync::Arc::new(
+            crate::providers::reachability::ReachabilityState::default(),
+        ),
+        reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
+        diagnosis: std::sync::Arc::new(crate::diagnosis::store::DiagnosisStore::new()),
+        context_segments_enabled: std::env::var("SAAA_CONTEXT_SEGMENTS").ok().as_deref()
+            == Some("1"),
+        wire_prefixes: std::sync::Mutex::new(std::collections::VecDeque::new()),
+    })
+}

@@ -23,7 +23,6 @@ import {
   auditCaptureCancelled,
   auditCaptureFailed,
   auditCaptureStarted,
-  auditCaptureSuspended,
   auditVoiceDeliveryBlocked,
   auditVoiceDeliveryDecision,
   auditVoiceDeliverySettlement,
@@ -31,7 +30,16 @@ import {
 import type { VoiceCaptureResources } from "./VoiceCaptureResources";
 
 const ASR_SAMPLE_RATE = 16_000;
-export type SuspensionReason = "speech";
+// Enable only after live playback-only and overlapped-speech acceptance succeeds.
+const SELF_VOICE_EXCLUSION_VERIFIED = false;
+
+export function canAcceptSpeechDuringPlayback(
+  nativeCapture: boolean,
+  bargeInEnabled: boolean | undefined,
+  scope: "all-speakers" | "target-speaker" | null,
+): boolean {
+  return SELF_VOICE_EXCLUSION_VERIFIED && nativeCapture && bargeInEnabled !== false && scope === "target-speaker";
+}
 
 export function createAmbientVoiceCaptureActions(input: {
   resources: VoiceCaptureResources;
@@ -48,7 +56,6 @@ export function createAmbientVoiceCaptureActions(input: {
   voiceSettingsRef: MutableRefObject<VoiceSettings | null>;
   voicePolicyRef: MutableRefObject<ConversationVoicePolicySnapshot | null>;
   voiceSessionRef: MutableRefObject<VoiceSession>;
-  suspensionReasonRef: MutableRefObject<SuspensionReason | null>;
   speechResumeTokenRef: MutableRefObject<string | null>;
   voiceActivityLevelRef: MutableRefObject<number>;
   voiceActivityDetectedRef: MutableRefObject<boolean>;
@@ -75,6 +82,9 @@ export function createAmbientVoiceCaptureActions(input: {
     voiceAsrStopWaitersRef,
     voiceAsrPacketCountRef,
     voiceAsrProjectionRef,
+    speechSuppressedUtteranceIdsRef,
+    bargeInSpeechSinceRef,
+    bargeInFiredForRef,
     voiceFinalDeliveryRef,
     nativeCaptureRef,
     nativeStopRef,
@@ -98,7 +108,6 @@ export function createAmbientVoiceCaptureActions(input: {
     voiceSettingsRef,
     voicePolicyRef,
     voiceSessionRef,
-    suspensionReasonRef,
     speechResumeTokenRef,
     voiceActivityLevelRef,
     voiceActivityDetectedRef,
@@ -108,8 +117,8 @@ export function createAmbientVoiceCaptureActions(input: {
     ttsStartedAtRef,
     stopSpeech,
   } = input;
-  const bargeInSpeechSince = { current: 0 };
-  const bargeInFiredFor = { current: null as string | null };
+  const bargeInSpeechSince = bargeInSpeechSinceRef;
+  const bargeInFiredFor = bargeInFiredForRef;
 
   async function attachVoiceCapture() {
     const settings = effectiveCaptureSettings(voiceSettingsRef.current, voicePolicyRef.current);
@@ -118,8 +127,7 @@ export function createAmbientVoiceCaptureActions(input: {
       !settings ||
       !selectedConversationIdRef.current ||
       voiceStreamRef.current ||
-      nativeCaptureRef.current ||
-      suspensionReasonRef.current
+      nativeCaptureRef.current
     )
       return;
     if (
@@ -211,7 +219,7 @@ export function createAmbientVoiceCaptureActions(input: {
         },
         nativeCapture: nativeCaptureRef,
         nativeStop: nativeStopRef,
-        bargeInEnabled: settings.bargeInEnabled,
+        bargeInEnabled: SELF_VOICE_EXCLUSION_VERIFIED && settings.bargeInEnabled,
         speechIsPlaying: () => Boolean(conversationSessionRef.current.speechRunId),
         speechRunId: () => conversationSessionRef.current.speechRunId,
         bargeInSpeechSince,
@@ -231,12 +239,6 @@ export function createAmbientVoiceCaptureActions(input: {
         selectedConversationIdRef.current,
         voiceSessionRef.current.capture,
       );
-      // applyEvent inside the capture attach moves the ref to "recording". The early
-      // return above narrowed the type before that write, so read it again.
-      const capture = voiceSessionRef.current.capture as VoiceSession["capture"];
-      if (suspensionReasonRef.current && capture === "recording") {
-        await suspendVoice(suspensionReasonRef.current);
-      }
     } catch (cause) {
       auditCaptureFailed(sessionId, voiceAsrConversationsRef.current.get(sessionId) ?? null, cause);
       acceptedVoiceAsrSessionsRef.current.delete(sessionId);
@@ -251,52 +253,20 @@ export function createAmbientVoiceCaptureActions(input: {
     }
   }
 
-  async function suspendVoice(reason: SuspensionReason): Promise<boolean> {
-    if (voiceSessionRef.current.capture === "suspended") {
-      suspensionReasonRef.current = reason;
-      return true;
-    }
-    // Speech can arrive while the utterance commit or the ASR session start is still
-    // in flight. Detaching there cancels the start. Hold the pause until that work finishes.
-    if (voiceSessionRef.current.finalizing || voiceSessionRef.current.capture === "starting") {
-      suspensionReasonRef.current = reason;
-      return true;
-    }
-    if (!voiceStreamRef.current && !nativeCaptureRef.current) return false;
-    suspensionReasonRef.current = reason;
-    auditCaptureSuspended(voiceAsrSessionIdRef.current, selectedConversationIdRef.current, reason);
-    applyVoiceEvent({ type: "captureSuspended" });
-    await detachVoiceCapture(false);
-    return true;
-  }
-
   async function suspendVoiceForSpeech(speechRunId: string): Promise<boolean> {
     speechResumeTokenRef.current = speechRunId;
     ttsStartedAtRef.current = performance.now();
-    if (nativeCaptureRef.current && voiceSettingsRef.current?.bargeInEnabled !== false) {
-      return true;
+    const projection = voiceAsrProjectionRef.current;
+    if (!canAcceptSpeechDuringPlayback(nativeCaptureRef.current, voiceSettingsRef.current?.bargeInEnabled, projection.scope)) {
+      if (projection.utteranceId) speechSuppressedUtteranceIdsRef.current.add(projection.utteranceId);
     }
-    return suspendVoice("speech");
-  }
-
-  async function resumeVoice(reason: SuspensionReason): Promise<void> {
-    if (disposedRef.current || suspensionReasonRef.current !== reason) return;
-    if (!listeningEnabledRef.current) {
-      suspensionReasonRef.current = null;
-      applyVoiceEvent({ type: "captureDetached" });
-      return;
-    }
-    suspensionReasonRef.current = null;
-    await attachVoiceCapture();
+    // Listening stays active during TTS. Unverified playback transcripts are filtered below.
+    return Boolean(voiceStreamRef.current || nativeCaptureRef.current);
   }
 
   async function resumeVoiceAfterSpeech(speechRunId: string): Promise<void> {
     if (speechResumeTokenRef.current !== speechRunId) return;
     speechResumeTokenRef.current = null;
-    if (suspensionReasonRef.current === "speech") {
-      await resumeVoice("speech");
-      return;
-    }
     if (listeningEnabledRef.current && voiceSessionRef.current.capture === "idle")
       await attachVoiceCapture();
   }
@@ -364,24 +334,18 @@ export function createAmbientVoiceCaptureActions(input: {
     } finally {
       const pending = voiceSessionRef.current.pendingFinalize;
       applyVoiceEvent({ type: "finalizeCompleted" });
-      if (
-        suspensionReasonRef.current &&
-        voiceSessionRef.current.capture === "recording"
-      ) {
-        await suspendVoice(suspensionReasonRef.current);
-      }
       if (pending) {
         void finishVoiceCapture(pending === "continue");
       } else if (
         !keepListening &&
         listeningEnabledRef.current &&
-        !conversationSessionRef.current.speechRunId
+        selectedConversationIdRef.current === conversationId
       ) {
         if (stoppedBeforeRestart) await stoppedBeforeRestart;
         if (
           disposedRef.current ||
           !listeningEnabledRef.current ||
-          conversationSessionRef.current.speechRunId
+          selectedConversationIdRef.current !== conversationId
         )
           return;
         void attachVoiceCapture();
@@ -394,6 +358,17 @@ export function createAmbientVoiceCaptureActions(input: {
       voiceAsrStopWaitersRef.current.get(event.sessionId)?.resolve();
     }
     if (!acceptedVoiceAsrSessionsRef.current.has(event.sessionId)) return;
+    if (event.type === "ready" || event.type === "stopped") {
+      speechSuppressedUtteranceIdsRef.current.clear();
+    }
+    if (event.type === "ready" && conversationSessionRef.current.speechRunId &&
+      !canAcceptSpeechDuringPlayback(nativeCaptureRef.current, voiceSettingsRef.current?.bargeInEnabled, event.scope)) {
+      speechSuppressedUtteranceIdsRef.current.add(event.currentUtteranceId);
+    }
+    if ("utteranceId" in event && event.utteranceId && conversationSessionRef.current.speechRunId &&
+      !canAcceptSpeechDuringPlayback(nativeCaptureRef.current, voiceSettingsRef.current?.bargeInEnabled, voiceAsrProjectionRef.current.scope)) {
+      speechSuppressedUtteranceIdsRef.current.add(event.utteranceId);
+    }
     const ownsProjection =
       "utteranceId" in event && voiceAsrProjectionRef.current.utteranceId === event.utteranceId;
     const next = projectVoiceAsrEvent(voiceAsrProjectionRef.current, event);
@@ -417,6 +392,7 @@ export function createAmbientVoiceCaptureActions(input: {
     }
     if (event.type === "partial") setInterimTranscript(`${next.stableText}${next.unstableText}`);
     if (event.type === "utteranceDiscarded") {
+      speechSuppressedUtteranceIdsRef.current.delete(event.utteranceId);
       setInterimTranscript("");
       if (event.reason === "target-speaker-empty")
         setError((current) => current ?? uiMessage("voiceTargetSpeakerRejected"));
@@ -430,6 +406,7 @@ export function createAmbientVoiceCaptureActions(input: {
       void terminateFailedVoiceCapture();
     }
     if (event.type !== "final" || disposedRef.current) return;
+    if (speechSuppressedUtteranceIdsRef.current.delete(event.utteranceId)) return;
     if (ownsProjection) setInterimTranscript(event.text);
     const conversationId = voiceAsrConversationsRef.current.get(event.sessionId) ?? null;
     if (!conversationId) return;
@@ -476,9 +453,7 @@ export function createAmbientVoiceCaptureActions(input: {
 
   return {
     attachVoiceCapture,
-    suspendVoice,
     suspendVoiceForSpeech,
-    resumeVoice,
     resumeVoiceAfterSpeech,
     finishVoiceCapture,
     handleVoiceAsrEvent,

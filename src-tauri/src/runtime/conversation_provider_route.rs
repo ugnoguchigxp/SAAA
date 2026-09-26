@@ -20,6 +20,7 @@ use crate::{
     ModelProviderSettings, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
     ProviderOutputPersistence, RunCancellation, StartTurnInput, TurnExecutionFailure,
 };
+use rusqlite::OptionalExtension;
 use std::sync::Arc;
 include!("conversation_provider_route.d/01.rs");
 include!("conversation_provider_route.d/02.rs");

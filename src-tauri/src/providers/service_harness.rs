@@ -37,6 +37,16 @@ pub(crate) struct HarnessResolution {
     pub(crate) state: &'static str,
     pub(crate) revision: String,
     pub(crate) services: Vec<HarnessServiceStatus>,
+    #[serde(skip)]
+    pub(crate) diagnosis_timings: Option<DiagnosisTimings>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DiagnosisTimings {
+    pub(crate) connect_ms: u64,
+    pub(crate) embedding_ms: u64,
+    pub(crate) release_ms: u64,
+    pub(crate) provider_ms: Vec<(&'static str, u64)>,
 }
 
 #[derive(Debug, Serialize)]
@@ -141,6 +151,34 @@ pub(crate) async fn resolve_with_legacy_llm(
     address: &str,
     stored_profile: Option<&str>,
 ) -> Result<HarnessResolution, String> {
+    resolve_with_legacy_llm_limit(
+        address,
+        stored_profile,
+        std::time::Duration::from_secs(300),
+        false,
+    )
+    .await
+}
+
+pub(crate) async fn resolve_for_diagnosis(
+    address: &str,
+    stored_profile: Option<&str>,
+) -> Result<HarnessResolution, String> {
+    resolve_with_legacy_llm_limit(
+        address,
+        stored_profile,
+        std::time::Duration::from_secs(45),
+        true,
+    )
+    .await
+}
+
+async fn resolve_with_legacy_llm_limit(
+    address: &str,
+    stored_profile: Option<&str>,
+    connect_limit: std::time::Duration,
+    probe_all: bool,
+) -> Result<HarnessResolution, String> {
     let Some(_) = legacy_dynamic_lan_host(address)? else {
         return resolve(address).await;
     };
@@ -148,23 +186,29 @@ pub(crate) async fn resolve_with_legacy_llm(
         .map_err(|error| error.code().to_string())?;
     let preference = crate::larm_voice::profile::preference(stored_profile);
     let (_cancel, receiver) = tokio::sync::watch::channel(false);
-    let session = match saaa_larm_session::Session::connect_with_profile_credential_and_key(
-        address,
-        preference,
-        credential.token().to_string(),
-        format!("saaa-diagnosis-{}", uuid::Uuid::new_v4().simple()),
-        receiver,
+    let connect_started = std::time::Instant::now();
+    let session = match tokio::time::timeout(
+        connect_limit,
+        saaa_larm_session::Session::connect_with_profile_credential_and_key(
+            address,
+            preference,
+            credential.token().to_string(),
+            format!("saaa-diagnosis-{}", uuid::Uuid::new_v4().simple()),
+            receiver,
+        ),
     )
     .await
     {
-        Ok(session) => session,
-        Err(error) => {
+        Ok(Ok(session)) => session,
+        Ok(Err(error)) => {
             if let Some(cleanup) = &error.cleanup {
                 let _ = cleanup.close().await;
             }
             return Err(error.to_string());
         }
+        Err(_) => return Err("larm_diagnosis_connection_timeout".into()),
     };
+    let connect_ms = connect_started.elapsed().as_millis() as u64;
     let summary = session.provider_summary().await;
     let mut services = ["llm", "backchannel", "asr", "tts", "embedding"]
         .into_iter()
@@ -183,29 +227,186 @@ pub(crate) async fn resolve_with_legacy_llm(
             },
         )
         .collect::<Vec<_>>();
-    let embedding = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        session.embed_query(&["診断".to_string()]),
-    )
-    .await;
-    if let Some(item) = services
-        .iter_mut()
-        .find(|item| item.capability == "embedding")
-    {
-        if !matches!(embedding, Ok(Ok(ref vectors)) if vectors.first().is_some_and(|vector| !vector.is_empty()))
+    let capabilities: &[&str] = if probe_all {
+        &["llm", "backchannel", "asr", "tts", "embedding"]
+    } else {
+        &["embedding"]
+    };
+    let probes = capabilities
+        .iter()
+        .copied()
+        .map(|name| probe_claimed_provider(std::sync::Arc::clone(&session), name));
+    let results = futures_util::future::join_all(probes).await;
+    let mut embedding_ms = 0;
+    let mut provider_ms = Vec::new();
+    for (capability, result, elapsed) in results {
+        provider_ms.push((capability, elapsed));
+        if capability == "embedding" {
+            embedding_ms = elapsed;
+        }
+        if let Some(service) = services
+            .iter_mut()
+            .find(|item| item.capability == capability)
         {
-            item.state = "degraded";
-            item.message = "Embedding request did not return a vector".into();
+            service.state = if result.is_ok() {
+                "ready"
+            } else if probe_all {
+                "unavailable"
+            } else {
+                "degraded"
+            };
+            service.message = match result {
+                Ok(message) => message,
+                Err(error) => error,
+            };
         }
     }
+    let release_started = std::time::Instant::now();
     if session.close().await.is_err() {
         return Err("larm_diagnosis_release_failed".into());
     }
+    let release_ms = release_started.elapsed().as_millis() as u64;
     Ok(HarnessResolution {
         state: "ready",
         revision: "agent-connection.v1".to_string(),
         services,
+        diagnosis_timings: Some(DiagnosisTimings {
+            connect_ms,
+            embedding_ms,
+            release_ms,
+            provider_ms,
+        }),
     })
+}
+
+async fn probe_claimed_provider(
+    session: std::sync::Arc<saaa_larm_session::Session>,
+    capability: &'static str,
+) -> (&'static str, Result<String, String>, u64) {
+    let started = std::time::Instant::now();
+    let timeout = if capability == "embedding" { 5 } else { 10 };
+    let result = tokio::time::timeout(std::time::Duration::from_secs(timeout), async {
+        if capability == "embedding" {
+            return session
+                .embed_query(&["診断".to_string()])
+                .await
+                .map_err(str::to_string)
+                .and_then(|vectors| {
+                    vectors
+                        .first()
+                        .filter(|vector| !vector.is_empty())
+                        .map(|_| "Embedding returned a vector".to_string())
+                        .ok_or_else(|| "Embedding returned no vector".to_string())
+                });
+        }
+        let lease = session.acquire(capability).await.map_err(str::to_string)?;
+        let provider = lease.provider();
+        let endpoint = provider.base_url.to_string();
+        let model = provider.model.clone();
+        let token = provider.token();
+        match capability {
+            "llm" | "backchannel" => {
+                let settings = crate::OpenAiCompatibleProviderSettings {
+                    request_options: None,
+                    id: format!("diagnosis-{capability}"),
+                    enabled: true,
+                    label: capability.into(),
+                    location: "local".into(),
+                    endpoint,
+                    model,
+                    authentication: "api-key".into(),
+                };
+                crate::providers::openai_compatible::probe_model_provider_with_api_key(
+                    &settings,
+                    Some(token),
+                )
+                .await
+            }
+            "asr" => {
+                let settings = crate::CloudAsrProviderSettings {
+                    id: "diagnosis-asr".into(),
+                    enabled: true,
+                    label: "ASR".into(),
+                    location: "local".into(),
+                    endpoint,
+                    model,
+                    language: "auto".into(),
+                    authentication: "api-key".into(),
+                };
+                let samples: Vec<f32> = (0..1600)
+                    .map(|index| {
+                        ((index as f32 * 440.0 * std::f32::consts::TAU / 16000.0).sin()) * 0.1
+                    })
+                    .collect();
+                match crate::voice::cloud_asr::transcribe_with_api_key(
+                    &settings,
+                    &samples,
+                    16_000,
+                    10_000,
+                    std::sync::Arc::default(),
+                    Some(token),
+                )
+                .await
+                {
+                    Ok(_) => Ok("ASR accepted a fixed WAV upload".into()),
+                    Err(error) if error.starts_with("ASR_NO_SPEECH:") => {
+                        Ok("ASR accepted a fixed WAV upload (no speech)".into())
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            "tts" => {
+                let settings = crate::CloudTtsProviderSettings {
+                    id: "diagnosis-tts".into(),
+                    enabled: true,
+                    label: "TTS".into(),
+                    location: "local".into(),
+                    endpoint,
+                    model,
+                    voice: provider.voice.clone().unwrap_or_default(),
+                    response_format: "wav".into(),
+                    authentication: "api-key".into(),
+                    style: None,
+                    speed: None,
+                    pitch_scale: None,
+                    intonation_scale: None,
+                };
+                let response = crate::voice::cloud_tts::request_audio_with_api_key(
+                    &settings,
+                    "Connectivity check",
+                    10_000,
+                    std::sync::Arc::default(),
+                    Some(token),
+                )
+                .await?;
+                crate::voice::cloud_tts::validate_audio_headers(
+                    &response,
+                    &settings.response_format,
+                )?;
+                let mut audio = response.bytes_stream();
+                let mut bytes = 0_usize;
+                while let Some(chunk) = audio.next().await {
+                    bytes = bytes.saturating_add(
+                        chunk
+                            .map_err(|_| "TTS audio response was interrupted".to_string())?
+                            .len(),
+                    );
+                    if bytes > 2_000_000 {
+                        return Err("TTS audio exceeded the diagnosis size limit".into());
+                    }
+                }
+                if bytes == 0 {
+                    Err("TTS returned empty audio".into())
+                } else {
+                    Ok("TTS generated audio".into())
+                }
+            }
+            _ => Err("Unsupported diagnosis capability".into()),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| Err(format!("Provider probe timed out after {timeout}s")));
+    (capability, result, started.elapsed().as_millis() as u64)
 }
 
 pub(crate) fn legacy_dynamic_lan_host(address: &str) -> Result<Option<String>, String> {
@@ -335,6 +536,7 @@ async fn resolution_from_descriptor(descriptor: HarnessDescriptor) -> HarnessRes
         state,
         revision: descriptor.revision,
         services,
+        diagnosis_timings: None,
     }
 }
 

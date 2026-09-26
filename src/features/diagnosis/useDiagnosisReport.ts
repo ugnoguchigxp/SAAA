@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import type { DiagnosisReport } from "../../lib/generated/diagnosis";
-import { parseDiagnosisReport, runDiagnosis } from "./api";
+import { getDiagnosisReport, parseDiagnosisReport, runDiagnosis, runFastDiagnosis } from "./api";
 
 export function useDiagnosisReport() {
   const [report, setReport] = useState<DiagnosisReport | null>(null);
@@ -25,13 +25,21 @@ export function useDiagnosisReport() {
     mounted.current = true;
     let stop = false;
     const unlisten = listen<unknown>("diagnosis-updated", (event) => {
-      if (stop || !rerunning.current) return;
+      if (stop) return;
       try {
         if (accept.current(parseDiagnosisReport(event.payload)) && mounted.current) setError(null);
       } catch (cause) {
         if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause));
       }
     });
+    void unlisten
+      .then(() => getDiagnosisReport())
+      .then((latest) => {
+        if (!stop && latest.revision > seen.current && latest.revision > 0) accept.current(latest);
+      })
+      .catch((cause) => {
+        if (!stop) setError(cause instanceof Error ? cause.message : String(cause));
+      });
     return () => {
       stop = true;
       mounted.current = false;
@@ -39,13 +47,13 @@ export function useDiagnosisReport() {
     };
   }, []);
 
-  async function rerun() {
+  async function rerun(mode: "fast" | "operational" = "operational") {
     if (rerunning.current) return;
     rerunning.current = true;
     setRunning(true);
     setError(null);
     try {
-      const next = await runDiagnosis();
+      const next = await (mode === "fast" ? runFastDiagnosis() : runDiagnosis());
       if (!mounted.current) return;
       if (next.revision < seen.current) {
         setRunning(runningFromReport.current);

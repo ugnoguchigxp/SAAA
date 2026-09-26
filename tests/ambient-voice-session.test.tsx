@@ -13,6 +13,7 @@ import { installJsdom } from "./jsdomGlobals";
 await import("../src/i18n");
 const { effectiveCaptureSettings, useAmbientVoiceSession } =
   await import("../src/features/voice/useAmbientVoiceSession");
+const { canAcceptSpeechDuringPlayback } = await import("../src/features/voice/ambientVoiceCaptureActions");
 
 class FakeAudioWorkletNode {
   port = {
@@ -153,6 +154,46 @@ describe("ambient voice session", () => {
     expect(effectiveCaptureSettings(voiceSettings, voicePolicy)?.silenceTimeoutMs).toBe(1_500);
   });
 
+  test("target-speaker alone does not prove playback echo rejection", () => {
+    expect(canAcceptSpeechDuringPlayback(true, true, "target-speaker")).toBe(false);
+  });
+
+  test("marks the microphone ready only after the current ASR session reports ready", async () => {
+    restoreDom = installJsdom().restore;
+    restoreAudio = installAudioGlobals();
+    const { createRoot } = await import("react-dom/client");
+    const { createElement } = await import("react");
+    const apiRef: MutableRefObject<SessionApi | null> = { current: null };
+    const sessionRef: MutableRefObject<ConversationSession> = {
+      current: { ...initialConversationSession },
+    };
+    const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
+    root = createRoot(document.getElementById("root")!);
+    await act(async () => root!.render(createElement(Harness, { apiRef, sessionRef, pendingRef })));
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening(true);
+    });
+    expect(apiRef.current!.voiceState).toBe("listening");
+    expect(apiRef.current!.voiceReady).toBe(false);
+
+    const start = invokeCalls.find((call) => call.command === "start_voice_asr_session");
+    const sessionId = (start?.args as { input?: { sessionId?: string } }).input!.sessionId!;
+    await act(async () => {
+      channels.at(-1)?.onmessage?.({
+        type: "ready",
+        sessionId,
+        currentUtteranceId: "u-ready",
+        protocol: "batch-agreement",
+        scope: "target-speaker",
+      });
+    });
+    expect(apiRef.current!.voiceReady).toBe(true);
+    await act(async () => {
+      await apiRef.current!.toggleAmbientListening(false);
+    });
+    expect(apiRef.current!.voiceReady).toBe(false);
+  });
+
   test("each finalized ASR utterance goes directly to the Qwen turn path", async () => {
     restoreDom = installJsdom().restore;
     restoreAudio = installAudioGlobals();
@@ -231,6 +272,69 @@ describe("ambient voice session", () => {
       await apiRef.current!.toggleAmbientListening(false);
     });
     expect(apiRef.current!.listeningEnabled).toBe(false);
+  });
+
+  test("TTS keeps ASR running and suppresses unverified playback transcripts", async () => {
+    restoreDom = installJsdom().restore;
+    restoreAudio = installAudioGlobals();
+    const { createRoot } = await import("react-dom/client");
+    const { createElement } = await import("react");
+    const apiRef: MutableRefObject<SessionApi | null> = { current: null };
+    const sessionRef: MutableRefObject<ConversationSession> = { current: { ...initialConversationSession } };
+    const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
+    root = createRoot(document.getElementById("root")!);
+    await act(async () => root!.render(createElement(Harness, { apiRef, sessionRef, pendingRef })));
+    await act(async () => { await apiRef.current!.toggleAmbientListening(true); });
+    const start = invokeCalls.find((call) => call.command === "start_voice_asr_session");
+    const sessionId = (start?.args as { input?: { sessionId?: string } }).input!.sessionId!;
+    const channel = channels.at(-1);
+    await act(async () => {
+      channel?.onmessage?.({ type: "ready", sessionId, currentUtteranceId: "playback", protocol: "batch-agreement", scope: "all-speakers" });
+    });
+    sessionRef.current.speechRunId = "tts-run";
+    await act(async () => { await apiRef.current!.suspendVoiceForSpeech("tts-run"); });
+    expect(apiRef.current!.voiceReady).toBe(true);
+    expect(invokeCalls.some((call) => call.command === "stop_voice_asr_session")).toBe(false);
+    await act(async () => {
+      channel?.onmessage?.({ type: "partial", sessionId, utteranceId: "playback", revision: 1, startMs: 0, endMs: 10, stableText: "再生音", unstableText: "", language: "ja" });
+      channel?.onmessage?.({ type: "final", sessionId, utteranceId: "playback", revision: 2, startMs: 0, endMs: 20, text: "再生音", language: "ja" });
+    });
+    expect(submitted).toEqual([]);
+    sessionRef.current.speechRunId = null;
+    await act(async () => { await apiRef.current!.resumeVoiceAfterSpeech("tts-run"); });
+    await act(async () => {
+      channel?.onmessage?.({ type: "partial", sessionId, utteranceId: "next", revision: 1, startMs: 30, endMs: 40, stableText: "本人", unstableText: "", language: "ja" });
+      channel?.onmessage?.({ type: "final", sessionId, utteranceId: "next", revision: 2, startMs: 30, endMs: 50, text: "本人の発話", language: "ja" });
+    });
+    expect(submitted).toEqual(["本人の発話"]);
+  });
+
+  test("ASR can start while speech playback is already running", async () => {
+    restoreDom = installJsdom().restore;
+    restoreAudio = installAudioGlobals();
+    const { createRoot } = await import("react-dom/client");
+    const { createElement } = await import("react");
+    const apiRef: MutableRefObject<SessionApi | null> = { current: null };
+    const sessionRef: MutableRefObject<ConversationSession> = {
+      current: { ...initialConversationSession, speechRunId: "tts-already-running" },
+    };
+    const pendingRef: MutableRefObject<PendingConversationPrompt[]> = { current: [] };
+    root = createRoot(document.getElementById("root")!);
+    await act(async () => root!.render(createElement(Harness, { apiRef, sessionRef, pendingRef })));
+    await act(async () => { await apiRef.current!.toggleAmbientListening(true); });
+    const start = invokeCalls.find((call) => call.command === "start_voice_asr_session");
+    expect(start).toBeDefined();
+    const sessionId = (start?.args as { input?: { sessionId?: string } }).input!.sessionId!;
+    await act(async () => {
+      channels.at(-1)?.onmessage?.({ type: "ready", sessionId, currentUtteranceId: "playback-at-start", protocol: "batch-agreement", scope: "target-speaker" });
+    });
+    expect(sessionRef.current.speechRunId).toBe("tts-already-running");
+    sessionRef.current.speechRunId = null;
+    await act(async () => {
+      channels.at(-1)?.onmessage?.({ type: "final", sessionId, utteranceId: "playback-at-start", revision: 1, startMs: 0, endMs: 20, text: "再生音", language: "ja" });
+    });
+    expect(submitted).toEqual([]);
+    expect(apiRef.current!.voiceState).toBe("listening");
   });
 
   test("keeps preparing until a pending microphone start is released", async () => {

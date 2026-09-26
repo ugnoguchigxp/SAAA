@@ -31,6 +31,12 @@ pub(crate) enum DiagnosisSeverity {
     Info,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiagnosisMode {
+    Fast,
+    Operational,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosisItem {

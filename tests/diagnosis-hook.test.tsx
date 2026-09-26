@@ -59,7 +59,7 @@ test("diagnosis hook stays empty until start, then applies each progress event",
         finish = resolve;
       });
     }
-    return null;
+    return report(0);
   };
   restore = installJsdom().restore;
   const { createRoot } = await import("react-dom/client");
@@ -70,12 +70,12 @@ test("diagnosis hook stays empty until start, then applies each progress event",
   await act(async () => {
     await Promise.resolve();
   });
-  expect(invokeCalls.filter((call) => call.command === "get_diagnosis_report")).toHaveLength(0);
+  expect(invokeCalls.filter((call) => call.command === "get_diagnosis_report")).toHaveLength(1);
   expect(apiRef.current?.report).toBeNull();
   await act(async () => {
     listeners[0]?.({ payload: report(1) });
   });
-  expect(apiRef.current?.report).toBeNull();
+  expect(apiRef.current?.report?.revision).toBe(1);
   let rerun: Promise<void> | undefined;
   await act(async () => {
     rerun = apiRef.current!.rerun();

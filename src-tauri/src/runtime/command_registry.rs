@@ -23,6 +23,7 @@ macro_rules! saaa_invoke_handler {
             window_shutdown_grace::export_diagnostics,
             diagnosis::commands::get_diagnosis_report,
             diagnosis::commands::run_diagnosis,
+            diagnosis::commands::run_fast_diagnosis,
             persistence::audit::record_event::list_audit_events,
             database_backup::backup_database,
             window_shutdown_grace::get_situation_snapshot,

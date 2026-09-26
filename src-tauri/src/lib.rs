@@ -366,9 +366,8 @@ pub fn run() {
                 context_segments_enabled: app_state::context_segments_from_env(),
                 wire_prefixes: Mutex::new(std::collections::VecDeque::new()),
             });
-            // Start LARM readiness before the remaining startup recovery and workers.
-            // The diagnosis runner begins with the harness check, which creates the
-            // SAAA Agent Connection without blocking the window setup.
+            // Startup diagnosis reads local state and the LARM catalog without
+            // allocating a Connection or blocking the window setup.
             diagnosis::runner::spawn_startup(app.handle().clone());
             let recovery_now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

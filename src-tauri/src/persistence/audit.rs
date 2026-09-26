@@ -11,6 +11,8 @@ use tauri::ipc::Channel;
 mod audit_event_sort_field;
 #[path = "audit/record_event.rs"]
 pub(crate) mod record_event;
+#[path = "audit/voice_frontend_observer.rs"]
+mod voice_frontend_observer;
 pub(crate) use audit_event_sort_field::{
     initialize_schema, record_frontend_event, record_turn_request, record_voice_asr_command,
     AuditAttributeValue, AuditEventListInput, AuditEventSortField, FrontendAuditEventInput,

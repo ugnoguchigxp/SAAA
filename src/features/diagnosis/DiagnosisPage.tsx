@@ -32,6 +32,9 @@ export function DiagnosisPage() {
   const started = report != null;
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const items = report?.items ?? [];
+  const mode = items.some((item) => item.id === "diagnosis.mode.operational")
+    ? "operational"
+    : "fast";
   const services = larmServices(items);
   const state = localState(items);
   const reasoning = items.filter(isReasoningProvider);
@@ -42,6 +45,8 @@ export function DiagnosisPage() {
     LARM_PROVIDER_ID,
     "harness.tts",
     "provider.system-tts",
+    "diagnosis.mode.fast",
+    "diagnosis.mode.operational",
   ]);
   const other = items.filter((item) => !shown.has(item.id) && !isReasoningProvider(item));
   const overall = running ? "running" : (report?.overall ?? "skipped");
@@ -50,12 +55,11 @@ export function DiagnosisPage() {
   return (
     <section className="diagnosis-page" aria-label={t("navigation.diagnosis")}>
       <div className="diagnosis-page-header" role="toolbar" aria-label={t("navigation.diagnosis")}>
-        <button type="button" onClick={() => void rerun()} disabled={running}>
-          {running
-            ? t("chat.diagnosis.rerunning")
-            : started
-              ? t("chat.diagnosis.rerun")
-              : t("chat.diagnosis.start")}
+        <button type="button" onClick={() => void rerun("fast")} disabled={running}>
+          {t("chat.diagnosis.fast")}
+        </button>
+        <button type="button" onClick={() => void rerun("operational")} disabled={running}>
+          {t("chat.diagnosis.operational")}
         </button>
       </div>
       {!started ? (
@@ -65,101 +69,104 @@ export function DiagnosisPage() {
           </p>
         ) : null
       ) : (
-      <div className="diagnosis-page-content">
-        <section className="diagnosis-summary" aria-labelledby="diagnosis-page-title">
-          <div className="diagnosis-summary-heading">
-            <div>
-              <p>{t("chat.diagnosis.eyebrow")}</p>
-              <h2 id="diagnosis-page-title">{t("chat.diagnosis.title")}</h2>
+        <div className="diagnosis-page-content">
+          <section className="diagnosis-summary" aria-labelledby="diagnosis-page-title">
+            <div className="diagnosis-summary-heading">
+              <div>
+                <p>{t("chat.diagnosis.eyebrow")}</p>
+                <h2 id="diagnosis-page-title">{t("chat.diagnosis.title")}</h2>
+              </div>
+              <span className={`diagnosis-live${running ? "" : " is-settled"}`}>
+                {running ? t("chat.diagnosis.rerunning") : t("chat.diagnosis.live")}
+              </span>
             </div>
-            <span className={`diagnosis-live${running ? "" : " is-settled"}`}>
-              {running ? t("chat.diagnosis.rerunning") : t("chat.diagnosis.live")}
-            </span>
-          </div>
-          <p className="diagnosis-meta">
-            {report?.finishedAt
-              ? `${t("chat.diagnosis.finished")} ${formatFinished(report.finishedAt, locale)}`
-              : t("chat.diagnosis.saved")}
-            {report ? <small> · revision {report.revision}</small> : null}
-          </p>
-          <p className={`diagnosis-verdict diagnosis-verdict-${failed ? "failure" : "normal"}`}>
-            {t(`chat.diagnosis.verdict.${overall}`)}
-          </p>
-          <div className="diagnosis-lane">
-            <h3>{t("chat.diagnosis.lanes.larm")}</h3>
-            <div className="diagnosis-services">
-              {services.map((stage) => (
-                <StageCard
-                  key={stage.id}
-                  title={t(`chat.diagnosis.services.${stage.id}`)}
-                  status={stage.status}
-                  detail={stage.detail}
-                  connected={false}
-                />
-              ))}
-            </div>
-          </div>
-          <div className="diagnosis-lane diagnosis-lane-foundation">
-            <h3>{t("chat.diagnosis.lanes.state")}</h3>
-            <div className="diagnosis-state">
-              {state.map((stage) => (
-                <StageCard
-                  key={stage.id}
-                  title={t(`chat.diagnosis.state.${stage.id}`)}
-                  status={stage.status}
-                  detail={stage.detail}
-                  connected={false}
-                />
-              ))}
-            </div>
-          </div>
-          {reasoning.length > 0 ? (
-            <div className="diagnosis-lane diagnosis-lane-secondary">
-              <h3>{t("chat.diagnosis.lanes.reasoning")}</h3>
-              <div className="diagnosis-reasoning">
-                {reasoning.map((item) => (
+            <p className="diagnosis-meta">
+              {t(`chat.diagnosis.mode.${mode}`)} ·{" "}
+              {report?.finishedAt
+                ? `${t("chat.diagnosis.finished")} ${formatFinished(report.finishedAt, locale)}`
+                : t("chat.diagnosis.saved")}
+              {report ? <small> · revision {report.revision}</small> : null}
+            </p>
+            <p className={`diagnosis-verdict diagnosis-verdict-${failed ? "failure" : "normal"}`}>
+              {t(
+                `chat.diagnosis.verdict.${mode === "fast" && overall === "ok" ? "fastOk" : overall}`,
+              )}
+            </p>
+            <div className="diagnosis-lane">
+              <h3>{t("chat.diagnosis.lanes.larm")}</h3>
+              <div className="diagnosis-services">
+                {services.map((stage) => (
                   <StageCard
-                    key={item.id}
-                    title={item.label}
-                    status={item.status}
-                    detail={plainMessage(item)}
+                    key={stage.id}
+                    title={t(`chat.diagnosis.services.${stage.id}`)}
+                    status={stage.status}
+                    detail={stage.detail}
                     connected={false}
                   />
                 ))}
               </div>
             </div>
+            <div className="diagnosis-lane diagnosis-lane-foundation">
+              <h3>{t("chat.diagnosis.lanes.state")}</h3>
+              <div className="diagnosis-state">
+                {state.map((stage) => (
+                  <StageCard
+                    key={stage.id}
+                    title={t(`chat.diagnosis.state.${stage.id}`)}
+                    status={stage.status}
+                    detail={stage.detail}
+                    connected={false}
+                  />
+                ))}
+              </div>
+            </div>
+            {reasoning.length > 0 ? (
+              <div className="diagnosis-lane diagnosis-lane-secondary">
+                <h3>{t("chat.diagnosis.lanes.reasoning")}</h3>
+                <div className="diagnosis-reasoning">
+                  {reasoning.map((item) => (
+                    <StageCard
+                      key={item.id}
+                      title={item.label}
+                      status={item.status}
+                      detail={plainMessage(item)}
+                      connected={false}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </section>
+          {error ? (
+            <p className="diagnosis-page-error" role="alert">
+              {error}
+            </p>
           ) : null}
-        </section>
-        {error ? (
-          <p className="diagnosis-page-error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <div className="diagnosis-table-frame">
-          <table className="diagnosis-table">
-            <caption>{t("chat.diagnosis.itemsHeading")}</caption>
-            <thead>
-              <tr>
-                <th scope="col">{t("chat.diagnosis.columns.name")}</th>
-                <th scope="col">{t("chat.diagnosis.columns.status")}</th>
-                <th scope="col">{t("chat.diagnosis.columns.detail")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <ItemRows
-                title={t("chat.diagnosis.lanes.larm")}
-                items={services.flatMap((stage) => (stage.item ? [stage.item] : []))}
-              />
-              <ItemRows
-                title={t("chat.diagnosis.lanes.state")}
-                items={state.flatMap((stage) => (stage.item ? [stage.item] : []))}
-              />
-              <ItemRows title={t("chat.diagnosis.lanes.reasoning")} items={reasoning} />
-              <ItemRows title={t("chat.diagnosis.lanes.other")} items={other} />
-            </tbody>
-          </table>
+          <div className="diagnosis-table-frame">
+            <table className="diagnosis-table">
+              <caption>{t("chat.diagnosis.itemsHeading")}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t("chat.diagnosis.columns.name")}</th>
+                  <th scope="col">{t("chat.diagnosis.columns.status")}</th>
+                  <th scope="col">{t("chat.diagnosis.columns.detail")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <ItemRows
+                  title={t("chat.diagnosis.lanes.larm")}
+                  items={services.flatMap((stage) => (stage.item ? [stage.item] : []))}
+                />
+                <ItemRows
+                  title={t("chat.diagnosis.lanes.state")}
+                  items={state.flatMap((stage) => (stage.item ? [stage.item] : []))}
+                />
+                <ItemRows title={t("chat.diagnosis.lanes.reasoning")} items={reasoning} />
+                <ItemRows title={t("chat.diagnosis.lanes.other")} items={other} />
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
       )}
     </section>
   );

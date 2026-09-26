@@ -25,6 +25,7 @@ export type ChatPageProps = {
   onLoadOlderMessages: () => Promise<void>;
   streamingText: StreamingTextProjection;
   voiceState: VoiceCaptureState;
+  voiceReady: boolean;
   voiceActivityLevel: number;
   voiceActivityDetected: boolean;
   listeningEnabled: boolean;

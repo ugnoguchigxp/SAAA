@@ -23,6 +23,7 @@ import { useLarmConnectionStatus } from "./useLarmConnectionStatus";
 import { invoke } from "@tauri-apps/api/core";
 
 const VOICE_BAR_WEIGHTS = [0.18, 0.32, 0.54, 0.78, 1, 0.7, 0.48, 0.72, 0.46, 0.28, 0.16];
+const HANDOFF_PREPARATION_DEFERRED = "回答用の接続を準備中です。少し後に、内容を確認してもう一度お試しください。";
 
 export function ChatPage({
   setupSnapshot,
@@ -36,6 +37,7 @@ export function ChatPage({
   onReturnToLatest,
   streamingText,
   voiceState,
+  voiceReady,
   voiceActivityLevel,
   voiceActivityDetected,
   listeningEnabled,
@@ -177,6 +179,12 @@ export function ChatPage({
     setImageDrag(true);
   }
   const artifacts = useArtifactWorkspace();
+  const lastMessage = messages[messages.length - 1];
+  const precedingMessage = messages[messages.length - 2];
+  const deferredHandoffInput = !activeRunId && lastMessage?.role === "assistant" &&
+    lastMessage.content === HANDOFF_PREPARATION_DEFERRED && precedingMessage?.role === "user"
+      ? precedingMessage
+      : undefined;
   useEffect(() => {
     if (selectedConversation) artifacts?.focusConversation(selectedConversation.id);
   }, [selectedConversation, artifacts]);
@@ -310,6 +318,15 @@ export function ChatPage({
           ) : (
             <VirtualMessages messages={messages} scrollRef={messageAreaRef} />
           )}
+          {deferredHandoffInput && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => onComposerChange(deferredHandoffInput.content)}
+            >
+              認識された依頼を確認して再試行
+            </button>
+          )}
           {streamingText.length > 0 && (
             <article className={`message assistant ${!activeRunId ? "incomplete" : "streaming"}`}>
               <span className="message-role">
@@ -369,7 +386,7 @@ export function ChatPage({
       >
         <div className="composer-row">
           <button
-            className={voiceState === "listening" ? "voice-button recording" : "voice-button"}
+            className={voiceReady ? "voice-button recording" : "voice-button"}
             type="button"
             aria-pressed={listeningEnabled}
             aria-label={
@@ -395,11 +412,13 @@ export function ChatPage({
             <AppIcon name={voiceState !== "stopped" || Boolean(activeTtsRunId) ? "stop" : "mic"} />
           </button>
           <div
-            className={`voice-activity-indicator${listeningEnabled ? " listening" : " paused"}${voiceActivityDetected ? " detecting" : ""}`}
+            className={`voice-activity-indicator${voiceReady ? " listening" : " paused"}${voiceReady && voiceActivityDetected ? " detecting" : ""}`}
             role="img"
             aria-label={t(
               !listeningEnabled
                 ? "chat.voiceIndicatorPaused"
+                : !voiceReady
+                  ? "chat.voiceIndicatorPreparing"
                 : voiceActivityDetected
                   ? "chat.voiceIndicatorActive"
                   : "chat.voiceIndicatorIdle",
@@ -492,7 +511,10 @@ export function ChatPage({
                 : t("chat.processingNotSelected")}
             </button>
           )}
-          {voiceState === "listening" && (
+          {listeningEnabled && !voiceReady && !activeTtsRunId && (
+            <span className="composer-hint">{t("chat.voicePreparingHint")}</span>
+          )}
+          {voiceReady && (
             <span className="composer-hint">
               {t("chat.listeningHint", {
                 seconds:

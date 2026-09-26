@@ -73,14 +73,26 @@ fn sink() -> Sink {
 
 struct Turn {
     message: String,
+    failure: Option<String>,
     steps: Vec<(i64, String, String, String)>,
     bodies: Vec<serde_json::Value>,
     hits: Vec<String>,
     creates: usize,
+    audit: Vec<(String, Option<String>, Option<String>)>,
     sink: Sink,
 }
 
 async fn run_turn(run_id: &str, origin: &str, transition: &'static str, content: &str) -> Turn {
+    run_turn_inner(run_id, origin, transition, content, false).await
+}
+
+async fn run_turn_inner(
+    run_id: &str,
+    origin: &str,
+    transition: &'static str,
+    content: &str,
+    expect_failure: bool,
+) -> Turn {
     let _environment = crate::test_environment::larm_lock().lock().await;
     SHUTTING_DOWN.store(false, Ordering::Release);
     let h = Harness::new();
@@ -118,19 +130,30 @@ async fn run_turn(run_id: &str, origin: &str, transition: &'static str, content:
         }
         Ok(())
     }).unwrap();
-    let (cancel, _) = watch::channel(false);
-    *OWNER.lock().await = Some(Arc::new(Owner {
-        id: format!("butler-{run_id}"),
-        conversation: crate::PRIMARY_CONVERSATION_ID.into(),
-        base: fake.base.clone(),
-        profile: "fixture-voice".into(),
-        cancel,
-        ready: OnceCell::new(),
-        started: AtomicBool::new(false),
-        lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
-        sqlite_writer: h.state.sqlite_writer.clone(),
-        phase: new_phase(),
-    }));
+    if origin == "voice" {
+        begin_larm_voice_session_inner(
+            &h.state,
+            format!("butler-{run_id}"),
+            crate::PRIMARY_CONVERSATION_ID.into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fake.creates.load(std::sync::atomic::Ordering::SeqCst), 0);
+    } else {
+        let (cancel, _) = watch::channel(false);
+        *OWNER.lock().await = Some(Arc::new(Owner {
+            id: format!("butler-{run_id}"),
+            conversation: crate::PRIMARY_CONVERSATION_ID.into(),
+            base: fake.base.clone(),
+            profile: "fixture-voice".into(),
+            cancel,
+            ready: OnceCell::new(),
+            started: AtomicBool::new(false),
+            lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
+            sqlite_writer: h.state.sqlite_writer.clone(),
+            phase: new_phase(),
+        }));
+    }
     let input = crate::StartTurnInput {
         run_id: run_id.into(),
         conversation_id: crate::PRIMARY_CONVERSATION_ID.into(),
@@ -144,24 +167,34 @@ async fn run_turn(run_id: &str, origin: &str, transition: &'static str, content:
     };
     crate::runtime::turns::prepare_runtime_run(&h.state, &input).unwrap();
     let events = sink();
-    let message = crate::runtime::conversation_turn::execute_conversation_turn_with_candidates(
+    let result = crate::runtime::conversation_turn::execute_conversation_turn_with_candidates(
         &h.state,
         &input,
         &events,
         Arc::new(crate::RunCancellation::default()),
         Vec::new(),
     )
-    .await
-    .unwrap_or_else(|error| panic!("{run_id} failed: {error:?}"));
-    crate::runtime::voice_response::complete(
-        &h.state,
-        &input,
-        &events,
-        Arc::new(crate::RunCancellation::default()),
-        &message,
-    )
-    .await
-    .unwrap();
+    .await;
+    if !expect_failure {
+        result.as_ref().unwrap_or_else(|error| {
+        panic!(
+            "{run_id} failed: {error:?}; hits={:?}; creates={}",
+            fake.hits.lock().unwrap(),
+            fake.creates.load(std::sync::atomic::Ordering::SeqCst)
+        )
+        });
+    }
+    if let Ok(message) = &result {
+        crate::runtime::voice_response::complete(
+            &h.state,
+            &input,
+            &events,
+            Arc::new(crate::RunCancellation::default()),
+            message,
+        )
+        .await
+        .unwrap();
+    }
     let steps = h.state.sqlite_readers.read(|connection| {
         let mut statement = connection.prepare(
             "SELECT ordinal, purpose, actor_id, status FROM rr_steps WHERE root_id=?1 ORDER BY ordinal",
@@ -179,14 +212,26 @@ async fn run_turn(run_id: &str, origin: &str, transition: &'static str, content:
     let bodies = fake.bodies.lock().unwrap().clone();
     let hits = fake.hits.lock().unwrap().clone();
     let creates = fake.creates.load(std::sync::atomic::Ordering::SeqCst);
+    let audit = h.state.sqlite_readers.read(|connection| {
+        let mut statement = connection.prepare(
+            "SELECT event_name,outcome,failure_code FROM audit_events WHERE runtime_run_id=?1 AND (event_name LIKE 'qwen-%' OR event_name LIKE 'ornith-%') ORDER BY sequence",
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map([run_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        Ok(rows)
+    }).unwrap();
     shutdown().await;
     server.abort();
     Turn {
-        message: message.content,
+        message: result.as_ref().map(|message| message.content.clone()).unwrap_or_default(),
+        failure: result.err().map(|error| format!("{error:?}")),
         steps,
         bodies,
         hits,
         creates,
+        audit,
         sink: events,
     }
 }
@@ -194,6 +239,10 @@ async fn run_turn(run_id: &str, origin: &str, transition: &'static str, content:
 #[tokio::test]
 async fn role_routed_voice_turn_reaches_larm_for_every_step() {
     let turn = run_turn("run_butler_both", "voice", "ready", "u").await;
+    assert!(turn.audit.iter().any(|(name, _, _)| name == "ornith-connection-claimed"));
+    assert!(turn.audit.iter().any(|(name, _, _)| name == "ornith-lease-acquired"));
+    assert!(turn.audit.iter().any(|(name, outcome, _)|
+        name == "ornith-generation-request-finished" && outcome.as_deref() == Some("success")));
     assert_eq!(
         turn.steps,
         vec![
@@ -233,7 +282,7 @@ async fn voice_turn_runs_frontend_then_reasoner() {
             .is_some_and(|messages| messages.iter().any(|message| message["content"] == crate::role_routing::frontend::INSTRUCTION))
     });
     let backchannel = backchannel.expect("backchannel request");
-    assert_eq!(backchannel["model"], "qwen3.5-2b-fast-response");
+    assert_eq!(backchannel["model"], "backchannel-qwen35-2b");
     assert_eq!(backchannel["stream"], true);
     assert_eq!(
         backchannel["chat_template_kwargs"],
@@ -270,12 +319,64 @@ async fn greeting_finishes_without_reasoner() {
 }
 
 #[tokio::test]
+async fn simple_answer_finishes_without_reasoner() {
+    let turn = run_turn("run_butler_answer", "voice", "frontend-answer", "1足す1は？").await;
+    assert_eq!(turn.message, "2です。");
+    assert!(!turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
+    assert_eq!(turn.steps[1].3, "cancelled");
+}
+
+#[tokio::test]
+async fn qwen_first_reply_does_not_wait_for_shared_larm_lease() {
+    let turn = run_turn(
+        "run_butler_cold_frontend",
+        "voice",
+        "frontend-direct-no-lease",
+        "おはようございます。",
+    )
+    .await;
+    assert_eq!(turn.message, "おはようございます。");
+    assert!(turn.hits.contains(&"backchannel".into()));
+    assert!(!turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
+    assert_eq!(turn.creates, 0, "Qwen should not wait for an Agent Connection");
+}
+
+#[tokio::test]
 async fn nod_finishes_without_reasoner() {
     let turn = run_turn("run_butler_nod", "voice", "frontend-nod", "u").await;
     assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), ["x"]);
     assert_eq!(turn.message, "x");
     assert!(!turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
     assert_eq!(turn.steps[0].3, "succeeded");
+    assert_eq!(turn.steps[1].3, "cancelled");
+}
+
+#[tokio::test]
+async fn explicit_request_misclassified_as_nod_reaches_reasoner() {
+    let turn = run_turn(
+        "run_butler_misclassified_request",
+        "voice",
+        "frontend-misclassified-request",
+        "ジュゲムの名前を発声してください。",
+    )
+    .await;
+    assert_eq!(turn.sink.acks.lock().unwrap().as_slice(), [crate::role_routing::frontend::WAIT_LINE]);
+    assert_eq!(turn.message, "ornith-answer");
+    assert!(turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
+    assert_eq!(turn.steps[1].3, "succeeded");
+}
+
+#[tokio::test]
+async fn bare_speech_request_clarifies_without_waiting_for_ornith() {
+    let turn = run_turn(
+        "run_butler_bare_speech_request",
+        "voice",
+        "frontend-low",
+        "発生してください。",
+    )
+    .await;
+    assert_eq!(turn.message, "何を読み上げましょうか？");
+    assert!(!turn.hits.contains(&"llm".into()), "hits: {:?}", turn.hits);
     assert_eq!(turn.steps[1].3, "cancelled");
 }
 
@@ -307,21 +408,28 @@ async fn handoff_fixture_still_runs_reasoner() {
     assert_eq!(turn.message, "ornith-answer");
     assert!(turn.bodies.len() >= 2, "bodies: {:?}", turn.bodies);
     assert_eq!(turn.steps[1].3, "succeeded");
+    assert!(turn.audit.iter().any(|event| event.0 == "ornith-lease-finished" && event.1.as_deref() == Some("success")));
 }
 
 #[tokio::test]
-async fn frontend_failure_still_runs_reasoner() {
-    let turn = run_turn("run_butler_bad", "voice", "frontend-bad", "u").await;
+async fn frontend_invalid_response_does_not_claim_qwen_handoff() {
+    let turn = run_turn_inner("run_butler_bad", "voice", "frontend-bad", "u", true).await;
     assert!(turn.sink.acks.lock().unwrap().is_empty());
-    assert_eq!(turn.message, "ornith-answer");
-    assert_eq!(turn.steps[1].3, "succeeded");
+    assert!(turn.failure.as_deref().is_some_and(|failure| failure.contains("qwen-response-invalid")));
+    assert!(!turn.hits.contains(&"llm".to_string()));
+    assert_eq!(turn.steps[1].3, "planned");
+    assert!(turn.audit.iter().any(|event| event.0 == "qwen-first-response-finished" && event.1.as_deref() == Some("failure") && event.2.as_deref() == Some("qwen-response-invalid")));
 }
 
 #[tokio::test]
-async fn frontend_timeout_still_runs_reasoner() {
-    let turn = run_turn("run_butler_timeout", "voice", "frontend-slow", "u").await;
+async fn frontend_timeout_does_not_claim_qwen_handoff() {
+    let turn = run_turn_inner("run_butler_timeout", "voice", "frontend-slow", "u", true).await;
     assert!(turn.sink.acks.lock().unwrap().is_empty());
-    assert_eq!(turn.message, "ornith-answer");
+    assert!(turn.failure.as_deref().is_some_and(|failure| failure.contains("qwen-timeout")));
+    assert!(!turn.hits.contains(&"llm".to_string()));
+    assert_eq!(turn.steps[0].3, "running");
+    assert_eq!(turn.steps[1].3, "planned");
+    assert!(turn.audit.iter().any(|event| event.0 == "qwen-first-response-finished" && event.1.as_deref() == Some("failure") && event.2.as_deref() == Some("qwen-timeout")));
 }
 
 #[tokio::test]
@@ -398,22 +506,18 @@ async fn reasoner_draft_is_not_visible_before_adoption() {
     assert_eq!(turn.message, "ornith-answer");
 }
 
-#[tokio::test(start_paused = true)]
-async fn filler_is_spoken_every_fifth_tick() {
-    let _turn = run_turn("run_butler_filler", "voice", "reasoner-slow", "u").await;
-    let ticks = crate::role_routing::frontend::take_filler_ticks();
-    assert!(ticks.starts_with(&[5, 10]), "ticks: {ticks:?}");
-    assert!(ticks.iter().all(|tick| tick % 5 == 0), "ticks: {ticks:?}");
+#[tokio::test]
+async fn reasoner_wait_does_not_repeat_spoken_filler() {
+    let turn = run_turn("run_butler_filler", "voice", "reasoner-slow", "u").await;
+    assert!(turn.sink.holds.lock().unwrap().is_empty());
 }
 
-#[tokio::test(start_paused = true)]
-async fn filler_is_deferred_once_while_previous_speech_plays() {
+#[tokio::test]
+async fn reasoner_wait_does_not_speak_over_previous_speech() {
     crate::runtime::event_hub::test_mark_speech_playing("run_butler_defer");
-    crate::runtime::event_hub::test_clear_speech_at_tick("run_butler_defer", 6);
-    let _turn = run_turn("run_butler_defer", "voice", "reasoner-slow", "u").await;
-    let ticks = crate::role_routing::frontend::take_filler_ticks();
-    assert_eq!(ticks.first().copied(), Some(6), "ticks: {ticks:?}");
-    assert!(!ticks.contains(&5), "ticks: {ticks:?}");
+    let turn = run_turn("run_butler_defer", "voice", "reasoner-slow", "u").await;
+    crate::runtime::event_hub::test_clear_speech_playing("run_butler_defer");
+    assert!(turn.sink.holds.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -422,9 +526,20 @@ async fn no_filler_when_reasoner_finishes_within_ten_seconds() {
     assert!(turn.sink.holds.lock().unwrap().is_empty());
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn reasoner_times_out_when_the_step_budget_elapses() {
     let turn = run_turn("run_butler_forty", "voice", "reasoner-hang", "u").await;
     assert_eq!(turn.message, "すみません、時間内にお答えできませんでした。");
+    assert_eq!(turn.steps[1].3, "cancelled");
+}
+
+#[tokio::test]
+async fn busy_connection_defers_without_sending_ornith_generation() {
+    let turn = run_turn("run_butler_pending", "voice", "connection-pending", "寿限無の名前を教えて").await;
+    assert_eq!(turn.message, "回答用の接続を準備中です。少し後に、内容を確認してもう一度お試しください。");
+    assert!(!turn.hits.iter().any(|hit| hit == "llm"), "hits: {:?}", turn.hits);
+    assert!(turn.audit.iter().any(|(name, outcome, code)|
+        name == "ornith-handoff-finished" && outcome.as_deref() == Some("degraded")
+            && code.as_deref() == Some("preparation-deferred")), "audit: {:?}", turn.audit);
     assert_eq!(turn.steps[1].3, "cancelled");
 }

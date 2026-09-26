@@ -10,6 +10,8 @@
 }
 
 .diagnosis-page-header {
+  display: flex;
+  gap: 8px;
   position: absolute;
   z-index: 19;
   top: 8px;

@@ -1,0 +1,3722 @@
+[
+  {
+    "timestamp": "2026-09-26T09:49:47.572Z",
+    "event": "agent_profile_catalog_served",
+    "contract": "agent-connection.v3"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:47.592Z",
+    "event": "provider_instance_reused",
+    "runtime": "qwen-asr",
+    "revision": "f78cdf7c811a",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:47.592Z",
+    "event": "provider_instance_reused",
+    "runtime": "multilingual-e5-small",
+    "revision": "e67e4514135f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:47.592Z",
+    "event": "provider_instance_reused",
+    "runtime": "ornith-general",
+    "revision": "3e7f5d4ba74f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:47.592Z",
+    "event": "provider_instance_reused",
+    "runtime": "voicevox-tts",
+    "revision": "7ca77dbb4aaf",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:47.592Z",
+    "event": "allocation_pending",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_426513d2-ce33-4e3d-9dea-e829fdc39c06",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live,primary-startable",
+    "priority": "4000"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:48.596Z",
+    "event": "agent_connection_create_accepted",
+    "requestedProfile": "SAAA",
+    "canonicalProfile": "saaa-conversation-ornith15",
+    "status": "202"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:49.867Z",
+    "event": "provider_instance_ensured",
+    "runtime": "qwen35-decision",
+    "revision": "ba3e18bce6a7",
+    "generation": "24"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:49.895Z",
+    "event": "allocation_ready",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_426513d2-ce33-4e3d-9dea-e829fdc39c06",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live,primary-startable",
+    "priority": "4000"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:49.895Z",
+    "event": "allocation_startup_seconds",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_426513d2-ce33-4e3d-9dea-e829fdc39c06",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live,primary-startable",
+    "priority": "4000",
+    "value": 2.303
+  },
+  {
+    "timestamp": "2026-09-26T09:49:50.604Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:51.254Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:51.255Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:51.428Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:51.428Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:51.438Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:51.438Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:51.438Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:51.588Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:52.592Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:53.596Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:54.598Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:55.599Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:56.600Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:57.603Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:58.608Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:49:59.611Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:00.614Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:01.618Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:02.258Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:02.258Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:02.415Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:02.416Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:02.426Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:02.426Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:02.426Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:02.579Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:03.582Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:04.583Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:05.585Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:06.586Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:07.589Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:08.590Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:09.594Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:10.596Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:11.568Z",
+    "event": "gateway_json_terminal_verified",
+    "request": "req_f9c81535-97e3-4c23-92b3-6bf4d3a53a61",
+    "runtime": "ornith-general"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:11.597Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:11.614Z",
+    "event": "inference_audit_completed",
+    "request": "req_f9c81535-97e3-4c23-92b3-6bf4d3a53a61",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:11.614Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:11.615Z",
+    "event": "gateway_request_completed",
+    "request": "req_f9c81535-97e3-4c23-92b3-6bf4d3a53a61",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_7fc94083-f370-44b3-996c-98f3cdd220b3",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:11.615Z",
+    "event": "allocation_released",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_7fc94083-f370-44b3-996c-98f3cdd220b3",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:12.598Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:12.830Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:12.830Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:12.910Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:12.910Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:12.916Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:12.916Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.077Z",
+    "event": "model_broker_prepare_started",
+    "model": "coding-default",
+    "route": "llm-default"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.078Z",
+    "event": "provider_instance_reused",
+    "runtime": "ornith-general",
+    "revision": "3e7f5d4ba74f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.078Z",
+    "event": "allocation_pending",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_53382cb6-145a-44c3-b1b5-db5a326581f4",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.078Z",
+    "event": "allocation_ready",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_53382cb6-145a-44c3-b1b5-db5a326581f4",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.079Z",
+    "event": "model_broker_prepare_completed",
+    "model": "coding-default",
+    "route": "llm-default",
+    "runtime": "ornith-general",
+    "value": 0.002
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.079Z",
+    "event": "gateway_request_started",
+    "request": "req_7777f4ab-c581-495e-b59e-0ec4e12a2b6f",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_53382cb6-145a-44c3-b1b5-db5a326581f4",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.079Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "queued"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.656Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.656Z",
+    "event": "execution_queue_seconds",
+    "runtime": "ornith-general",
+    "result": "started",
+    "value": 0.577
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.656Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "started",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.656Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:13.851Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:14.523Z",
+    "event": "agent_connection_claim_accepted",
+    "status": "200",
+    "providers": "5"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:14.545Z",
+    "event": "gateway_request_started",
+    "request": "req_17c8cfd1-6032-4254-981c-723b140fcfa2",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_426513d2-ce33-4e3d-9dea-e829fdc39c06",
+    "runtime": "qwen35-decision",
+    "protocol": "openai.chat-completions.v1"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:14.545Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "started"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:14.815Z",
+    "event": "inference_audit_started",
+    "request": "req_7777f4ab-c581-495e-b59e-0ec4e12a2b6f"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:15.894Z",
+    "event": "inference_audit_started",
+    "request": "req_17c8cfd1-6032-4254-981c-723b140fcfa2"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:18.043Z",
+    "event": "gateway_json_terminal_verified",
+    "request": "req_17c8cfd1-6032-4254-981c-723b140fcfa2",
+    "runtime": "qwen35-decision"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:18.087Z",
+    "event": "inference_audit_completed",
+    "request": "req_17c8cfd1-6032-4254-981c-723b140fcfa2",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:18.087Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:18.088Z",
+    "event": "gateway_request_completed",
+    "request": "req_17c8cfd1-6032-4254-981c-723b140fcfa2",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_426513d2-ce33-4e3d-9dea-e829fdc39c06",
+    "runtime": "qwen35-decision",
+    "protocol": "openai.chat-completions.v1",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:18.138Z",
+    "event": "context_bypass",
+    "reason": "view_not_requested"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:18.138Z",
+    "event": "gateway_request_started",
+    "request": "req_1f48eab9-6cad-4503-8a7c-8eb81eea55a1",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_426513d2-ce33-4e3d-9dea-e829fdc39c06",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1"
+  },
+  {
+    "timestamp": "2026-09-26T09:50:18.138Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "queued"
+  },
+  {
+    "timestamp": "2026-09-26T09:51:48.137Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "cancelled"
+  },
+  {
+    "timestamp": "2026-09-26T09:51:48.138Z",
+    "event": "gateway_request_completed",
+    "request": "req_1f48eab9-6cad-4503-8a7c-8eb81eea55a1",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_426513d2-ce33-4e3d-9dea-e829fdc39c06",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1",
+    "outcome": "client_cancelled"
+  },
+  {
+    "timestamp": "2026-09-26T09:51:48.145Z",
+    "event": "allocation_released",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_426513d2-ce33-4e3d-9dea-e829fdc39c06",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live,primary-startable",
+    "priority": "4000"
+  },
+  {
+    "timestamp": "2026-09-26T09:51:48.146Z",
+    "event": "agent_connection_release_completed",
+    "status": "204"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:09.926Z",
+    "event": "gateway_json_terminal_verified",
+    "request": "req_7777f4ab-c581-495e-b59e-0ec4e12a2b6f",
+    "runtime": "ornith-general"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:09.944Z",
+    "event": "inference_audit_completed",
+    "request": "req_7777f4ab-c581-495e-b59e-0ec4e12a2b6f",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:09.945Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:09.945Z",
+    "event": "gateway_request_completed",
+    "request": "req_7777f4ab-c581-495e-b59e-0ec4e12a2b6f",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_53382cb6-145a-44c3-b1b5-db5a326581f4",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:09.945Z",
+    "event": "allocation_released",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_53382cb6-145a-44c3-b1b5-db5a326581f4",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:18.005Z",
+    "event": "model_broker_prepare_started",
+    "model": "coding-default",
+    "route": "llm-default"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:18.007Z",
+    "event": "provider_instance_reused",
+    "runtime": "ornith-general",
+    "revision": "3e7f5d4ba74f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:18.007Z",
+    "event": "allocation_pending",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_21c895a0-96dc-49f2-8733-43435eed3db7",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:18.007Z",
+    "event": "allocation_ready",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_21c895a0-96dc-49f2-8733-43435eed3db7",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:18.007Z",
+    "event": "model_broker_prepare_completed",
+    "model": "coding-default",
+    "route": "llm-default",
+    "runtime": "ornith-general",
+    "value": 0.002
+  },
+  {
+    "timestamp": "2026-09-26T09:52:18.007Z",
+    "event": "gateway_request_started",
+    "request": "req_63dda394-6073-4c6e-8eaf-efbec5cf5485",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_21c895a0-96dc-49f2-8733-43435eed3db7",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:18.007Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "started"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:18.895Z",
+    "event": "inference_audit_started",
+    "request": "req_63dda394-6073-4c6e-8eaf-efbec5cf5485"
+  },
+  {
+    "timestamp": "2026-09-26T09:52:48.270Z",
+    "event": "provider_instance_stopped",
+    "runtime": "qwen35-decision",
+    "revision": "ba3e18bce6a7",
+    "generation": "24"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:08.897Z",
+    "event": "model_broker_prepare_started",
+    "model": "backchannel-qwen35-2b",
+    "route": "llm-backchannel-qwen35-2b"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:08.900Z",
+    "event": "allocation_pending",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_67c6ef63-ef4e-430f-a8dd-c59cce18630c",
+    "client": "openai-http",
+    "routes": "llm-backchannel-qwen35-2b",
+    "runtimes": "qwen35-decision",
+    "releases": "qwen35-decision-current",
+    "fallback": "false",
+    "reasons": "primary-startable",
+    "priority": "1000"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:11.163Z",
+    "event": "provider_instance_ensured",
+    "runtime": "qwen35-decision",
+    "revision": "ba3e18bce6a7",
+    "generation": "25"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:11.176Z",
+    "event": "allocation_ready",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_67c6ef63-ef4e-430f-a8dd-c59cce18630c",
+    "client": "openai-http",
+    "routes": "llm-backchannel-qwen35-2b",
+    "runtimes": "qwen35-decision",
+    "releases": "qwen35-decision-current",
+    "fallback": "false",
+    "reasons": "primary-startable",
+    "priority": "1000"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:11.177Z",
+    "event": "allocation_startup_seconds",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_67c6ef63-ef4e-430f-a8dd-c59cce18630c",
+    "client": "openai-http",
+    "routes": "llm-backchannel-qwen35-2b",
+    "runtimes": "qwen35-decision",
+    "releases": "qwen35-decision-current",
+    "fallback": "false",
+    "reasons": "primary-startable",
+    "priority": "1000",
+    "value": 2.277
+  },
+  {
+    "timestamp": "2026-09-26T09:53:11.413Z",
+    "event": "model_broker_prepare_completed",
+    "model": "backchannel-qwen35-2b",
+    "route": "llm-backchannel-qwen35-2b",
+    "runtime": "qwen35-decision",
+    "value": 2.516
+  },
+  {
+    "timestamp": "2026-09-26T09:53:11.414Z",
+    "event": "gateway_request_started",
+    "request": "req_766f9e3e-92fe-4e64-a22c-a45e70650cd3",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_67c6ef63-ef4e-430f-a8dd-c59cce18630c",
+    "runtime": "qwen35-decision",
+    "protocol": "openai.chat-completions.v1"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:11.414Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:13.238Z",
+    "event": "inference_audit_started",
+    "request": "req_766f9e3e-92fe-4e64-a22c-a45e70650cd3"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:13.609Z",
+    "event": "gateway_first_meaningful_output",
+    "request": "req_766f9e3e-92fe-4e64-a22c-a45e70650cd3",
+    "runtime": "qwen35-decision",
+    "value": 2.195
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.373Z",
+    "event": "gateway_stream_terminal_verified",
+    "request": "req_766f9e3e-92fe-4e64-a22c-a45e70650cd3",
+    "runtime": "qwen35-decision"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.393Z",
+    "event": "inference_audit_completed",
+    "request": "req_766f9e3e-92fe-4e64-a22c-a45e70650cd3",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.394Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.394Z",
+    "event": "gateway_request_completed",
+    "request": "req_766f9e3e-92fe-4e64-a22c-a45e70650cd3",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_67c6ef63-ef4e-430f-a8dd-c59cce18630c",
+    "runtime": "qwen35-decision",
+    "protocol": "openai.chat-completions.v1",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.395Z",
+    "event": "allocation_released",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_67c6ef63-ef4e-430f-a8dd-c59cce18630c",
+    "client": "openai-http",
+    "routes": "llm-backchannel-qwen35-2b",
+    "runtimes": "qwen35-decision",
+    "releases": "qwen35-decision-current",
+    "fallback": "false",
+    "reasons": "primary-startable",
+    "priority": "1000"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.447Z",
+    "event": "agent_profile_catalog_served",
+    "contract": "agent-connection.v3"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.458Z",
+    "event": "provider_instance_reused",
+    "runtime": "qwen-asr",
+    "revision": "f78cdf7c811a",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.459Z",
+    "event": "provider_instance_reused",
+    "runtime": "qwen35-decision",
+    "revision": "ba3e18bce6a7",
+    "generation": "25"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.459Z",
+    "event": "provider_instance_reused",
+    "runtime": "multilingual-e5-small",
+    "revision": "e67e4514135f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.459Z",
+    "event": "provider_instance_reused",
+    "runtime": "ornith-general",
+    "revision": "3e7f5d4ba74f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.459Z",
+    "event": "provider_instance_reused",
+    "runtime": "voicevox-tts",
+    "revision": "7ca77dbb4aaf",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.459Z",
+    "event": "allocation_pending",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_aa43e973-108a-4512-b835-f6b33016b58b",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "4000"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.459Z",
+    "event": "allocation_ready",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_aa43e973-108a-4512-b835-f6b33016b58b",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "4000"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:14.460Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:15.108Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:15.109Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:15.312Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:15.312Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:15.325Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:15.325Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:15.325Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:15.490Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:16.496Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:16.496Z",
+    "event": "agent_connection_create_accepted",
+    "requestedProfile": "SAAA",
+    "canonicalProfile": "saaa-conversation-ornith15",
+    "status": "202"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:17.499Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:18.504Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:19.507Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:20.511Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:21.515Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:22.519Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:23.524Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:24.528Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:25.532Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:26.187Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:26.187Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:26.284Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:26.284Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:26.297Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:26.297Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:26.297Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:26.453Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:27.454Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:28.459Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:29.463Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:30.467Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:31.471Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:32.476Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:33.480Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:34.485Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:35.485Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:36.490Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:37.130Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:37.131Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:37.231Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:37.231Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:37.241Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:37.241Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:37.241Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:37.384Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:38.388Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:39.392Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:40.397Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:41.398Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:42.402Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:43.406Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:44.411Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:45.415Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:46.420Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:47.423Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:48.068Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:48.068Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:48.165Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:48.166Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:48.175Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:48.175Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:48.175Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:48.328Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:49.331Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:50.336Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:51.339Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:52.343Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:53.346Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:54.350Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:55.353Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:56.358Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:57.359Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:58.363Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:59.016Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:59.016Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:59.115Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:59.116Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:59.125Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:59.125Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:59.125Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:53:59.274Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:00.275Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:01.277Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:02.279Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:03.280Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:04.281Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:05.283Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:06.284Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:07.285Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:08.286Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:09.288Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:09.924Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:09.924Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:10.032Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:10.032Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:10.043Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:10.043Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:10.043Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:10.196Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:11.198Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:12.200Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:13.201Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:14.203Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:15.204Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:16.206Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:17.207Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:18.209Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:19.211Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:20.212Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:20.853Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:20.853Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:20.942Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:20.943Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:20.952Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:20.952Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:20.952Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:21.108Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:22.109Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:23.110Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:24.111Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:25.113Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:26.114Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:27.115Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:28.115Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:29.117Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:30.118Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:31.119Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:31.759Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:31.759Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:31.888Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:31.888Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:31.899Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:31.899Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:31.899Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:32.052Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:33.053Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:34.054Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:35.055Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:36.056Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:37.058Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:38.059Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:39.060Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:40.061Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:41.071Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:42.072Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:42.695Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:42.695Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:42.808Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:42.808Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:42.818Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:42.818Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:42.818Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:42.955Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:43.956Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:44.958Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:45.959Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:46.960Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:47.961Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:48.962Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:49.963Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:50.964Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:51.965Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:52.966Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:53.601Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:53.601Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:53.717Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:53.717Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:53.729Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:53.729Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:53.729Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:53.900Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:54.905Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:55.906Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:56.910Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:57.911Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:58.914Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:54:59.914Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:00.916Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:01.917Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:02.918Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:03.919Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:04.554Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:04.554Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:04.645Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:04.645Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:04.657Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:04.658Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:04.658Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:04.800Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:05.800Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:06.804Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:07.805Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:08.807Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:09.808Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:10.809Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:11.810Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:12.811Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.120Z",
+    "event": "gateway_json_terminal_verified",
+    "request": "req_63dda394-6073-4c6e-8eaf-efbec5cf5485",
+    "runtime": "ornith-general"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.142Z",
+    "event": "inference_audit_completed",
+    "request": "req_63dda394-6073-4c6e-8eaf-efbec5cf5485",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.142Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.142Z",
+    "event": "gateway_request_completed",
+    "request": "req_63dda394-6073-4c6e-8eaf-efbec5cf5485",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_21c895a0-96dc-49f2-8733-43435eed3db7",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.143Z",
+    "event": "allocation_released",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_21c895a0-96dc-49f2-8733-43435eed3db7",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.173Z",
+    "event": "model_broker_prepare_started",
+    "model": "coding-default",
+    "route": "llm-default"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.175Z",
+    "event": "provider_instance_reused",
+    "runtime": "ornith-general",
+    "revision": "3e7f5d4ba74f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.175Z",
+    "event": "allocation_pending",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_af445525-04c3-4789-b83d-85d2a58c894c",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.175Z",
+    "event": "allocation_ready",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_af445525-04c3-4789-b83d-85d2a58c894c",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.176Z",
+    "event": "model_broker_prepare_completed",
+    "model": "coding-default",
+    "route": "llm-default",
+    "runtime": "ornith-general",
+    "value": 0.003
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.176Z",
+    "event": "gateway_request_started",
+    "request": "req_70ae0b74-e1bd-4b86-96bf-88590f468592",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_af445525-04c3-4789-b83d-85d2a58c894c",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.177Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:13.811Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:14.180Z",
+    "event": "inference_audit_started",
+    "request": "req_70ae0b74-e1bd-4b86-96bf-88590f468592"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:14.541Z",
+    "event": "allocation_released",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_aa43e973-108a-4512-b835-f6b33016b58b",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "4000"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:14.542Z",
+    "event": "agent_connection_release_completed",
+    "status": "204"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:54.173Z",
+    "event": "model_broker_prepare_started",
+    "model": "backchannel-qwen35-2b",
+    "route": "llm-backchannel-qwen35-2b"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:54.175Z",
+    "event": "provider_instance_reused",
+    "runtime": "qwen35-decision",
+    "revision": "ba3e18bce6a7",
+    "generation": "25"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:54.176Z",
+    "event": "allocation_pending",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_f82bc1a5-709b-4c99-b9cb-6b3097cc0bb2",
+    "client": "openai-http",
+    "routes": "llm-backchannel-qwen35-2b",
+    "runtimes": "qwen35-decision",
+    "releases": "qwen35-decision-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "1000"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:54.176Z",
+    "event": "allocation_ready",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_f82bc1a5-709b-4c99-b9cb-6b3097cc0bb2",
+    "client": "openai-http",
+    "routes": "llm-backchannel-qwen35-2b",
+    "runtimes": "qwen35-decision",
+    "releases": "qwen35-decision-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "1000"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:54.177Z",
+    "event": "model_broker_prepare_completed",
+    "model": "backchannel-qwen35-2b",
+    "route": "llm-backchannel-qwen35-2b",
+    "runtime": "qwen35-decision",
+    "value": 0.004
+  },
+  {
+    "timestamp": "2026-09-26T09:55:54.177Z",
+    "event": "gateway_request_started",
+    "request": "req_c585dab3-f095-4862-b45d-6db014a58734",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_f82bc1a5-709b-4c99-b9cb-6b3097cc0bb2",
+    "runtime": "qwen35-decision",
+    "protocol": "openai.chat-completions.v1"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:54.177Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:56.075Z",
+    "event": "inference_audit_started",
+    "request": "req_c585dab3-f095-4862-b45d-6db014a58734"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:56.191Z",
+    "event": "gateway_first_meaningful_output",
+    "request": "req_c585dab3-f095-4862-b45d-6db014a58734",
+    "runtime": "qwen35-decision",
+    "value": 2.014
+  },
+  {
+    "timestamp": "2026-09-26T09:55:56.956Z",
+    "event": "gateway_stream_terminal_verified",
+    "request": "req_c585dab3-f095-4862-b45d-6db014a58734",
+    "runtime": "qwen35-decision"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:56.978Z",
+    "event": "inference_audit_completed",
+    "request": "req_c585dab3-f095-4862-b45d-6db014a58734",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:56.978Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:56.978Z",
+    "event": "gateway_request_completed",
+    "request": "req_c585dab3-f095-4862-b45d-6db014a58734",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_f82bc1a5-709b-4c99-b9cb-6b3097cc0bb2",
+    "runtime": "qwen35-decision",
+    "protocol": "openai.chat-completions.v1",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:56.979Z",
+    "event": "allocation_released",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_f82bc1a5-709b-4c99-b9cb-6b3097cc0bb2",
+    "client": "openai-http",
+    "routes": "llm-backchannel-qwen35-2b",
+    "runtimes": "qwen35-decision",
+    "releases": "qwen35-decision-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "1000"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.033Z",
+    "event": "agent_profile_catalog_served",
+    "contract": "agent-connection.v3"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.044Z",
+    "event": "provider_instance_reused",
+    "runtime": "qwen-asr",
+    "revision": "f78cdf7c811a",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.044Z",
+    "event": "provider_instance_reused",
+    "runtime": "qwen35-decision",
+    "revision": "ba3e18bce6a7",
+    "generation": "25"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.044Z",
+    "event": "provider_instance_reused",
+    "runtime": "multilingual-e5-small",
+    "revision": "e67e4514135f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.044Z",
+    "event": "provider_instance_reused",
+    "runtime": "ornith-general",
+    "revision": "3e7f5d4ba74f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.044Z",
+    "event": "provider_instance_reused",
+    "runtime": "voicevox-tts",
+    "revision": "7ca77dbb4aaf",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.044Z",
+    "event": "allocation_pending",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_e0ee49e8-acad-4fe8-80e6-49041581f609",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "4000"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.044Z",
+    "event": "allocation_ready",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_e0ee49e8-acad-4fe8-80e6-49041581f609",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "4000"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.045Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.691Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.691Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.874Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.874Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.887Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.888Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:57.888Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:58.044Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:59.049Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:55:59.049Z",
+    "event": "agent_connection_create_accepted",
+    "requestedProfile": "SAAA",
+    "canonicalProfile": "saaa-conversation-ornith15",
+    "status": "202"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:00.050Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:01.054Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:02.056Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:03.057Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:04.058Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:05.059Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:06.060Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:07.061Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:08.062Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:08.703Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:08.703Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:08.796Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:08.796Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:08.809Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:08.809Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:08.809Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:08.971Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:09.972Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:10.972Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:11.973Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:12.974Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:13.975Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:14.976Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:15.977Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:16.978Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:17.979Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:18.980Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:19.639Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:19.639Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:19.790Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:19.790Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:19.808Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:19.808Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:19.809Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:19.956Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:20.957Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:21.958Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:22.959Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:23.960Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:24.962Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:25.963Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:26.963Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:27.964Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:28.965Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:29.966Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:30.624Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:30.624Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:30.777Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:30.777Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:30.790Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:30.790Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:30.790Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:30.936Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:31.937Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:32.938Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:33.939Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:34.940Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:35.941Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:36.945Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:37.946Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:38.946Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:39.948Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:40.948Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:41.587Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:41.587Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:41.680Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:41.681Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:41.693Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:41.693Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:41.693Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:41.839Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:42.842Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:43.843Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:44.847Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:45.848Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:46.849Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:47.849Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:48.850Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:49.851Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:50.852Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:51.852Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:52.490Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:52.490Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:52.625Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:52.625Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:52.640Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:52.640Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:52.640Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:52.799Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:53.803Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:54.808Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:55.812Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:56.817Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:57.818Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:58.819Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:56:59.820Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:00.826Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:01.832Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:02.838Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:03.486Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:03.486Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:03.598Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:03.598Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:03.611Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:03.612Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:03.612Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:03.760Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:04.765Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:05.769Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:06.771Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:07.772Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:08.773Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:09.776Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:10.781Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:11.785Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:12.789Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:13.793Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:14.447Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:14.447Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:14.540Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:14.540Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:14.554Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:14.554Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:14.554Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:14.697Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:15.701Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:16.703Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:17.704Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:18.708Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:19.712Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:20.716Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:21.719Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:22.724Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:23.727Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:24.731Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:25.388Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:25.388Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:25.483Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:25.483Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:25.498Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:25.498Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:25.498Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:25.641Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:26.646Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:27.649Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:28.650Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:29.651Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:30.656Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:31.657Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:32.661Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:33.664Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:34.668Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:35.672Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:36.321Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:36.321Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:36.408Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:36.408Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:36.420Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:36.420Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:36.420Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:36.557Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:37.561Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:38.562Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:39.565Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:40.569Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:41.572Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:42.576Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:43.580Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:44.585Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:45.588Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:46.592Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:47.216Z",
+    "event": "execution_request",
+    "runtime": "qwen-asr",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:47.216Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:47.307Z",
+    "event": "execution_request",
+    "runtime": "qwen35-decision",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:47.307Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:47.320Z",
+    "event": "execution_request",
+    "runtime": "multilingual-e5-small",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:47.321Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:47.321Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:47.471Z",
+    "event": "execution_request",
+    "runtime": "voicevox-tts",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:48.475Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:49.478Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:50.483Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:51.486Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:52.495Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_busy"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:52.870Z",
+    "event": "gateway_json_terminal_verified",
+    "request": "req_70ae0b74-e1bd-4b86-96bf-88590f468592",
+    "runtime": "ornith-general"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:52.920Z",
+    "event": "inference_audit_completed",
+    "request": "req_70ae0b74-e1bd-4b86-96bf-88590f468592",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:52.920Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:52.921Z",
+    "event": "gateway_request_completed",
+    "request": "req_70ae0b74-e1bd-4b86-96bf-88590f468592",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_af445525-04c3-4789-b83d-85d2a58c894c",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1",
+    "outcome": "http_200"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:52.921Z",
+    "event": "allocation_released",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_af445525-04c3-4789-b83d-85d2a58c894c",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:53.501Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "probe_started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:54.264Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:55.019Z",
+    "event": "agent_connection_claim_accepted",
+    "status": "200",
+    "providers": "5"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:55.099Z",
+    "event": "context_bypass",
+    "reason": "view_not_requested"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:55.099Z",
+    "event": "gateway_request_started",
+    "request": "req_69dfa929-0216-4779-89b0-43dcfdb0f5a6",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_e0ee49e8-acad-4fe8-80e6-49041581f609",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:55.100Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "started"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:55.950Z",
+    "event": "inference_audit_started",
+    "request": "req_69dfa929-0216-4779-89b0-43dcfdb0f5a6"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:57.156Z",
+    "event": "allocation_released",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_e0ee49e8-acad-4fe8-80e6-49041581f609",
+    "client": "saaa-desktop",
+    "routes": "stt-qwen,llm-saaa-qwen35-2b,embedding-multilingual-e5-small,llm-saaa-ornith15,tts-voicevox",
+    "runtimes": "qwen-asr,qwen35-decision,multilingual-e5-small,ornith-general,voicevox-tts",
+    "releases": "qwen-asr-current,qwen35-decision-current,multilingual-e5-small-current,ornith-general-current,unmanaged",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "4000"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:57.157Z",
+    "event": "agent_connection_release_completed",
+    "status": "204"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:57.173Z",
+    "event": "inference_audit_completed",
+    "request": "req_69dfa929-0216-4779-89b0-43dcfdb0f5a6",
+    "outcome": "client_cancelled"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:57.173Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "completed"
+  },
+  {
+    "timestamp": "2026-09-26T09:57:57.174Z",
+    "event": "gateway_request_completed",
+    "request": "req_69dfa929-0216-4779-89b0-43dcfdb0f5a6",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_e0ee49e8-acad-4fe8-80e6-49041581f609",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1",
+    "outcome": "binding_invalidated"
+  },
+  {
+    "timestamp": "2026-09-26T09:58:00.920Z",
+    "event": "model_broker_prepare_started",
+    "model": "coding-default",
+    "route": "llm-default"
+  },
+  {
+    "timestamp": "2026-09-26T09:58:00.923Z",
+    "event": "provider_instance_reused",
+    "runtime": "ornith-general",
+    "revision": "3e7f5d4ba74f",
+    "generation": "1"
+  },
+  {
+    "timestamp": "2026-09-26T09:58:00.923Z",
+    "event": "allocation_pending",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_9ee1d4e5-a1a2-4fa3-9caa-91e4ef9472f6",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:58:00.923Z",
+    "event": "allocation_ready",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_9ee1d4e5-a1a2-4fa3-9caa-91e4ef9472f6",
+    "client": "openai-http",
+    "routes": "llm-default",
+    "runtimes": "ornith-general",
+    "releases": "ornith-general-current",
+    "fallback": "false",
+    "reasons": "primary-live",
+    "priority": "3000"
+  },
+  {
+    "timestamp": "2026-09-26T09:58:00.924Z",
+    "event": "model_broker_prepare_completed",
+    "model": "coding-default",
+    "route": "llm-default",
+    "runtime": "ornith-general",
+    "value": 0.004
+  },
+  {
+    "timestamp": "2026-09-26T09:58:00.924Z",
+    "event": "gateway_request_started",
+    "request": "req_a22024b4-002e-4723-9257-7c4ed28641ea",
+    "allocation": "alloc_epoch-ae18b84f-6d42-4078-90d9-60932f5985b6_9ee1d4e5-a1a2-4fa3-9caa-91e4ef9472f6",
+    "runtime": "ornith-general",
+    "protocol": "openai.chat-completions.v1"
+  },
+  {
+    "timestamp": "2026-09-26T09:58:00.924Z",
+    "event": "execution_request",
+    "runtime": "ornith-general",
+    "result": "started"
+  },
+  {
+    "timestamp": "2026-09-26T09:58:02.603Z",
+    "event": "inference_audit_started",
+    "request": "req_a22024b4-002e-4723-9257-7c4ed28641ea"
+  }
+]
