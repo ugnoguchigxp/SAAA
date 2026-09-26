@@ -1,0 +1,1243 @@
+{
+  "status": "planning_only_not_a_delete_list",
+  "base_head": "52207165d4d7aa8c962320164c9551a8ce8b4c11",
+  "method": "Explicit source review groups; globs expanded only to record existing paths. Shared consumers require splitting before retirement. Not a full static call graph.",
+  "preserve_roots": [
+    "crates/larm-session",
+    "src-tauri/src/providers/dynamic_lan",
+    "src-tauri/src/voice/audio_backend",
+    "src-tauri/src/voice/profile",
+    "src-tauri/src/voice/http_audio",
+    "src-tauri/src/voice/network_asr",
+    "src-tauri/src/memory",
+    "src-tauri/src/steward",
+    "src-tauri/src/coding",
+    "src-tauri/src/schedule"
+  ],
+  "entries": [
+    {
+      "path": "src-tauri/src/providers/larm_voice/frontdesk.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "769b532725d06ab2a3c6c47862060b8f9ec365d20dc54b6f189d7f9e70f0c2f7",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/frontdesk_decision.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "77551f272bd3cca5966be8019b60886802bffe983b4a2742e097a7b391d0be16",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/frontdesk_echo.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "066fb047f0f12cfcd2a86d15bfe4dd45a89d029e497b5ff68df44c47cbe9efd2",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/frontdesk_repository.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "c5b00d027bd1e0f68c5ef435601d8729acc692f124b5093eb7c9684be8426fd6",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/decision.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "8311309543d326cf68d22651faacedf1ddfa450bf3088c317117f7957405f95e",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/response.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "ba804cbf7c1b69cdf38779eb7d9651bbcffe1832abfb78a6ff082cb12212cb73",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/speech_priority.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "12373f9d82ce5f545438b5de01183211b91037c458e441902f6228a71cab9046",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/voice_response.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "a99ace4aecf0170e389d426105e04919dc867df68383385769e5ca206637b706",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/voice_response_state.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "049fd5a1ceee229731345c385f5c661f657bb21dd142c03ccef82adf054ea01f",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/reasoning_ack.rs",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "4ce56b9659141a13d6f7532f62dd60548ef0b696bb9f6864124f241f576adbc1",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/lfmConversationRuntime.ts",
+      "group": "A",
+      "planned_action": "retire_after_cutover",
+      "purpose": "旧一次対応・相槌・最終回答の制御",
+      "sha256": "94d5e73bd10ac3166947552d2f9663ec4bb95499199ed7e8e471d5846dcc043f",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/mod.rs",
+      "group": "B",
+      "planned_action": "extract_resources_then_retire_old_owner",
+      "purpose": "資源処理を独立させて旧会話Ownerを撤去",
+      "sha256": "70742189ccba8bef4ed0fd031041632934bd4d675490b422b7283bc7bc89e161",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/audio.rs",
+      "group": "B",
+      "planned_action": "extract_resources_then_retire_old_owner",
+      "purpose": "資源処理を独立させて旧会話Ownerを撤去",
+      "sha256": "e8af3e0b4c2c140a61c28c7585f8c57988bf10056397ea2b04a26b858b2ffba1",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/profile.rs",
+      "group": "B",
+      "planned_action": "extract_resources_then_retire_old_owner",
+      "purpose": "資源処理を独立させて旧会話Ownerを撤去",
+      "sha256": "4bb9cf116d77f8b55f15fdd809ee519ca69a6a2060df67bf90c37ade933a571c",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/larmVoiceOwner.ts",
+      "group": "B",
+      "planned_action": "extract_resources_then_retire_old_owner",
+      "purpose": "資源処理を独立させて旧会話Ownerを撤去",
+      "sha256": "e3a573c4699553e59730c54e82590702b6b723c3b0577dca0ace6b0c59527421",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/larmVoiceRuntime.ts",
+      "group": "B",
+      "planned_action": "extract_resources_then_retire_old_owner",
+      "purpose": "資源処理を独立させて旧会話Ownerを撤去",
+      "sha256": "5d2de924d9f15fdb345317551eacaead23d85929afa24d984a35c3cb6464ed3a",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/larmVoiceDrain.ts",
+      "group": "B",
+      "planned_action": "extract_resources_then_retire_old_owner",
+      "purpose": "資源処理を独立させて旧会話Ownerを撤去",
+      "sha256": "dff43094c640697e4ef9b41bf0ba5ad7c7ec4ced61a66b225cfa7dccdbe0c1ec",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/useLarmVoiceLifetime.ts",
+      "group": "B",
+      "planned_action": "extract_resources_then_retire_old_owner",
+      "purpose": "資源処理を独立させて旧会話Ownerを撤去",
+      "sha256": "5b6ba140b27d379f6bbf6ca23b153c924489401d1013305b84b9285ffc191ac4",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/chat/useLarmConnectionStatus.ts",
+      "group": "B",
+      "planned_action": "extract_resources_then_retire_old_owner",
+      "purpose": "資源処理を独立させて旧会話Ownerを撤去",
+      "sha256": "13dd85b329f55c55076b1ce14b0edeea861eda0606e664ef6e87a0a471f08a61",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_turn.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "f40ba5c14d76c13fbcd94a46e7cf20ec1cce48d16aa7d3d742debe839e06adbb",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_provider_route.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "3c68e1b94d70b87c632484556a1ba0e45e845c03e19148db66f31063c1de46d9",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_provider_route.d/01.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "465e6ea24a62bd23266bfc5a265f874f66e7b536d487dbb2e0e0f5a651f331dc",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_provider_route.d/02.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "54632344fd76e18556a79d2ba5fb73fe103331bf6abcb88ad0deb3d5dd51c518",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_inputs.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "456b824ee2ee129b7acc75865db3362428e86cc316799209d725c9278b16554b",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_inputs_roles.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "28b1a4c183eeb622c3366e4a372b59417d9748bc0d78543ef889c9c33e736321",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_inputs_roles/role_dispatch.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "f9bf197cdbf5fcfcc5140eb5b5edb7070c6f3653f0a71fa4fb292eb4fbdf7d85",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_inputs_roles/tests.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "6607967a5a5f74c5813f81417bbfc690a4e05905f242ce165a537a009b120251",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_prepare.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "b87c6b91e5e68b0cb1dd967907448ca1be0e8e9bc2cc9b346d923085be8f6b2a",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_context.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "d549686139041551af5df55235158e8f748b698aadc0eea37f51876cf72901dc",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_stream.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "0ca897c9c3b7e586b394da145954ba5572e7817abcc3ce55580a526f033605e9",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_controller/classifier.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "de0246ce440f24e5e7628af48ae8693d4166d59e3429ab1d7eafb0f18fbe0dba",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_controller/mod.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "9de91e1a55ecc315e546b6483e17fee61fb546f54ab51ea3d4b1f39884b34070",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_controller/payload.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "26c43ad79973ffa98d7548fcd1eb7fe5d6d1cc949dc9d0f3d45121f76e76f88d",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_controller/tests.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "94cde7242c227fbb2ed3b55c6258915245e37a72914f4cd70899ddc2cae2d760",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_controller/world_eval_tests.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "705665604251e8381cec11c9bcac3a252391f74fdf4c5640c81a0be7f5c32847",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_role_steps.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "37ab7d95b1cd74402c9e39c63952a4bfa018fb16afe0785c8627ddea5024c100",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/role_step_sink.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "106bd7cb03c555e06f5d0b86a4c553c8f5bcd02c4ae84e09d6210e1f6c950a99",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_state_answer.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "82f7668ee7fbd80c03797456e22a577aea829d4934d183fd36e374bf380e7a31",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_state_card.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "8173a7b79165b8a0553af43b38fdfb0e1a0a413f52ee71280325a967606752fb",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/stream/larm_voice.rs",
+      "group": "C",
+      "planned_action": "retire_conversation_orchestration_after_cutover",
+      "purpose": "旧通常会話・Role Routing接続の撤去",
+      "sha256": "0cf207aa7f24ecd29e5363dd8e6d971b5331f710ebf452ddd8fcb6838e27121c",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/useAmbientVoiceSession.ts",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "f3f4976785b7b2ea32583adf6217f1fcb78745ceedab65ff6b240d751ceffe8f",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src/features/voice/ambientVoiceCapture.ts",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "41aef0b84dc52abe2db55a949a56243f75c4c852acc026ab5e1e8e48794d8e50",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src/features/voice/ambientVoiceCaptureActions.ts",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "af70cd76742747ac83f325d1d03bb9dd904d4f67f811c7341bcb807056b1004d",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src/features/voice/ambientVoiceCaptureContext.ts",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "5ca6c348020ac0b19bcf6276cfd7c8da99fa96bee41ca301f2ff5d5bf12a6fd8",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/ambientVoiceTypes.ts",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "aab3392f9d669a81a2476d20a33e6d265ab1a3ef55f0212207e70519b7618eb6",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/voiceFinalDeliveryQueue.ts",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "12a0471264703bc98592faadd877ff0b61f2b44c14deb810e938e2309d49c846",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/voiceAsrRuntime.ts",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "e86f35072591ea6cdef7b8049feeac67dc71e66cb0d4970b241521d022d6c769",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/commands.rs",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "6c3b7c3a9b6f51c8429b3ca9a474f2f156d030990ed7fa7a14dfd86a215272eb",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/manager.rs",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "ebba49146e5a84115dd8296821ea46f9156817bb4d9560585ca10e69d8bce992",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/session.rs",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "39ea8e7710ce09a79ce1b8932b16872b36206e1a095c11bc303a950bccc971e7",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/route.rs",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "43a27a58e3816277790dcf9a1c27e2b1414c17cf08b2de1816499a20e4ed3837",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/batch_runtime.rs",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "a497d0143c5bd7add2a6510b0cd2e804ce8b7e5c82495b38b0457c55ea49eb8a",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/session/asr.rs",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "208e08b76e2d30548c1ac238000bd85002f574b171d9dd1efbb60767e3cb1843",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/session/asr_routes.rs",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "2311dbc9a2fdcf33d9039bc63788f192d144a70debaf0016d4d2f370c031ffde",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/persistence/audit/voice_frontend_observer.rs",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "d586b519b04b4616febae5cdb7ebe6d519f80fa668710e52dc7cfcf5ff57586a",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/voice_frontend.rs",
+      "group": "D",
+      "planned_action": "replace_lifecycle_keep_io_or_pure_helpers_separate",
+      "purpose": "旧ASR・UI待受け制御を置換",
+      "sha256": "839cff3a5353a1dec73147c261678559964ad7ad6fd7760a4fc6ee0aecd6d351",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_tts.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "99cecf963b75a0ec08e8751a018f00ed544e8c1215a8ccb353fe92bbf625d854",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_tts/runtime.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "4436159a23bb5f52e11c63006eb5fbd6c533d4fe419f999370977bbe6ea1f74c",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_tts/runtime/streaming_speech_runtime.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "26cadd5d6cc164fccca01e28405a92fb2a612ca3d8267b49a073b27819826d19",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_tts/runtime/render_session_inner.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "b133384f56f902105f5a7dea57f72057ed5b662acece51acb55e64e4e76d7fbc",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_tts/fallback.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "f8a68fc1cba169f8356d06103e03c63507e0295d843c216af02467c9958f7381",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_tts/chunker.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "470464f376a93baf1a801442e7f5445a7a77a9ff2982a8dedbbe420cdcd37106",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_tts/chunker/is_weak_boundary.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "5f788736ba0df8e274c7aca5b63a1111953290c70b884d3d7679da67064e5b89",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_tts/chunker/select_reason.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "cdd6579d60d87b67b0fb37199665565c79644612ebb50b37076ebf7f161e1afc",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/session/tts.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "7a7e5fada92b7cdc1a86ce4181fc6c7470cacfaf522f6163688aaf339c1bb92c",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/session/tts_policy.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "c7d007dc6b42420c3cce4afd62f76e4c772cfa4e5431ba4087877a7ea2460f77",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/role_routing/speech_queue.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "a1eddfbfcf0c8125070b15925445c1a19c37f954895eeb84ba57b331bff6227d",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/role_routing/speech_repository.rs",
+      "group": "E",
+      "planned_action": "replace_speech_owner_and_migrate_shared_callers",
+      "purpose": "旧TTSスケジューラ・発話順序制御を置換",
+      "sha256": "7e0584de00e7082880f86b5f2d6611278be9e289463c950af99c7b21ff489f4d",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "832147aab738ef0a81a93372a4250d201408939d0ae72b30a4e90fa4ac03a419",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/app_state.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "32d41727871c865c4264566fca017509e30f504eacd459282edca7aa6ad3db8a",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/test_state.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "cb28f26b1a2f007147bf9da3b3944bb33aa39c63738c555dcef8647059ca1b89",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/mod.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "0d4aa5ba89edf94a9b9db784fb166f8a2e44b1e105985a6c5f7814f7faa37d02",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/command_registry.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "43437a8f9b60aec7e70d9c06ade84237c66bb608b7ef75b4c840f0d857ffd2ef",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/start_turn.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "a8c965edd3e47ab41707bc1fdb0ae8cf7d352b7865ab26d0e9905a002d295ec6",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/turns.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "c4f9be09a25f1e656c6c04682b30831265fc1e0c65ffb7727269ea5161370a03",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/turns/execute_turn.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "4e68fc9911d173caba46ed2a31d22a14a9b52abd1ca513446d79ab80a6e42164",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/turns/prepare_runtime_run.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "2a20d0cc328981499468ead14f458b5e17d4b545d747330bcbd29b85a86703e5",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/event_hub.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "95442b7509237f040866881fb50ec499994821be637dd04765d681d44763d335",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/persistence/schema.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "591633043388875e2ed97008ce1c4a243b93aa22272f4a4d558f6d0a6e3e2a6b",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/persistence/app_commands.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "0e93155944cafd837e0eecffc129b327e74093e0876b63db00b305c6c946bdfd",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/providers/session_store.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "fa33d44d358947105aec3472f9930e57353d4f750b71ae22219fa6dc4d1644a4",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/chat/ChatPage.tsx",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "a6b19639d08377d3e5439c03a3c359306428619aca2f6b4a9741b1fd1b845f12",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/chat/useConversationTurn.ts",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "8f1c269c63df257fbb411c96118c1990edafe0de7a882e017644176d89895939",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/chat/conversationTurnControls.ts",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "e1806605b03063728c183a1150ed05cdfe36a53b1049ca301f14e25c1331662d",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/conversationSession.ts",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "962f568647e3e85f64d723868e977b0655fdb7d848e324a87914efaf50e00422",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/conversationTimeout.ts",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "12b53a46c0cbef8e785c2da9ee102a95df3b413e0ed0876993ec0751860a1ac7",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/reasoningRun.ts",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "1fb838ab5a27c00bcca2abbe89fede557c227fa490a192dfe607c673319b9898",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/reasoningRunControl.ts",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "ae439bf8ec57e9f0bd3851e9ee5ae709966872894208b03dfe75c90607ef71dc",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/butler_loop/mod.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "134657f0c615c21cabefcd55c30955f919210adf45c21f7a9ca9142dbf7b9323",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/butler_loop/command.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "f5d35e1b141290d6edd430513bae1f9f3b058d805247af476cd8c287d8b19db0",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/butler_loop/ledger.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "1438b0b0a4fdf4a9b893a3bafab0673c3f228db0f368417625a4db5e97944bdb",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/role_routing/repository_turns/start.rs",
+      "group": "F",
+      "planned_action": "partial_edit_preserve_other_modes",
+      "purpose": "共有入口・保存・UIは会話制御部分だけ撤去",
+      "sha256": "ff5aca65e3ce7fa91d37a407178c4778af6ac81e14a9dd37cf3796956978efed",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/chat/useWorldScope.ts",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "e9c81d8f5cef2c3d7f9debf4c62cb5dae995fcb347938f042b3d8d7cc96444fe",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/chat/WorldScopeSelector.tsx",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "0b026a6c984316027f5fc57d9f14f34f0e94b14f90311679de6b733ae550cd41",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/chat/requiredContextRecovery.ts",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "96a1108bf49fed13e583851d97f0a1b8627700cc28408c09d3302e6407194201",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/context/broker.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "fd551c0d8f700826ff9a40f7d3308e7f74e3b67e8c4fc11c23ff0be1289163c0",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/context/scope.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "9724d81ecfe81eb0c8c9012aa004167b4c6c9b9918404be804424eb2054ab7d5",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/context/required.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "8ab3de1139949f8bd2af752ff06fb4c5af26dece1418a3dbfa8f62f271e69e8f",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/context/state_answer.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "5726dbfabb94e04a2a2dac490be4388631d150b276c22d307cca40a5e0d86a74",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/turn.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "4727fea56ddb74ff0a61b79badd1b392e62bade6691fcc8b4a6a59449586885b",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/state_claim.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "4bfdcb9e336eb38b64a2aae396b110c9c4937585e2f028a10bcde002bc914b1a",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/dispatch.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "f575514b7bb33191f5eeaf1e4b1c79f713c5a2f3fdc900bdee5f3dbe14a1935d",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/mod.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "152cf72a70c4b5c548607e1037e28518dc3b2ea620b8167d307838f52fb16fc9",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/generation.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "a240f31744f5ec15efd79f6312946e64d8f47b845fcbaa26bb4beec07ec48bf0",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/world_body.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "38e712005642a646d1b69a61654b8873e0f2abdeab59c0685cc3bb2877de4b66",
+      "frozen_domains": [
+        "initial-response"
+      ]
+    },
+    {
+      "path": "src-tauri/src/providers/stream/attempt.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "5a2fe15209418b834d9c4a58d0761efe4665a60435ef72de8f43a89584cb5d3d",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/output.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "ef3c79cdcd072c0c69894a337fba225eaec9c0c5a9fb7cf8272c23c527f0a557",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/product_binding.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "f78683a4dea226c20b30c26d8c87d1116d5b9226f3c21963e2627067e0645e20",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/worker.rs",
+      "group": "G",
+      "planned_action": "disconnect_conversation_memory_world_preserve_storage",
+      "purpose": "会話からMemory・World接続を切る",
+      "sha256": "188a30d59e4ec382bf528dffa86704656f7e717ded0b5efdb5147d8769d704bc",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/qwen_control_stream.rs",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "3476a51a01db99d5b4aab92e64da2bbbf62ca500566ef431155aa76d3ca61bd9",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/batch_engine.rs",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "8b15fc6b2f04801d42ed4f066ea13104533808b6ce7c115dfc9f0e33aa2dd057",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/reconciler.rs",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "fb242b603d51414bef0cd359223981ecac473725ac0ecda6443bf0f8ad493844",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/speaker_gate.rs",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "7328655253a373d6ccfbd150a6f04aa8c585b2cbb4e02957e22a21db35b84b34",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/speaker_gate_runtime.rs",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "405478e8f8003410d363b60fc72862acf6ac0c7a9d21b0eb9b20d886c4e81f6f",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src/features/voice/VoiceCaptureResources.ts",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "30c93da4508aacbc8558406f91219137fd2ba61a0084ff764f256f780405e1e9",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/ambientNativeVoiceCapture.ts",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "6d862563cbb1afc7c8fe07eae79533326ebb16b8835d123f93214afadfe5b560",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/ambientWorkletVoiceCapture.ts",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "6f10c0eadbfa6a7efad69cde324ea0cd2a47ae4cf4b10dfe47a739a5a62f79ec",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/voiceAsrPacketSender.ts",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "a278a7462d07525020eadf020cb131231acec60da1ec55402e7749bf87a26e7a",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/voiceAsrPacketizer.ts",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "9e536e7a3aad936806faebd32b3dac19d2271d8448e95b4cd813bd8068c62620",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/voiceAsrProjection.ts",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "0b05428a9f269177de9e62a71dd7e49102d2fa7a54acbe2a4e836640bf703304",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/features/voice/voiceSegmentBoundary.ts",
+      "group": "H",
+      "planned_action": "audit_and_move_pure_parts_only",
+      "purpose": "再利用の候補は旧実行経路を含めず精査",
+      "sha256": "8cfebbdd5e7cce512ac56b09c88f77ae2bda79979da966ce5cd299b42f92c448",
+      "frozen_domains": []
+    },
+    {
+      "path": "scripts/critical-path-freeze.ts",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "2c41850bae4d9bd47ff7f805132b3579858d94f09253fac977b50c703401fa7b",
+      "frozen_domains": []
+    },
+    {
+      "path": "critical-path-freeze.json",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "76593f0cf1567fde68e6a9a48c1a7767691e177bc88d3977f82a346069a56e22",
+      "frozen_domains": []
+    },
+    {
+      "path": "scripts/module-size-baseline.json",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "25681fcda4c4ddfa1dbd3891e28e92a5414f999cbf249989d69f03b07e5d5e8c",
+      "frozen_domains": []
+    },
+    {
+      "path": "scripts/clippy-warning-baseline.json",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "848445adfe1a3eca040b923e4808b410e89b996a3ef01122999958be5f58a7b7",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/quality_eval.rs",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "ce02d601fd5f71aa9c67f801914577b51b30257637299f8445814171deeb3a31",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice_asr_contract.rs",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "953dc8a54e61378948f2a8f088c7583cd28dc48e5f4ebe6610a9d245ce85e679",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_asr/contracts.rs",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "0bc2c970a85ffa07044975e829ace10400586e9cc760549c84eac2ced4afb1da",
+      "frozen_domains": [
+        "asr"
+      ]
+    },
+    {
+      "path": "src-tauri/examples/export_voice_asr_bindings.rs",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "cadee3b2e76e78d7669f7e6f87f8843479206b04998c370d18269572b1ae07a5",
+      "frozen_domains": []
+    },
+    {
+      "path": "src/lib/generated/voiceAsr.ts",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "5a4200add5b8e4c23c4c282d4ce207fad0dc2f245e4a4eedcace618869258e33",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/tests/voice_asr_contract_bindings.rs",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "e55dbedbeac240fd472dea789038ccbd0e92a0d7bca5a9ce8a284eb630a35d88",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/tests/ipc_contract_bindings.rs",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "b4be4e91f037973892d2d212d066a0a45ecbf8f82992f482e8a2e0bd5b4f42e1",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/README.md",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "d1502849551df53dab174b79585695a1b1c3efe90964f1efbe06471158a2bd81",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/runtime/README.md",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "e2dd3dee453ab6cb072b782aae6daae6ffe99c3d756e59b7df8bbe3095a9a4bf",
+      "frozen_domains": []
+    },
+    {
+      "path": "spec/docs/saaa-jarvis-five-provider-implementation-plan-v1.md",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "2d4e368ab6508e56ddbaa1c8399e009df195efd56fa630fd6a4aeaa9a44bf7ea",
+      "frozen_domains": []
+    },
+    {
+      "path": "tests/ambient-voice-session.test.tsx",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "1705b0f352253327b5954c05af505141b2d575d52601a2f899594ee48adde318",
+      "frozen_domains": []
+    },
+    {
+      "path": "tests/voice-capture-races.test.ts",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "00414e6a8fc2a24fffdb512838fb19e46f8827226079fa94af9dd5ddda278fdb",
+      "frozen_domains": []
+    },
+    {
+      "path": "tests/voice-asr-packet-sender.test.ts",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "3f30dc2aac13021b49f677f9c5142cf2dcd1282c46fc6f198eba6fc3f2dfbc4d",
+      "frozen_domains": []
+    },
+    {
+      "path": "tests/streaming-speech.test.ts",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "c00b26d6ffc7b9fab11db3f5a99c0a0cd4e3522abc59f2f77f7bc48f9cb106bd",
+      "frozen_domains": []
+    },
+    {
+      "path": "tests/larm-voice-owner.test.ts",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "ff14d80ff20e40aa526fca84c21cb82a739422b313e07416d2f52b020d9bd4e8",
+      "frozen_domains": []
+    },
+    {
+      "path": "tests/larm-voice-drain.test.ts",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "42110942f2e9484a7556b902f5d2d586941569125b641c8a9c0bff742da03baa",
+      "frozen_domains": []
+    },
+    {
+      "path": "tests/larm-voice-lifetime.test.tsx",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "893cd519c14a17ab80dba6cfbfc828c51ae1ba9f51328293088245ebd168c15a",
+      "frozen_domains": []
+    },
+    {
+      "path": "tests/runtime-ipc.test.ts",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "ffacbd646e469be51f6a42099c56b160cbd1eb2be4c6b195b6b531cf34a81800",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/frontdesk_repository_tests.rs",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "d16f408dd37355dba9f9974b22de4a15b6596c0a4cdc4b702bd34e35587092ab",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/providers/larm_voice/butler_route_tests.rs",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "a8f669b45794a7f6db27cbf8dec53569d9d83cc54c8975cc25a2c234e5a3facb",
+      "frozen_domains": []
+    },
+    {
+      "path": "src-tauri/src/voice/streaming_tts/runtime/tests.rs",
+      "group": "I",
+      "planned_action": "update_tests_bindings_freeze_and_docs",
+      "purpose": "試験・登録・凍結・旧設計文書の更新",
+      "sha256": "8c3d394a3ceb98ae9832f8fd283425aa8cd8cbdc66ddcd761ac49c539bf28043",
+      "frozen_domains": []
+    }
+  ]
+}
