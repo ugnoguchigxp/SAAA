@@ -38,6 +38,7 @@ macro_rules! saaa_invoke_handler {
             runtime::turns::command::start_turn,
             runtime::conversation_check::submit_conversation_text,
             runtime::conversation_check::transcribe_conversation_audio,
+            runtime::conversation_check::release_conversation_asr_session,
             runtime::image_input::commands::prepare_composer_image,
             runtime::image_input::commands::discard_composer_image,
             runtime::image_input::commands::claim_turn_image,

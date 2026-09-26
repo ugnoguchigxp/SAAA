@@ -151,6 +151,10 @@ export async function transcribeConversationAudio(audioUploadId: string): Promis
   return invoke("transcribe_conversation_audio", { input: { audioUploadId } });
 }
 
+export async function releaseConversationAsrSession(): Promise<void> {
+  return invoke("release_conversation_asr_session");
+}
+
 export async function prepareComposerImage(png: Uint8Array): Promise<{
   id: string;
   width: number;

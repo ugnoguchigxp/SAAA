@@ -2,7 +2,7 @@
 //! The full reasoning and speech response host is still under construction.
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, OnceLock,
 };
 
 use rusqlite::{params, OptionalExtension};
@@ -14,6 +14,16 @@ use crate::{
 };
 
 static BUSY: AtomicBool = AtomicBool::new(false);
+static ASR_SESSION: OnceLock<tokio::sync::Mutex<Option<CachedAsrSession>>> = OnceLock::new();
+
+struct CachedAsrSession {
+    route: String,
+    session: Arc<saaa_larm_session::Session>,
+}
+
+fn asr_session() -> &'static tokio::sync::Mutex<Option<CachedAsrSession>> {
+    ASR_SESSION.get_or_init(|| tokio::sync::Mutex::new(None))
+}
 
 struct BusyGuard;
 impl BusyGuard {
@@ -85,17 +95,19 @@ pub(crate) async fn transcribe_conversation_audio(
     })?;
     let cancellation = Arc::new(RunCancellation::default());
     let (text, language, provider_label) = if route.source == "harness" {
-        let session = connect_larm(&providers).await?;
-        let result = async {
+        let timeout = std::time::Duration::from_millis(route.timeout_ms.min(120_000));
+        let session = tokio::time::timeout(timeout, cached_larm_asr(&providers))
+            .await
+            .map_err(|_| {
+                "LARMのProvider接続準備が時間内に完了せず、ASRへ音声を送れませんでした。"
+                    .to_string()
+            })??;
+        let result = tokio::time::timeout(timeout, async {
             let lease = session.acquire("asr").await.map_err(str::to_string)?;
             if lease.provider().protocol != "openai.audio-transcriptions.v1" {
                 return Err("選択済みLARMのASRプロトコルに対応していません。".into());
             }
-            let budget = lease
-                .request_budget(std::time::Duration::from_millis(
-                    route.timeout_ms.min(120_000),
-                ))
-                .map_err(str::to_string)?;
+            let budget = lease.request_budget(timeout).map_err(str::to_string)?;
             let provider = crate::providers::larm_resources::audio::asr_settings(lease.provider());
             crate::voice::cloud_asr::transcribe_full(
                 &provider,
@@ -106,12 +118,18 @@ pub(crate) async fn transcribe_conversation_audio(
                 Some(lease.provider().token()),
             )
             .await
+        })
+        .await
+        .map_err(|_| "ASRの文字起こしが時間内に完了しませんでした。".to_string());
+        let reset_session = match &result {
+            Err(_) => true,
+            Ok(Err(error)) => !error.starts_with("ASR_NO_SPEECH:"),
+            Ok(Ok(_)) => false,
+        };
+        if reset_session {
+            release_conversation_asr_session().await?;
         }
-        .await;
-        if session.close().await.is_err() {
-            return Err("LARM接続の解放を確認できませんでした。".into());
-        }
-        let (text, language) = result?;
+        let (text, language) = result??;
         (text, language, "LARM ASR".to_string())
     } else {
         let provider = providers
@@ -140,6 +158,52 @@ pub(crate) async fn transcribe_conversation_audio(
         language,
         provider_label,
     })
+}
+
+#[tauri::command]
+pub(crate) async fn release_conversation_asr_session() -> Result<(), String> {
+    let previous = asr_session().lock().await.take();
+    if let Some(previous) = previous {
+        previous
+            .session
+            .close()
+            .await
+            .map_err(|_| "LARMのASR接続を解放できませんでした。".to_string())?;
+    }
+    Ok(())
+}
+
+async fn cached_larm_asr(
+    providers: &crate::ModelProvidersSettings,
+) -> Result<Arc<saaa_larm_session::Session>, String> {
+    let route = format!(
+        "{}|{}",
+        providers.harness.address,
+        crate::providers::larm_resources::profile::label(
+            &crate::providers::larm_resources::profile::preference(
+                providers.harness.larm_profile.as_deref(),
+            ),
+        )
+    );
+    let mut cache = asr_session().lock().await;
+    if let Some(cached) = cache.as_ref() {
+        if cached.route == route {
+            return Ok(Arc::clone(&cached.session));
+        }
+    }
+    if let Some(previous) = cache.take() {
+        previous
+            .session
+            .close()
+            .await
+            .map_err(|_| "以前のLARM ASR接続を解放できませんでした。".to_string())?;
+    }
+    let session = connect_larm(providers).await?;
+    *cache = Some(CachedAsrSession {
+        route,
+        session: Arc::clone(&session),
+    });
+    Ok(session)
 }
 
 #[tauri::command]

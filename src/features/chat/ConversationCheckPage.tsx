@@ -44,6 +44,7 @@ export function ConversationCheckPage({
     .map((capture) => capture.text)
     .filter((value): value is string => value !== null && value.length > 0)
     .join("\n");
+  const latestAsrError = captures.find((capture) => capture.status === "failed")?.error;
   const pendingId = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -162,7 +163,7 @@ export function ConversationCheckPage({
         {audio.error && <p role="alert" className="conversation-check-error">{audio.error}</p>}
         <section className="conversation-check-transcript" aria-label="文字起こし全文" aria-live="polite">
           <h2>文字起こし全文（この起動中）</h2>
-          <pre>{fullTranscript || "文字起こし結果を待っています。"}</pre>
+          <pre>{fullTranscript || latestAsrError || "文字起こし結果を待っています。"}</pre>
         </section>
         <div className="conversation-check-capture-list" aria-label="ASRの区間ごとの結果">
           <h2>区間ごとの結果</h2>
@@ -172,11 +173,13 @@ export function ConversationCheckPage({
                 区間 {captures.length - index} · {capture.recordedAt} · {capture.seconds.toFixed(1)}秒
               </strong>
               <p>
-                {capture.status === "transcribing"
-                  ? "文字起こし中…"
-                  : capture.text
-                    ? "文字起こし完了"
-                    : "文字起こしなし"}
+                {capture.status === "queued"
+                  ? "前の区間のASR処理を待機中…"
+                  : capture.status === "transcribing"
+                    ? "ASR接続・文字起こし中…"
+                    : capture.text
+                      ? "文字起こし完了"
+                      : "文字起こしなし"}
               </p>
               {capture.text && (
                 <button

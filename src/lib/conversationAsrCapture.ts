@@ -1,15 +1,16 @@
 import { stageAudioUpload } from "./audioIpc";
 import { startBrowserVoiceCapture, type BrowserVoiceCapture } from "./browserVoiceCapture";
 import { microphoneErrorMessage } from "./microphone";
-import { transcribeConversationAudio } from "./runtime";
+import { releaseConversationAsrSession, transcribeConversationAudio } from "./runtime";
 
 const CHUNK_SAMPLES = 16_000 * 10;
+const MAX_PENDING_CHUNKS = 24;
 
 export type CaptureEntry = {
   id: string;
   recordedAt: string;
   seconds: number;
-  status: "transcribing" | "completed" | "failed";
+  status: "queued" | "transcribing" | "completed" | "failed";
   text: string | null;
   language: string | null;
   provider: string | null;
@@ -30,6 +31,7 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 let capture: BrowserVoiceCapture | null = null;
 // Serialize uploads so a slow ASR response never exhausts the bounded staging store.
 let transcriptionQueue: Promise<void> = Promise.resolve();
+let pendingChunks = 0;
 
 export function subscribeConversationAsr(listener: () => void) {
   listeners.add(listener);
@@ -91,7 +93,7 @@ function flushChunk(reason?: string) {
     id,
     recordedAt: new Date().toLocaleString(),
     seconds: samples.length / 16_000,
-    status: "transcribing",
+    status: "queued",
     text: null,
     language: null,
     provider: null,
@@ -103,8 +105,18 @@ function flushChunk(reason?: string) {
     samples.fill(0);
     return;
   }
+  if (pendingChunks >= MAX_PENDING_CHUNKS) {
+    updateEntry(id, {
+      status: "failed",
+      error: "ASR処理が滞留しているため、この区間を送信できませんでした。",
+    });
+    samples.fill(0);
+    return;
+  }
+  pendingChunks += 1;
   transcriptionQueue = transcriptionQueue.then(async () => {
     try {
+      updateEntry(id, { status: "transcribing" });
       const uploadId = await stageAudioUpload(samples, "conversation-asr");
       samples.fill(0);
       const result = await transcribeConversationAudio(uploadId);
@@ -121,6 +133,7 @@ function flushChunk(reason?: string) {
       });
     } finally {
       samples.fill(0);
+      pendingChunks -= 1;
     }
   });
 }
@@ -166,4 +179,7 @@ export async function stopConversationAsr(reason?: string) {
   }
   flushChunk(error ?? undefined);
   publish({ phase: "idle", error });
+  transcriptionQueue = transcriptionQueue.then(releaseConversationAsrSession).catch((cause) => {
+    publish({ error: String(cause) });
+  });
 }
