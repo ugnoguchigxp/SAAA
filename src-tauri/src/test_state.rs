@@ -42,7 +42,7 @@ pub(crate) fn app_state_with_capabilities(
         interaction_policy: Mutex::new(()),
         shutdown_started: AtomicBool::new(false),
         audio_uploads: voice::audio_upload::AudioUploadStore::default(),
-        streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
+        streaming_tts: voice::unavailable_speech::UnavailableSpeechRuntime,
         voice_behavior: crate::voice_behavior::VoiceBehaviorRuntime::default(),
         situation: Arc::new(
             situation::SituationRuntime::new(settings, None)
@@ -51,7 +51,6 @@ pub(crate) fn app_state_with_capabilities(
         voice_profile: Arc::new(voice::profile::VoiceProfileRuntime::unavailable_for_tests(
             PathBuf::new(),
         )),
-        voice_asr: voice::streaming_asr::AsrSessionManager::default(),
         generated_capabilities,
         generation: None,
         generated_tools: GeneratedToolsConfig::disabled(),

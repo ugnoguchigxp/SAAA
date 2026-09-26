@@ -23,10 +23,6 @@ pub(crate) use crate::runtime::codex_turn::{
 pub(crate) use crate::runtime::turns::finish_runtime_run;
 #[cfg(test)]
 pub(crate) use crate::runtime::turns::prepare_runtime_run;
-use crate::voice::streaming_asr::{
-    append_voice_asr_audio, commit_voice_asr_utterance, start_voice_asr_session,
-    stop_voice_asr_session, AsrSessionManager,
-};
 use crate::voice_behavior::{
     get_conversation_voice_policy, reset_conversation_voice_policy,
     update_conversation_voice_policy,
@@ -351,7 +347,6 @@ pub(super) fn shutdown_app_state(state: &AppState) {
     }
     // Stop the published MCP listener; the D4 manager and result writer stay alive for their tasks.
     crate::tool_selection::mcp_server::shutdown_slot(&state.mcp_server);
-    state.voice_asr.shutdown();
     state.streaming_tts.shutdown();
     if let Ok(active_runs) = state.active_runs.lock() {
         for cancellation in active_runs.values() {

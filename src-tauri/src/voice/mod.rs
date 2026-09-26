@@ -9,3 +9,4 @@ pub mod profile;
 pub mod speaker;
 pub mod streaming_asr;
 pub mod system_tts;
+pub(crate) mod unavailable_speech;

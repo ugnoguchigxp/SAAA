@@ -216,13 +216,12 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         interaction_policy: Mutex::new(()),
         shutdown_started: AtomicBool::new(false),
         audio_uploads: voice::audio_upload::AudioUploadStore::default(),
-        streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
+        streaming_tts: voice::unavailable_speech::UnavailableSpeechRuntime,
         voice_behavior: crate::voice_behavior::VoiceBehaviorRuntime::default(),
         situation: Arc::new(situation::SituationRuntime::new(situation_settings, None)?),
         voice_profile: Arc::new(voice::profile::VoiceProfileRuntime::unavailable_for_tests(
             PathBuf::new(),
         )),
-        voice_asr: voice::streaming_asr::AsrSessionManager::default(),
         generated_capabilities,
         generation: None,
         generated_tools: crate::generated_capabilities::publication::GeneratedToolsConfig::disabled(

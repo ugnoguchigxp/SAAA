@@ -78,10 +78,6 @@ use voice::audio_backend::commands::{
     audio_backend_status, interrupt_native_voice_playback, start_native_voice_capture,
     stop_native_voice_capture,
 };
-use voice::streaming_asr::{
-    append_voice_asr_audio, commit_voice_asr_utterance, start_voice_asr_session,
-    stop_voice_asr_session, AsrSessionManager,
-};
 use voice_behavior::{
     get_conversation_voice_policy, reset_conversation_voice_policy,
     update_conversation_voice_policy,
@@ -344,11 +340,10 @@ pub fn run() {
                 interaction_policy: Mutex::new(()),
                 shutdown_started: AtomicBool::new(false),
                 audio_uploads: voice::audio_upload::AudioUploadStore::default(),
-                streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
+                streaming_tts: voice::unavailable_speech::UnavailableSpeechRuntime,
                 voice_behavior: voice_behavior::VoiceBehaviorRuntime::default(),
                 situation,
                 voice_profile,
-                voice_asr: AsrSessionManager::default(),
                 generated_capabilities,
                 generation,
                 generated_tools,

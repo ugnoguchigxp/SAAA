@@ -15,11 +15,10 @@ pub(super) struct AppState {
     pub(super) interaction_policy: Mutex<()>,
     pub(super) shutdown_started: AtomicBool,
     pub(super) audio_uploads: voice::audio_upload::AudioUploadStore,
-    pub(super) streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime,
+    pub(super) streaming_tts: voice::unavailable_speech::UnavailableSpeechRuntime,
     pub(super) voice_behavior: voice_behavior::VoiceBehaviorRuntime,
     pub(super) situation: Arc<situation::SituationRuntime>,
     pub(super) voice_profile: Arc<voice::profile::VoiceProfileRuntime>,
-    pub(super) voice_asr: AsrSessionManager,
     pub(super) generated_capabilities: Arc<generated_capabilities::service::CapabilityService>,
     pub(super) generation:
         Option<Arc<generated_capabilities::generation::service::GenerationService>>,

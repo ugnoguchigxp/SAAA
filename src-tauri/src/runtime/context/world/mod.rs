@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub(crate) mod app_frame;
 pub(crate) mod capabilities;
+pub(crate) mod dispatch;
 mod g1_perf_tests;
 pub(crate) mod g1_tests;
 pub(crate) mod host_answer;
@@ -16,4 +17,6 @@ mod shadow_perf_tests;
 mod shadow_tests;
 pub(crate) mod source;
 mod source_tests;
+pub(crate) mod state_claim;
+pub(crate) mod turn;
 pub(crate) mod wire_test_support;

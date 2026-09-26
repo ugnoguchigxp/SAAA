@@ -1,6 +1,7 @@
 //! Ownership, invariants, and code lookup: README.md in this directory.
 pub(crate) mod adapter_contract;
 pub(crate) mod agent_session;
+pub(crate) mod chat_completions;
 pub(crate) mod completion;
 pub(crate) mod dynamic_lan;
 pub(crate) mod http;

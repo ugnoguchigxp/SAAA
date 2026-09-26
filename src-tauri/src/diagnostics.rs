@@ -19,7 +19,6 @@ pub(crate) fn export_diagnostics(state: &AppState) -> Result<LocalArtifactResult
         "situation": database.situation,
         "recentRuns": database.recent_runs,
         "providerSessions": database.provider_sessions,
-        "streamingPerformance": crate::runtime::event_hub::performance::snapshot(),
         "auditTrail": database.audit_trail,
         "personalState": state.sqlite_writer.read_serialized(crate::memory::personal_state::commands::summary)?,
         "selfDiagnosis": state.diagnosis.snapshot(),
