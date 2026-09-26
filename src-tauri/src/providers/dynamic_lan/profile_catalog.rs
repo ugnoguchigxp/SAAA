@@ -7,6 +7,7 @@ use serde::Deserialize;
 pub(super) struct AgentProfileCatalog {
     pub contract_version: String,
     pub default_agent_profile: Option<String>,
+    pub requested_profile: Option<String>,
     pub profiles: Vec<CatalogAgentProfile>,
     pub audiences: Vec<String>,
 }
@@ -48,11 +49,12 @@ mod tests {
 
     fn v3_catalog() -> serde_json::Value {
         json!({
-            "contractVersion":"agent-connection.v3", "defaultAgentProfile":"coding-default",
+            "contractVersion":"agent-connection.v3", "requestedProfile": "SAAA", "defaultAgentProfile":"coding-default",
             "audiences":["saaa-desktop"], "profiles":[
-                {"id":"asr-qwen", "providers":[{"name":"asr","capability":"speech.stt",
-                    "protocol":"openai.audio-transcriptions.v1","model":"qwen-asr"}]},
-                {"id":"coding-default", "providers":[{"name":"llm","capability":"llm.coding",
+                {"id":"coding-default", "providers":[
+                    {"name":"asr","capability":"speech.stt",
+                    "protocol":"openai.audio-transcriptions.v1","model":"qwen-asr"},
+                    {"name":"llm","capability":"llm.coding",
                     "supportedCapabilities":["llm.coding","llm.reasoning"],
                     "protocol":"openai.chat-completions.v1","model":"qwen3.8",
                     "contextWindow":{"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976}}]}
@@ -72,12 +74,12 @@ mod tests {
     #[test]
     fn v3_rejects_profile_level_budget_instead_of_inventing_a_default() {
         let mut wire = v3_catalog();
-        let budget = wire["profiles"][1]["providers"][0]
+        let budget = wire["profiles"][0]["providers"][1]
             .as_object_mut()
             .unwrap()
             .remove("contextWindow")
             .unwrap();
-        wire["profiles"][1]["contextWindow"] = budget;
+        wire["profiles"][0]["contextWindow"] = budget;
         let catalog = serde_json::from_value(wire).unwrap();
         let error = select_default_llm_profile(&catalog).unwrap_err();
         assert_eq!(error.code(), Some("harness-llm-context-window-missing"));
@@ -86,7 +88,7 @@ mod tests {
     #[test]
     fn rejects_invalid_selected_budget_with_actionable_code() {
         let mut wire = v3_catalog();
-        wire["profiles"][1]["providers"][0]["contextWindow"]["maxTokens"] = json!(0);
+        wire["profiles"][0]["providers"][1]["contextWindow"]["maxTokens"] = json!(0);
         let catalog = serde_json::from_value(wire).unwrap();
         assert_eq!(
             select_default_llm_profile(&catalog).unwrap_err().code(),

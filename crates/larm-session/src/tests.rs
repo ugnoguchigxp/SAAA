@@ -102,7 +102,7 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             }
             assert_eq!(
                 value,
-                json!({"agentProfile":"saaa-conversation-gemma4","explicitAgentProfile":true,
+                json!({"profile":"SAAA",
                 "audience":"saaa-desktop","client":"saaa-coding-agent","ttlSeconds":600,
                 "allowFallback":false,"deploymentPolicy":"existing-only"})
             );

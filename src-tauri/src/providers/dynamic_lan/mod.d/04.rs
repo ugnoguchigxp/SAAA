@@ -273,9 +273,9 @@
 
         let requests = captured_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 6);
-        assert!(requests[0].starts_with("GET /v3/agent-profiles HTTP/1.1"));
+        assert!(requests[0].starts_with("GET /v3/agent-profiles?profile=SAAA HTTP/1.1"));
         assert!(requests[1].starts_with("POST /v1/agent-connections HTTP/1.1"));
-        assert!(requests[1].contains("\"agentProfile\":\"saaa-qwen38\""));
+        assert!(requests[1].contains("\"profile\":\"SAAA\""));
         assert!(requests[1].contains("\"ttlSeconds\":300"));
         assert!(requests[2].starts_with("POST /v1/agent-connections/aconn_test/claim HTTP/1.1"));
         assert!(!requests[2]
@@ -433,9 +433,9 @@
         let body: Value =
             serde_json::from_str(requests[4].split_once("\r\n\r\n").unwrap().1).unwrap();
         harness.assert_wire(&body);
-        assert!(requests[0].starts_with("GET /v3/agent-profiles HTTP/1.1"));
+        assert!(requests[0].starts_with("GET /v3/agent-profiles?profile=SAAA HTTP/1.1"));
         assert!(requests[1].starts_with("POST /v1/agent-connections HTTP/1.1"));
-        assert!(requests[1].contains("\"agentProfile\":\"saaa-qwen38\""));
+        assert!(requests[1].contains("\"profile\":\"SAAA\""));
         assert!(requests[1].contains("\"ttlSeconds\":300"));
         assert!(requests[2].starts_with("POST /v1/agent-connections/aconn_test/claim HTTP/1.1"));
         assert!(!requests[2]

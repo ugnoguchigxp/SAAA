@@ -24,6 +24,7 @@ fn connection_state_json(
             "allocationId": "alloc_test",
             "bootEpoch": "epoch_test",
             "catalogRevision": TEST_REVISION,
+            "profile": PROFILE_SELECTOR,
             "agentProfile": AGENT_PROFILE,
             "profileRevision": TEST_REVISION,
             "audience": audience,
@@ -32,9 +33,10 @@ fn connection_state_json(
             "providers": [{
                 "name": "llm", "contextWindow": {"maxTokens":32768,"outputReserveTokens":4096,"safetyMarginTokens":1024},
                 "capability": PROFILE_CAPABILITY,
-                "route": "llm-agent-35b",
+                "supportedCapabilities": [PROFILE_CAPABILITY],
                 "protocol": "openai.chat-completions.v1",
-                "publicModel": AGENT_PROFILE,
+                "endpoint": "/v1/chat/completions",
+                "model": AGENT_PROFILE,
                 "readiness": readiness,
                 "claimable": status == "ready"
             }],
@@ -180,6 +182,7 @@ fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str)
         let profiles = AgentProfileCatalog {
             contract_version: "agent-connection.v1".to_string(),
             default_agent_profile: None,
+            requested_profile: None,
             profiles: vec![profile()],
             audiences: vec!["saaa-desktop".to_string()],
         };
@@ -196,6 +199,7 @@ fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str)
         let duplicate = AgentProfileCatalog {
             contract_version: profiles.contract_version.clone(),
             default_agent_profile: None,
+            requested_profile: None,
             profiles: vec![profile(), profile()],
             audiences: profiles.audiences.clone(),
         };
@@ -260,7 +264,7 @@ fn anonymous_claim_json(host: &str, port: u16, audience: &str, expires_at: &str)
 #[test]
     fn current_v3_profile_catalog_is_accepted() {
         let profiles: AgentProfileCatalog = serde_json::from_value(json!({
-            "contractVersion": "agent-connection.v3",
+            "contractVersion": "agent-connection.v3", "requestedProfile": "SAAA",
             "defaultAgentProfile": "coding-default",
             "profiles": [{
                 "id": "coding-default",

@@ -9,7 +9,36 @@ pub const PROVIDERS: [(&str, &str); 4] = [
     ("llm", "openai.chat-completions.v1"),
     ("embedding", "larm.embedding.v1"),
 ];
-pub const DEFAULT_PROFILE: &str = "saaa-conversation-gemma4";
+pub const DEFAULT_PROFILE: &str = "SAAA";
+
+pub(crate) fn profile_selector(profile: &str) -> Result<&str, &'static str> {
+    match profile {
+        "SAAA" | "saaa-conversation-gemma4" | "saaa-conversation-ornith15" | "saaa-qwen38" => {
+            Ok("SAAA")
+        }
+        "SAAA-w-Image" | "saaa-conversation-ornith15-image" => Ok("SAAA-w-Image"),
+        "SAAA-w-music" | "saaa-conversation-ornith15-music" => Ok("SAAA-w-music"),
+        _ => Err("larm_invalid_profile"),
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::profile_selector;
+
+    #[test]
+    fn maps_legacy_canonical_profiles_to_public_selectors() {
+        assert_eq!(profile_selector("saaa-conversation-gemma4"), Ok("SAAA"));
+        assert_eq!(
+            profile_selector("saaa-conversation-ornith15-image"),
+            Ok("SAAA-w-Image")
+        );
+        assert_eq!(
+            profile_selector("unknown-profile"),
+            Err("larm_invalid_profile")
+        );
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContextWindow {
     pub max_tokens: u64,

@@ -1,4 +1,5 @@
 pub(crate) const CONTROL_PORT: u16 = 9810;
+pub(crate) const PROFILE_SELECTOR: &str = "SAAA";
 pub(crate) const AGENT_PROFILE: &str = "saaa-qwen38";
 pub(crate) const AUDIENCE: &str = "saaa-desktop";
 const API_TOKEN_ENV: &str = "LARM_API_TOKEN";
@@ -80,6 +81,7 @@ struct ConnectionState {
     allocation_id: String,
     boot_epoch: String,
     catalog_revision: String,
+    profile: String,
     agent_profile: String,
     profile_revision: String,
     audience: String,
@@ -96,9 +98,10 @@ struct ConnectionState {
 struct ConnectionStateProvider {
     name: String,
     capability: String,
-    route: String,
+    supported_capabilities: Vec<String>,
     protocol: String,
-    public_model: String,
+    endpoint: String,
+    model: String,
     readiness: String,
     claimable: bool,
 }

@@ -69,12 +69,16 @@ impl DynamicLanConnection {
         cancellation: Arc<RunCancellation>,
     ) -> Result<Self, DynamicLanError> {
         let control_is_loopback = url_is_loopback(&control_base);
+        let mut profile_url = control_base
+            .join("v3/agent-profiles")
+            .map_err(contract_error)?;
+        profile_url
+            .query_pairs_mut()
+            .append_pair("profile", PROFILE_SELECTOR);
         let profiles = send_json_response::<AgentProfileCatalog>(
             &client,
             Method::GET,
-            control_base
-                .join("v3/agent-profiles")
-                .map_err(contract_error)?,
+            profile_url,
             control_credential.as_ref(),
             None,
             None,
@@ -87,7 +91,7 @@ impl DynamicLanConnection {
 
         let idempotency_key = format!("saaa-{}", Uuid::new_v4().simple());
         let create_body = json!({
-            "agentProfile": selected_profile.id.as_str(),
+            "profile": PROFILE_SELECTOR,
             "audience": audience.as_str(),
             "client": CLIENT_ID,
             "ttlSeconds": CONNECTION_TTL_SECONDS,
@@ -97,7 +101,7 @@ impl DynamicLanConnection {
         let create_url = control_base
             .join("v1/agent-connections")
             .map_err(contract_error)?;
-        let created = send_json_response::<ConnectionState>(
+        let created = send_json_response::<Value>(
             &client,
             Method::POST,
             create_url,
@@ -114,7 +118,36 @@ impl DynamicLanConnection {
         ) {
             return Err(contract_error(()));
         }
-        let mut state = created.value;
+        let raw_id = created
+            .value
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| validate_connection_id(id).is_ok())
+            .map(str::to_owned);
+        let state_result = serde_json::from_value::<ConnectionState>(created.value).map_err(|_| {
+            DynamicLanError::with_code(
+                ErrorKind::Contract,
+                "Harness response does not match the expected schema.",
+                "harness-connection-schema-invalid",
+            )
+        });
+        let mut state = match state_result {
+            Ok(state) => state,
+            Err(error) => {
+                if let Some(id) = raw_id {
+                    if let Ok(url) = connection_resource_url(&control_base, &id) {
+                        return Err(error_after_release(
+                            error,
+                            &client,
+                            &url,
+                            control_credential.as_ref(),
+                        )
+                        .await);
+                    }
+                }
+                return Err(error);
+            }
+        };
         let identity = match validate_initial_state(&state, &audience, &selected_profile) {
             Ok(identity) => identity,
             Err(error) => {

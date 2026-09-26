@@ -10,10 +10,10 @@ import { validateSettingsDocuments } from "../src/lib/schemas";
 import providerCases from "./fixtures/provider-validation.json";
 
 describe("settings regressions", () => {
-  test("defaults LARM to the LAN Gemma conversation profile", () => {
+  test("defaults LARM to the public SAAA profile selector", () => {
     expect(defaultSettingsDraft.providers.harness).toEqual({
       address: "http://gnosis.local:9810",
-      larmProfile: "saaa-conversation-gemma4",
+      larmProfile: "SAAA",
     });
     const dynamicLan = defaultSettingsDraft.providers.providers.find(
       (provider) => provider.kind === "dynamic-lan",

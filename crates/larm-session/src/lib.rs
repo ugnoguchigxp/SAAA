@@ -116,14 +116,7 @@ impl Session {
         {
             return Err("credential_invalid".into());
         }
-        if profile.is_empty()
-            || profile.len() > 160
-            || !profile
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-        {
-            return Err("larm_invalid_profile".into());
-        }
+        let profile = contract::profile_selector(profile)?;
         if idempotency_key.is_empty()
             || idempotency_key.len() > 160
             || !idempotency_key
@@ -192,7 +185,7 @@ impl Session {
                 client
                     .post(base.clone())
                     .header("Idempotency-Key", &idempotency_key)
-                    .json(&json!({"agentProfile":profile,"explicitAgentProfile":true,
+                    .json(&json!({"profile":profile,
                 "audience":"saaa-desktop","client":"saaa-coding-agent","ttlSeconds":600,
                 "allowFallback":false,"deploymentPolicy":"existing-only"})),
                 &token,

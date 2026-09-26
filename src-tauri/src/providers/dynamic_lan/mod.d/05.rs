@@ -44,8 +44,7 @@
                         );
                         state["agentProfile"] = json!("coding-default");
                         state["providers"][0]["capability"] = json!("llm.coding");
-                        state["providers"][0]["route"] = json!("llm-default");
-                        state["providers"][0]["publicModel"] = json!("coding-default");
+                        state["providers"][0]["model"] = json!("coding-default");
                         state
                     }
                     2 => {
@@ -83,7 +82,7 @@
 
         let requests = captured_rx.try_iter().collect::<Vec<_>>();
         assert_eq!(requests.len(), 5);
-        assert!(requests[1].contains("\"agentProfile\":\"coding-default\""));
+        assert!(requests[1].contains("\"profile\":\"SAAA\""));
         assert!(requests[2].starts_with("POST /v1/agent-connections/aconn_test/claim HTTP/1.1"));
         assert!(requests[4].starts_with("DELETE /v1/agent-connections/aconn_test HTTP/1.1"));
 

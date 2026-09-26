@@ -64,7 +64,7 @@
         "valueJson": {
           "harness": {
             "address": "http://gnosis.local:9810",
-            "larmProfile": "saaa-conversation-gemma4"
+            "larmProfile": "SAAA"
           },
           "providers": [
             {

@@ -5,7 +5,7 @@ use super::{
     contract_error, valid_provider_auth, AgentProfileCatalog, ConnectionClaim, ConnectionIdentity,
     ConnectionState, DynamicLanError, ErrorKind, ProviderCapacity, ProviderDescriptor,
     SelectedLlmProfile, AGENT_PROFILE, AUDIENCE, CLOCK_SKEW_TOLERANCE_SECONDS,
-    CONNECTION_TTL_SECONDS, CONTROL_PORT,
+    CONNECTION_TTL_SECONDS, CONTROL_PORT, PROFILE_SELECTOR,
 };
 
 fn valid_llm_protocol(value: &str) -> bool {
@@ -139,28 +139,76 @@ pub(crate) fn validate_state_shape(
     validate_connection_id(&state.id)?;
     if !valid_bounded_identifier(&state.allocation_id, 192)
         || !valid_bounded_identifier(&state.boot_epoch, 192)
+        || state.profile != PROFILE_SELECTOR
         || state.agent_profile != expected_profile.id
         || state.audience != expected_audience
-        || state.providers.len() != 1
+        || state.providers.is_empty()
     {
         return Err(contract_error(()));
     }
     validate_revision(&state.catalog_revision)?;
     validate_revision(&state.profile_revision)?;
     validate_revision(&state.audience_revision)?;
-    let provider = &state.providers[0];
+    let mut names = std::collections::HashSet::new();
+    if state.providers.iter().any(|provider| {
+        !names.insert(provider.name.as_str())
+            || !valid_bounded_identifier(&provider.name, 160)
+            || !valid_bounded_identifier(&provider.capability, 160)
+            || provider.supported_capabilities.is_empty()
+            || !provider
+                .supported_capabilities
+                .iter()
+                .any(|capability| capability == &provider.capability)
+            || provider
+                .supported_capabilities
+                .iter()
+                .any(|capability| !valid_bounded_identifier(capability, 160))
+            || !valid_bounded_identifier(&provider.model, 160)
+            || !matches!(
+                (provider.protocol.as_str(), provider.endpoint.as_str()),
+                ("openai.chat-completions.v1", "/v1/chat/completions")
+                    | ("openai.audio-transcriptions.v1", "/v1/audio/transcriptions")
+                    | ("openai.audio-speech.v1", "/v1/audio/speech")
+                    | ("larm.embedding.v1", "/v1/embed")
+            )
+            || !matches!(
+                provider.readiness.as_str(),
+                "pending"
+                    | "waiting"
+                    | "deploying"
+                    | "probing"
+                    | "ready"
+                    | "failed"
+                    | "released"
+                    | "expired"
+            )
+            || (state.status == "ready" && (!provider.claimable || provider.readiness != "ready"))
+            || (state.status != "ready" && provider.claimable)
+    }) {
+        return Err(contract_error(()));
+    }
+    let mut llm = state
+        .providers
+        .iter()
+        .filter(|provider| provider.name == "llm");
+    let provider = llm.next().ok_or_else(|| contract_error(()))?;
     let terminal = matches!(state.status.as_str(), "failed" | "released" | "expired");
-    if provider.name != "llm"
+    if llm.next().is_some()
         || provider.capability != expected_profile.capability
         || !valid_llm_protocol(&provider.protocol)
-        || provider.public_model != expected_profile.model
-        || !valid_bounded_identifier(&provider.route, 160)
+        || provider.endpoint != "/v1/chat/completions"
+        || provider.model != expected_profile.model
         || !matches!(
             provider.readiness.as_str(),
-            "pending" | "probing" | "ready" | "failed" | "released" | "expired"
+            "pending"
+                | "waiting"
+                | "deploying"
+                | "probing"
+                | "ready"
+                | "failed"
+                | "released"
+                | "expired"
         )
-        || (state.status == "ready" && (!provider.claimable || provider.readiness != "ready"))
-        || (state.status != "ready" && provider.claimable)
         || (state.status == "failed" && state.error.is_none())
         || (!terminal
             && state.status != "pending"
@@ -212,10 +260,24 @@ pub(crate) fn select_default_llm_profile(
             "harness-catalog-version-unsupported",
         ));
     }
-    let profile_id = profiles
-        .default_agent_profile
-        .as_deref()
-        .unwrap_or(AGENT_PROFILE);
+    if profiles.contract_version == "agent-connection.v3"
+        && (profiles.requested_profile.as_deref() != Some(PROFILE_SELECTOR)
+            || profiles.profiles.len() != 1)
+    {
+        return Err(contract_error(()));
+    }
+    let profile_id = if profiles.contract_version == "agent-connection.v3" {
+        profiles
+            .profiles
+            .first()
+            .map(|profile| profile.id.as_str())
+            .ok_or_else(|| contract_error(()))?
+    } else {
+        profiles
+            .default_agent_profile
+            .as_deref()
+            .unwrap_or(AGENT_PROFILE)
+    };
     if !valid_bounded_identifier(profile_id, 160) {
         return Err(contract_error(()));
     }
@@ -229,10 +291,11 @@ pub(crate) fn select_default_llm_profile(
             "dynamic_lan does not advertise its selected provider profile.",
         )
     })?;
-    let provider = profile
+    let mut llm_providers = profile
         .providers
-        .first()
-        .ok_or_else(|| contract_error(()))?;
+        .iter()
+        .filter(|provider| provider.name == "llm");
+    let provider = llm_providers.next().ok_or_else(|| contract_error(()))?;
     let context_window = if profiles.contract_version == "agent-connection.v3" {
         provider.context_window
     } else {
@@ -264,8 +327,7 @@ pub(crate) fn select_default_llm_profile(
                 .iter()
                 .any(|capability| capability == &provider.capability));
     if matching.next().is_some()
-        || profile.providers.len() != 1
-        || provider.name != "llm"
+        || llm_providers.next().is_some()
         || !valid_llm_capability(&provider.capability)
         || !supported_capabilities_are_valid
         || !valid_llm_protocol(&provider.protocol)
