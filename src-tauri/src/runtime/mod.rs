@@ -1,6 +1,5 @@
 //! Ownership, invariants, and code lookup: README.md in this directory.
 pub mod agent_tools;
-pub(crate) mod butler_loop;
 pub mod capability_commands;
 pub mod codex_app_server;
 pub(crate) mod codex_cli;
@@ -12,7 +11,6 @@ pub(crate) mod codex_supervise;
 pub(crate) mod codex_turn;
 pub(crate) mod context;
 pub mod contracts;
-pub(crate) mod conversation_turn;
 pub(crate) mod event_hub;
 pub(crate) mod image_input;
 pub(crate) mod pi;
@@ -22,6 +20,4 @@ pub mod supervisor;
 pub(crate) mod turn_activity;
 pub(crate) mod turn_types;
 pub(crate) mod turns;
-pub(crate) mod voice_frontend;
-pub(crate) mod voice_response;
 pub mod web_fetch;

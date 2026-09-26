@@ -293,22 +293,6 @@ pub(crate) fn persist_conversation_success_with_state(
                 ],
             )
             .map_err(database_error)?;
-        crate::runtime::butler_loop::append_event(
-            &transaction,
-            &input.conversation_id,
-            Some(&input.run_id),
-            "message_completed",
-            Some(&message.id),
-            None,
-            &message.created_at,
-        )
-        .map_err(database_error)?;
-        crate::runtime::butler_loop::record_work_reference(
-            &transaction,
-            &input.run_id,
-            &format!("message:{}", message.id),
-        )
-        .map_err(database_error)?;
         crate::runtime::context::scope::attach_output(
             &transaction,
             &input.run_id,
@@ -333,8 +317,6 @@ pub(crate) fn persist_conversation_success_with_state(
         if changed != 1 {
             return Err("Runtime run was already finalized".to_string());
         }
-        crate::runtime::butler_loop::finish_work(&transaction, &input.run_id, "completed")
-            .map_err(database_error)?;
         transaction.commit().map_err(database_error)?;
         Ok(message)
     })
@@ -351,16 +333,6 @@ pub(crate) fn seal_committed_assistant(
     state.sqlite_writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
         crate::memory::personal_state::generation::allow_run(&transaction, &input.run_id)?;
-        crate::runtime::butler_loop::append_event(
-            &transaction,
-            &input.conversation_id,
-            Some(&input.run_id),
-            "message_completed",
-            Some(&message.id),
-            None,
-            &message.created_at,
-        )
-        .map_err(database_error)?;
         crate::runtime::context::scope::attach_output(&transaction, &input.run_id, &message.id)?;
         adopt(&transaction, message)?;
         transaction.execute("INSERT OR IGNORE INTO personal_artifacts(generation_id,message_id) SELECT id,?2 FROM personal_generations WHERE run_id=?1 AND output_allowed=1 AND status='succeeded' ORDER BY rowid DESC LIMIT 1",params![input.run_id,message.id]).map_err(database_error)?;
@@ -381,8 +353,6 @@ pub(crate) fn seal_committed_assistant(
         if changed != 1 {
             return Err("Runtime run was already finalized".to_string());
         }
-        crate::runtime::butler_loop::finish_work(&transaction, &input.run_id, "completed")
-            .map_err(database_error)?;
         transaction.commit().map_err(database_error)?;
         Ok(())
     })

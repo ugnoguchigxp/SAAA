@@ -81,7 +81,7 @@ impl DynamicLanConnection {
     ) -> Result<Self, DynamicLanError> {
         let control_is_loopback = url_is_loopback(&control_base);
         let token = control_token()?;
-        let preference = crate::larm_voice::profile::preference(stored_profile);
+        let preference = crate::providers::larm_resources::profile::preference(stored_profile);
         let selected_profile = match preference {
             saaa_larm_session::ProfilePreference::Variant(variant) => {
                 let catalog = saaa_larm_session::catalog::fetch(

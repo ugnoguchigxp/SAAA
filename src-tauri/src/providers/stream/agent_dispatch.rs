@@ -12,19 +12,6 @@ use super::attempt::*;
 pub(crate) use super::recall_dispatch::execute_recall_tool;
 pub(crate) use crate::generated_capabilities::tools::AgentToolOffer;
 
-pub(crate) const CONTINUE_WORK_TOOL_NAME: &str = "continue_work";
-
-fn continue_work_definition() -> Value {
-    serde_json::json!({
-        "type": "function",
-        "function": {
-            "name": CONTINUE_WORK_TOOL_NAME,
-            "description": "Give a meaningful interim update and continue this same request. Put the update in the assistant message content before calling this tool. Use only when more reasoning or tool work is needed; answer normally when done.",
-            "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
-        }
-    })
-}
-
 pub(crate) fn available_agent_tools(
     output_persistence: Option<ProviderOutputPersistence<'_>>,
     input: &StartTurnInput,
@@ -51,12 +38,6 @@ pub(crate) fn available_agent_tools(
     let mut definitions =
         agent_tools::agent_tool_definitions(include_conversation, include_typed_memory, false);
     let mut direct = None;
-    if crate::runtime::butler_loop::continuation_enabled()
-        && output_persistence.is_some()
-        && calls_this_attempt < 24
-    {
-        definitions.push(continue_work_definition());
-    }
     definitions.extend(crate::records::tools::definitions());
     if calls_this_attempt < 12 {
         if let Some(persistence) = output_persistence {
@@ -155,9 +136,6 @@ pub(crate) async fn execute_agent_tool(
     run_cancellation: &RunCancellation,
     direct: Option<&crate::generated_capabilities::tools::DirectExecution>,
 ) -> String {
-    if call.name == CONTINUE_WORK_TOOL_NAME {
-        return serde_json::json!({"continued": true}).to_string();
-    }
     // A `gc_` name is only ever executed from the snapshot that offered it; it never falls
     // through to recall or another tool.
     if call.name.starts_with(TOOL_PREFIX) {

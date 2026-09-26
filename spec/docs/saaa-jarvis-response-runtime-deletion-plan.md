@@ -1,6 +1,6 @@
 # SAAA：旧回答Runtimeの削除計画
 
-作成日：2026-09-26。状態：計画のみ。製品コード・DB・設定の変更、コード削除は未実施。
+作成日：2026-09-26。状態：旧実装本体を削除。A〜Eの旧実行器はinventoryの対象pathから撤去し、F/Gの通常会話入口・UI turn制御・Butler実行・World注入を切った。新Sessionは未実装で、現在の作業ツリーはビルド不可。DB・設定は変更していない。
 
 対象HEAD：`52207165d4d7aa8c962320164c9551a8ce8b4c11`。開始時の差分は前の依頼で作成した[再構築提案](saaa-jarvis-response-runtime-rebuild-proposal.md)だけ。以降にHEADや対象ファイルが変わった場合は棚卸しを照合し直す。
 
@@ -186,6 +186,6 @@ ASR/初回応答の変更時は、AGENTS.md指定の回帰を成功させてか�
 - 新Resourcesが5役割を正式に確保できることと、Qwenをornithの冷間待ちから独立させられるLARM契約。これは削除だけでは保証できない。
 - 新ASR/Speakingで実マイク・AEC・選択済みTTSを通した終了、停止、遅延。
 
-今回は計画とinventoryだけを保存した。コード削除・本番DB読書き・Provider要求・回帰実行は行っていない。文書リンク・棚卸しファイルの存在/hash・差分の整合だけを確認する。
+この文書の作成時点では計画とinventoryだけを保存した。その後、ユーザーの指示で実機合格を待たずに旧実装の削除を開始した。現状の削除範囲と残存参照はGit差分で確認する。
 
 運用ツールの会話累計：initial_instructions 1回、context_compile 5回、compile_eval 5回（今回の評価を含む）。

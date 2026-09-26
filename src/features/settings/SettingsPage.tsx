@@ -23,7 +23,7 @@ import { VoiceSettingsSection } from "./VoiceSettingsSection";
 import { SettingsGeneralSection } from "./SettingsGeneralSection";
 import { RoleRoutingSection } from "./RoleRoutingSection";
 import { ScheduleSection } from "./ScheduleSection";
-import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
+import type { VoiceCaptureState as AmbientVoiceAvailability } from "../../lib/voiceSession";
 
 type SettingsTab =
   | "general"

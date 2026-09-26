@@ -21,30 +21,6 @@ pub(crate) async fn execute_turn(
             ));
         }
     };
-    if task_mode == "conversation" {
-        let cancelled_runs = state.sqlite_readers.read(|connection| {
-            connection
-                .prepare(
-                    "SELECT runtime_run_id FROM rr_roots
-                     WHERE conversation_id=?1 AND cancel_requested=1 AND runtime_run_id IS NOT NULL",
-                )
-                .map_err(|error| error.to_string())?
-                .query_map([&input.conversation_id], |row| row.get::<_, String>(0))
-                .map_err(|error| error.to_string())?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| error.to_string())
-        })?;
-        if let Ok(active) = state.active_runs.lock() {
-            for run_id in &cancelled_runs {
-                if let Some(cancellation) = active.get(run_id) {
-                    cancellation.cancel();
-                }
-            }
-        }
-        for run_id in cancelled_runs {
-            state.streaming_tts.cancel(&run_id);
-        }
-    }
     crate::steward::on_user_message(state, input);
     state
         .situation
@@ -108,136 +84,13 @@ pub(crate) async fn execute_turn(
         return Ok(());
     }
 
-    wait_for_role_routing_dispatch(state, input, cancellation.clone()).await?;
-
-    // Tool-selection extraction runs once the input message has a persistent ID and before the
-    // first provider request. It only runs in discovery mode; the legacy path is unchanged.
-    if state.tool_selection.discovery_configured() {
-        let input_message_id = state
-            .sqlite_readers
-            .read(|connection| {
-                connection
-                    .query_row(
-                        "SELECT input_message_id FROM runtime_runs WHERE id = ?1",
-                        rusqlite::params![input.run_id],
-                        |row| row.get::<_, Option<String>>(0),
-                    )
-                    .map_err(|error| error.to_string())
-            })
-            .ok()
-            .flatten();
-        if let Ok(principal) =
-            crate::tool_selection::service::ensure_principal(&state.sqlite_writer)
-        {
-            let context =
-                crate::tool_selection::RequestContext::new(&principal, &input.conversation_id)
-                    .with_run(Some(input.run_id.clone()))
-                    .with_message(input_message_id);
-            let _ = state
-                .tool_selection
-                .begin_turn(&context, &input.content)
-                .await;
-        }
-    }
-
-    let result = super::super::conversation_turn::execute_conversation_turn(
-        state,
-        input,
-        on_event,
-        cancellation.clone(),
-    )
-    .await;
-    let finalization = match &result {
-        Ok(message) => {
-            crate::runtime::voice_response::complete(
-                state,
-                input,
-                on_event,
-                cancellation.clone(),
-                message,
-            )
-            .await
-        }
-        Err(error)
-            if cancellation.is_cancelled()
-                || error.code == crate::runtime::contracts::RunFailureCode::UserCancelled =>
-        {
-            let finalization = finish_supervised_runtime_run(
-                state,
-                &input.run_id,
-                "cancelled",
-                Some(crate::runtime::contracts::RunFailureCode::UserCancelled),
-                None,
-                None,
-                Some("Cancelled by user"),
-            );
-            if finalization.is_ok() {
-                let _ = on_event.send(RuntimeEvent::Cancelled {
-                    run_id: input.run_id.clone(),
-                });
-            }
-            finalization
-        }
-        Err(error) => {
-            let finalization = finish_supervised_runtime_run(
-                state,
-                &input.run_id,
-                "failed",
-                Some(error.code),
-                None,
-                None,
-                Some(&error.message),
-            );
-            if finalization.is_ok() {
-                let _ = on_event.send(RuntimeEvent::Failed {
-                    run_id: input.run_id.clone(),
-                    code: public_failure_code(error),
-                    message: redact_runtime_text(&error.message),
-                    recovery: "Review the selected provider and runtime settings, then retry."
-                        .to_string(),
-                });
-            }
-            finalization
-        }
-    };
     state
         .situation
         .set_conversation_state(situation::contracts::ConversationState::Idle);
-    finalization.map_err(|message| {
-        TurnExecutionFailure::unsupervised(
-            crate::runtime::contracts::RunFailureCode::InternalError,
-            message,
-        )
-    })?;
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0);
-    let (status, message_id) = match &result {
-        Ok(message) => ("completed", Some(message.id.as_str())),
-        Err(error)
-            if cancellation.is_cancelled()
-                || error.code == crate::runtime::contracts::RunFailureCode::UserCancelled =>
-        {
-            ("cancelled", None)
-        }
-        Err(_) => ("failed", None),
-    };
-    state.sqlite_writer.write(|connection| {
-        crate::role_routing::repository::record_provider_turn_finish(
-            connection,
-            &input.run_id,
-            status,
-            message_id,
-            now_ms,
-        )?;
-        // A terminal root releases exactly one oldest queued root. The claimed root's own task
-        // is already waiting in `wait_for_role_routing_dispatch`; it observes the committed
-        // phase before any provider I/O starts.
-        let _ = crate::role_routing::recovery::claim_next_queued(connection, now_ms)?;
-        Ok(())
-    })?;
-    result.map(|_| ())
+    Err(TurnExecutionFailure::unsupervised(
+        crate::runtime::contracts::RunFailureCode::InternalError,
+        "The legacy conversation runtime was removed pending replacement".into(),
+    ))
 }
 pub(super) async fn wait_for_role_routing_dispatch(
     state: &AppState,
@@ -470,8 +323,6 @@ pub(crate) fn finish_supervised_runtime_run(
         if changed != 1 {
             return Err("Runtime run was already finalized".to_string());
         }
-        crate::runtime::butler_loop::finish_work(&transaction, run_id, status)
-            .map_err(database_error)?;
         transaction.commit().map_err(database_error)?;
         Ok(())
     })

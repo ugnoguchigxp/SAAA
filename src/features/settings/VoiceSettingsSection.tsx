@@ -7,7 +7,7 @@ import { Field, Metric } from "./SettingsFields";
 import { VoiceProfileCard } from "./VoiceProfileCard";
 import { VoiceProcessingSettings } from "./VoiceProcessingSettings";
 import { localizeUiMessage } from "../../i18n/presentation";
-import type { AmbientVoiceAvailability } from "../voice/useAmbientVoiceSession";
+import type { VoiceCaptureState as AmbientVoiceAvailability } from "../../lib/voiceSession";
 
 export function VoiceSettingsSection({
   voice,

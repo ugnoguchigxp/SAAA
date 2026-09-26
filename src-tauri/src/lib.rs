@@ -1,7 +1,5 @@
 mod app_state;
 use app_state::{AppState, ProviderProbeStatus, RunCancellation};
-#[path = "providers/larm_voice/mod.rs"]
-mod larm_voice;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -112,7 +110,6 @@ pub fn run_vpio_probe() -> i32 {
 pub fn run() {
     // Snapshot the opt-in configuration once; failures are reported on use.
     let _ = providers::reasoning_mcp::configured("voice");
-    let _ = larm_voice::enabled();
     // WF-01: debug-only worker presentation. Release builds ignore the env
     // switch entirely; the plugin config validation rejects visible workers
     // outside `cfg(debug_assertions)`.
@@ -433,7 +430,6 @@ pub fn run() {
         .run(|_, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 tauri::async_runtime::block_on(memory::personal_state::product_binding::shutdown());
-                tauri::async_runtime::block_on(larm_voice::shutdown());
             }
         });
 }

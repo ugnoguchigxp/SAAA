@@ -220,7 +220,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     crate::coding::recovery::reconcile(&transaction)
         .map_err(rusqlite::Error::InvalidParameterName)?;
     crate::runtime::context::schema::migrate(&transaction)?;
-    crate::runtime::butler_loop::ensure_schema(&transaction)?;
+    super::legacy_conversation_schema::ensure_schema(&transaction)?;
     crate::records::schema::migrate(&transaction)?;
     crate::runtime::context::segment::schema::migrate(&transaction)?;
     crate::generated_capabilities::schema::migrate(&transaction)?;
@@ -287,7 +287,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     super::remove_legacy_provider::migrate(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     super::audit::initialize_schema(&transaction)?;
-    crate::larm_voice::frontdesk_repository::migrate(&transaction)?;
+    super::legacy_conversation_schema::ensure_lfm_history_schema(&transaction)?;
     transaction.execute(
         "INSERT INTO audit_events(id,occurred_at,component,event_name,phase,outcome,attributes_json)
          VALUES(?1,?2,'app','database-ready','terminal','success','{}')",

@@ -6,8 +6,6 @@ pub(crate) mod http_audio;
 pub mod language;
 pub mod network_asr;
 pub mod profile;
-pub mod session;
 pub mod speaker;
 pub mod streaming_asr;
-pub(crate) mod streaming_tts;
 pub mod system_tts;

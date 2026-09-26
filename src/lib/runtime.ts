@@ -1,6 +1,5 @@
-import { runtimeEventOrder } from "./ipcEventOrder";
-import { appSnapshotSchema, runtimeEventSchema, parseIpc, guardedReceiver } from "./ipcValidation";
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { appSnapshotSchema, parseIpc } from "./ipcValidation";
+import { invoke } from "@tauri-apps/api/core";
 import { stageAudioUpload } from "./audioIpc";
 import type {
   AppSnapshot,
@@ -10,7 +9,6 @@ import type {
   ModelProviderSettings,
   LocalArtifactResult,
   ProviderTestResult,
-  RuntimeEvent,
   SettingsDocument,
   VoiceProfileSnapshot,
 } from "./contracts";
@@ -21,79 +19,6 @@ export {
   resolveServiceHarness,
   setProviderApiKey,
 } from "./providerRuntime";
-export {
-  appendVoiceAsrAudio,
-  commitVoiceAsrUtterance,
-  startVoiceAsrSession,
-  stopVoiceAsrSession,
-} from "./voiceAsrRuntime";
-
-export async function appendRunningInput(input: {
-  conversationId: string;
-  runId: string;
-  content: string;
-}): Promise<{ messageId: string; transferred: boolean }> {
-  return invoke("append_running_input", { input });
-}
-
-export async function acknowledgeConversationMessage(
-  conversationId: string,
-  runId: string,
-  messageId: string,
-): Promise<void> {
-  return invoke<void>("acknowledge_conversation_message", { conversationId, runId, messageId });
-}
-
-export async function firstUnconsumedConversationInput(
-  conversationId: string,
-): Promise<{ messageId: string; content: string; priorStatus: string } | null> {
-  return invoke("first_unconsumed_conversation_input", { conversationId });
-}
-
-export async function conversationEventHead(conversationId: string): Promise<number> {
-  return invoke<number>("conversation_event_head", { conversationId });
-}
-
-export async function startTurn(
-  input: {
-    runId: string;
-    conversationId: string;
-    content: string;
-    workspacePath: string | null;
-    retryInputMessageId?: string | null;
-    scopeRefs?: Array<{
-      kind: "user" | "project" | "task" | "resource" | "request";
-      id: string;
-      relation: "shared" | "parent" | "focus" | "current";
-    }>;
-    sourceId?: string | null;
-    inputOrigin: "text" | "voice";
-    presentationMode: "visual" | "visual-and-spoken";
-  },
-  onEvent: (event: RuntimeEvent) => void,
-): Promise<void> {
-  const channel = new Channel<unknown>();
-  channel.onmessage = guardedReceiver(
-    runtimeEventSchema,
-    "runtime",
-    onEvent,
-    runtimeEventOrder(input.runId),
-    () => {
-      void cancelRun(input.runId, "invalid-ipc-event").catch(() => undefined);
-    },
-  );
-  return invoke<void>("start_turn", { input, onEvent: channel });
-}
-
-export type CancelRunReason =
-  | "invalid-ipc-event"
-  | "conversation-unmounted"
-  | "replaced-by-new-prompt"
-  | "user-stop";
-
-export async function cancelRun(runId: string, reason: CancelRunReason): Promise<void> {
-  return invoke<void>("cancel_run", { runId, reason });
-}
 
 export type TtsVoiceCatalog = {
   defaultVoice?: string;

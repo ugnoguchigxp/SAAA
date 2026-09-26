@@ -7,35 +7,28 @@ use tokio::sync::{watch, Mutex};
 static SESSION: Mutex<Option<Arc<Session>>> = Mutex::const_new(None);
 
 pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
-    let session =
-        if let Ok(ready) = crate::larm_voice::current(crate::PRIMARY_CONVERSATION_ID).await {
-            ready.session.clone()
-        } else {
-            let mut cached = SESSION.lock().await;
-            if cached.is_none() {
-                let base = std::env::var("SAAA_LARM_CONTROL_URL")
-                    .unwrap_or_else(|_| "http://192.168.0.130:9810".into());
-                let (_alive, rx) = watch::channel(false);
-                // Keep the sender alive for the entire creation handshake.
-                let credential = crate::providers::dynamic_lan::credential::load()
-                    .map_err(|error| error.code())?;
-                *cached = Some(
-                    Session::connect_with_profile_credential_and_key(
-                        &base,
-                        crate::larm_voice::profile::preference(None),
-                        credential.token().to_string(),
-                        format!("saaa-session-{}", uuid::Uuid::new_v4()),
-                        rx,
-                    )
-                    .await
-                    .map_err(|_| "personal-connection-unavailable")?,
-                );
-            }
-            cached
-                .as_ref()
-                .ok_or("personal-connection-unavailable")?
-                .clone()
-        };
+    let session = {
+        let mut cached = SESSION.lock().await;
+        if cached.is_none() {
+            let base = std::env::var("SAAA_LARM_CONTROL_URL")
+                .unwrap_or_else(|_| "http://192.168.0.130:9810".into());
+            let (_alive, rx) = watch::channel(false);
+            let credential = crate::providers::dynamic_lan::credential::load()
+                .map_err(|error| error.code())?;
+            *cached = Some(
+                Session::connect_with_profile_credential_and_key(
+                    &base,
+                    crate::providers::larm_resources::profile::preference(None),
+                    credential.token().to_string(),
+                    format!("saaa-session-{}", uuid::Uuid::new_v4()),
+                    rx,
+                )
+                .await
+                .map_err(|_| "personal-connection-unavailable")?,
+            );
+        }
+        cached.as_ref().ok_or("personal-connection-unavailable")?.clone()
+    };
     let lease = match session.acquire("llm").await {
         Ok(lease) => lease,
         Err(_) => {

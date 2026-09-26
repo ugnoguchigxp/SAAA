@@ -184,7 +184,7 @@ async fn resolve_with_legacy_llm_limit(
     };
     let credential = crate::providers::dynamic_lan::credential::load()
         .map_err(|error| error.code().to_string())?;
-    let preference = crate::larm_voice::profile::preference(stored_profile);
+    let preference = crate::providers::larm_resources::profile::preference(stored_profile);
     let (_cancel, receiver) = tokio::sync::watch::channel(false);
     let connect_started = std::time::Instant::now();
     let session = match tokio::time::timeout(

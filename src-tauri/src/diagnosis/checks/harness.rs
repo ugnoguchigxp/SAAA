@@ -39,7 +39,7 @@ pub(in crate::diagnosis) async fn fast(state: &AppState) -> Vec<DiagnosisItem> {
                         .no_proxy()
                         .build()
                         .map_err(|_| "Could not initialize the LARM client".to_string())?;
-                    let preference = crate::larm_voice::profile::preference(
+                    let preference = crate::providers::larm_resources::profile::preference(
                         settings.harness.larm_profile.as_deref(),
                     );
                     let selector = match preference {
