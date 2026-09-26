@@ -375,6 +375,24 @@ fn http_claim_ignores_unused_extensions_but_requires_http_protocol() {
     .is_err());
 }
 #[test]
+fn claim_accepts_embedding_configuration_without_llm_base_url_field() {
+    let (created_at, expires_at) = test_timestamps();
+    let identity = test_identity("aconn_test", &created_at, &expires_at);
+    let mut value = claim_json("10.0.0.42", CONTROL_PORT, AUDIENCE, &expires_at);
+    let mut embedding = value["providers"][0].clone();
+    embedding["name"] = json!("embedding");
+    embedding["capability"] = json!("embedding");
+    embedding["protocol"] = json!("larm.embedding.v1");
+    embedding["configuration"]["fields"] = json!({
+        "daemonURL": "http://10.0.0.42:9810/v1",
+        "dimension": 384,
+        "model": "multilingual-e5-small"
+    });
+    value["providers"].as_array_mut().unwrap().push(embedding);
+    let claim = serde_json::from_value::<ConnectionClaim>(value).expect("LARM claim shape");
+    assert!(validate_claim(claim, &identity, AUDIENCE, false).is_ok());
+}
+#[test]
 fn claim_accepts_explicit_no_auth_without_a_secret_pointer() {
     let (created_at, expires_at) = test_timestamps();
     let identity = test_identity("aconn_test", &created_at, &expires_at);

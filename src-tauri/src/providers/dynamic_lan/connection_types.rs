@@ -103,7 +103,8 @@ struct ConnectionState {
 struct ConnectionStateProvider {
     name: String,
     capability: String,
-    route: String,
+    #[serde(default)]
+    route: Option<String>,
     protocol: String,
     endpoint: String,
     model: String,
@@ -215,8 +216,8 @@ struct ProviderConfiguration {
 }
 #[derive(Debug, Deserialize)]
 struct ProviderConfigurationFields {
-    #[serde(rename = "baseURL")]
-    base_url: String,
+    #[serde(default, rename = "baseURL")]
+    base_url: Option<String>,
     model: String,
 }
 #[derive(Debug, Deserialize)]

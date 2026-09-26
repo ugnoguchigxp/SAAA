@@ -184,7 +184,7 @@ impl DynamicLanConnection {
             return if let Ok(url) = connection_resource_url(&control_base, &created.value.id) {
                 Err(error_after_release(error, &client, &url, control_credential.as_ref()).await)
             } else {
-                Err(error)
+                Err(unidentified_create_error(error))
             };
         }
         let mut state = created.value;
@@ -200,7 +200,7 @@ impl DynamicLanConnection {
                     )
                     .await);
                 }
-                return Err(error);
+                return Err(unidentified_create_error(error));
             }
         };
         let connection_url = connection_resource_url(&control_base, &identity.id)?;
@@ -369,7 +369,7 @@ impl DynamicLanConnection {
             control_credential,
             identity,
             audience,
-            endpoint: descriptor.configuration.fields.base_url,
+            endpoint: descriptor.base_url,
             model: descriptor.configuration.fields.model,
             api_key: descriptor
                 .credential
@@ -381,4 +381,9 @@ impl DynamicLanConnection {
             prior_release_failure: None,
         })
     }
+}
+
+fn unidentified_create_error(mut error: DynamicLanError) -> DynamicLanError {
+    error.release_failure = Some(ErrorKind::Contract);
+    error
 }

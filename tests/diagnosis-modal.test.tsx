@@ -55,6 +55,15 @@ const ready = {
       latencyMs: null,
     },
     {
+      id: "harness.backchannel",
+      group: "harness",
+      label: "LARM backchannel",
+      status: "ok",
+      severity: "degraded",
+      message: "qwen3.5-2b-fast-response is ready",
+      latencyMs: null,
+    },
+    {
       id: "harness.embedding",
       group: "harness",
       label: "Harness embedding",
@@ -145,15 +154,16 @@ test("diagnosis page shows stages, item list, and blocks rerun while running", a
   const response = [...document.querySelectorAll(".diagnosis-services article")].find(
     (card) => card.querySelector("strong")?.textContent === "応答",
   );
-  expect(response?.textContent).toContain("正常");
-  expect(response?.textContent).not.toContain("対象外");
+  expect(response?.textContent).toContain("対象外");
+  expect(response?.textContent).not.toContain("正常");
   expect(services).toContain("応答");
+  expect(services).toContain("補助応答");
   expect(services).not.toContain("音声認識");
   const speech = [...document.querySelectorAll(".diagnosis-services article")].find(
     (card) => card.querySelector("strong")?.textContent === "音声合成",
   );
-  expect(speech?.textContent).toContain("正常");
-  expect(speech?.textContent).not.toContain("失敗");
+  expect(speech?.textContent).toContain("失敗");
+  expect(speech?.textContent).not.toContain("正常");
   expect(services).toContain("音声合成");
   const embedding = [...document.querySelectorAll(".diagnosis-services article")].find(
     (card) => card.querySelector("strong")?.textContent === "埋め込み",

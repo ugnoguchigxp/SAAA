@@ -120,7 +120,7 @@ impl DynamicLanConnection {
         )
         .await?;
         self.identity = next_identity;
-        self.endpoint = descriptor.configuration.fields.base_url;
+        self.endpoint = descriptor.base_url;
 
         self.model = descriptor.configuration.fields.model;
         self.api_key = descriptor

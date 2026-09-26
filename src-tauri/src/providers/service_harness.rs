@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, sync::Arc};
+use std::collections::HashSet;
 
 use crate::RunCancellation;
 
@@ -141,36 +141,70 @@ pub(crate) async fn resolve_with_legacy_llm(
     address: &str,
     stored_profile: Option<&str>,
 ) -> Result<HarnessResolution, String> {
-    let Some(host) = legacy_dynamic_lan_host(address)? else {
+    let Some(_) = legacy_dynamic_lan_host(address)? else {
         return resolve(address).await;
     };
-    let connection = crate::providers::dynamic_lan::DynamicLanConnection::resolve(
-        &host,
-        stored_profile,
-        Arc::new(RunCancellation::default()),
+    let credential = crate::providers::dynamic_lan::credential::load()
+        .map_err(|error| error.code().to_string())?;
+    let preference = crate::larm_voice::profile::preference(stored_profile);
+    let (_cancel, receiver) = tokio::sync::watch::channel(false);
+    let session = match saaa_larm_session::Session::connect_with_profile_credential_and_key(
+        address,
+        preference,
+        credential.token().to_string(),
+        format!("saaa-diagnosis-{}", uuid::Uuid::new_v4().simple()),
+        receiver,
     )
     .await
-    .map_err(|error| error.public_message().to_string())?;
-    let model = connection.model().to_string();
-    let endpoint = connection.endpoint().to_string();
-    let protocol = connection.stream_protocol().to_string();
-    let _ = connection.release().await;
-    Ok(HarnessResolution {
-        state: "degraded",
-        revision: "agent-connection.v1".to_string(),
-        services: vec![
-            HarnessServiceStatus {
-                capability: "llm",
-                state: "ready",
-                protocol: Some(protocol),
-                model: Some(model.clone()),
-                language: None,
-                voice: None,
-                message: format!("{model} · {endpoint}"),
+    {
+        Ok(session) => session,
+        Err(error) => {
+            if let Some(cleanup) = &error.cleanup {
+                let _ = cleanup.close().await;
+            }
+            return Err(error.to_string());
+        }
+    };
+    let summary = session.provider_summary().await;
+    let mut services = ["llm", "backchannel", "asr", "tts", "embedding"]
+        .into_iter()
+        .map(
+            |capability| match summary.iter().find(|provider| provider.name == capability) {
+                Some(provider) => HarnessServiceStatus {
+                    capability,
+                    state: "ready",
+                    protocol: None,
+                    model: Some(provider.model.clone()),
+                    language: None,
+                    voice: None,
+                    message: format!("{} · {}", provider.model, provider.endpoint),
+                },
+                None => missing_status(capability),
             },
-            missing_status("asr"),
-            missing_status("tts"),
-        ],
+        )
+        .collect::<Vec<_>>();
+    let embedding = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        session.embed_query(&["診断".to_string()]),
+    )
+    .await;
+    if let Some(item) = services
+        .iter_mut()
+        .find(|item| item.capability == "embedding")
+    {
+        if !matches!(embedding, Ok(Ok(ref vectors)) if vectors.first().is_some_and(|vector| !vector.is_empty()))
+        {
+            item.state = "degraded";
+            item.message = "Embedding request did not return a vector".into();
+        }
+    }
+    if session.close().await.is_err() {
+        return Err("larm_diagnosis_release_failed".into());
+    }
+    Ok(HarnessResolution {
+        state: "ready",
+        revision: "agent-connection.v1".to_string(),
+        services,
     })
 }
 
@@ -314,7 +348,9 @@ fn ready_status(
     HarnessServiceStatus {
         capability: match capability {
             "llm" => "llm",
+            "backchannel" => "backchannel",
             "asr" => "asr",
+            "embedding" => "embedding",
             _ => "tts",
         },
         state: "ready",
@@ -337,7 +373,9 @@ fn unavailable_status(capability: &str, message: String) -> HarnessServiceStatus
     HarnessServiceStatus {
         capability: match capability {
             "llm" => "llm",
+            "backchannel" => "backchannel",
             "asr" => "asr",
+            "embedding" => "embedding",
             _ => "tts",
         },
         state: "unavailable",

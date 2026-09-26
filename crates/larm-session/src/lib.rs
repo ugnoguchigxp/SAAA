@@ -337,7 +337,7 @@ impl Session {
             .post(base.clone())
             .timeout(Duration::from_secs(10))
             .header("Idempotency-Key", &idempotency_key)
-            .header("Prefer", "wait=0")
+            .header("Prefer", "wait=1")
             .json(&body);
         let create = authorize(create, &token)?;
         let retry_create = create.try_clone().ok_or("larm_client_failed")?;

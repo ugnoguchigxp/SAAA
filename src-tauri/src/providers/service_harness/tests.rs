@@ -32,6 +32,13 @@ fn descriptor_rejects_duplicate_capabilities_and_cross_host_urls() {
 }
 
 #[test]
+fn missing_claimed_provider_keeps_its_own_identity() {
+    for name in ["llm", "backchannel", "asr", "tts", "embedding"] {
+        assert_eq!(missing_status(name).capability, name);
+    }
+}
+
+#[test]
 fn address_rejects_public_http_and_descriptor_rejects_https_downgrade() {
     assert!(validate_address("http://provider.example/v1").is_err());
     assert!(validate_address("http://provider.local:9810").is_ok());

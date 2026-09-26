@@ -176,7 +176,7 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
                 .unwrap()
                 .starts_with(prefix));
             if !path.ends_with("/renew") {
-                assert_eq!(request.headers()["prefer"], "wait=0");
+                assert_eq!(request.headers()["prefer"], "wait=1");
             }
             let body = axum::body::to_bytes(request.into_body(), 10000)
                 .await

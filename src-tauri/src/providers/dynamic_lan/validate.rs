@@ -224,7 +224,10 @@ pub(crate) fn validate_state_shape(
     if provider.name != "llm"
         || !catalog_match
         || !valid_llm_protocol(&provider.protocol)
-        || !valid_bounded_identifier(&provider.route, 160)
+        || provider
+            .route
+            .as_deref()
+            .is_some_and(|route| !valid_bounded_identifier(route, 160))
         || !matches!(
             provider.readiness.as_str(),
             "pending" | "deploying" | "probing" | "ready" | "failed" | "released" | "expired"
@@ -437,7 +440,7 @@ pub(crate) fn validate_claim(
         || descriptor.health.max_age_ms > 60_000
         || !valid_provider_auth(&descriptor, claim_expires_at)
         || descriptor.configuration.kind != "openai-provider-v1"
-        || descriptor.configuration.fields.base_url != descriptor.base_url
+        || descriptor.configuration.fields.base_url.as_deref() != Some(descriptor.base_url.as_str())
         || descriptor.configuration.fields.model != descriptor.model
     {
         let message = if !control_is_loopback && url_is_loopback(&base_url) {

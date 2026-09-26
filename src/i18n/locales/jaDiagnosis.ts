@@ -14,6 +14,7 @@ export const jaDiagnosis = {
   },
   services: {
     llm: "応答",
+    backchannel: "補助応答",
     asr: "音声認識",
     tts: "音声合成",
     embedding: "埋め込み",

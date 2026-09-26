@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use url::Url;
 
-use super::validate::{connection_claim_url, validate_claim};
+use super::validate::{connection_claim_url, connection_resource_url, validate_claim};
 use super::{
     contract_error, ConnectionClaim, ConnectionIdentity, DynamicLanError, ErrorEnvelope, ErrorKind,
     JsonResponse, ProviderDescriptor, ProviderHealth, MAX_RETRY_AFTER_SECONDS, RELEASE_TIMEOUT,
@@ -99,13 +99,18 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
 ) -> Result<JsonResponse<T>, DynamicLanError> {
     let schema_failure_code = response_schema_failure_code(url.path());
     let is_create = method == Method::POST && url.path().ends_with("/v1/agent-connections");
+    let create_base = is_create.then(|| {
+        let mut base = url.clone();
+        base.set_path("/");
+        base
+    });
     let mut request = client.request(method, url).timeout(if is_create {
         Duration::from_secs(10)
     } else {
         REQUEST_TIMEOUT
     });
     if is_create {
-        request = request.header("Prefer", "wait=0");
+        request = request.header("Prefer", "wait=1");
     }
     if let Some(credential) = credential {
         request = request.header(AUTHORIZATION, credential.clone());
@@ -127,6 +132,13 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let release_location = if is_create {
+        bounded_header(response.headers().get(LOCATION), 512)
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let success_metadata = status.is_success().then(|| {
         Ok::<_, DynamicLanError>((
             parse_retry_after(response.headers().get(RETRY_AFTER))?,
@@ -134,7 +146,20 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
             bounded_header(response.headers().get("x-larm-config-revision"), 128)?,
         ))
     });
-    let body = read_limited(response, cancellation).await?;
+    let body = match read_limited(response, cancellation).await {
+        Ok(body) => body,
+        Err(error) => {
+            return Err(cleanup_create_error(
+                error,
+                client,
+                credential,
+                create_base.as_ref().filter(|_| status.is_success()),
+                release_location.as_deref(),
+                &[],
+            )
+            .await);
+        }
+    };
     if !status.is_success() {
         let code = serde_json::from_slice::<ErrorEnvelope>(&body)
             .ok()
@@ -142,18 +167,52 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
             .unwrap_or_default();
         return Err(classify_status(status, &code));
     }
-    let (retry_after, location, config_revision) =
-        success_metadata.ok_or_else(|| contract_error(()))??;
+    let (retry_after, location, config_revision) = match success_metadata {
+        Some(Ok(metadata)) => metadata,
+        Some(Err(error)) => {
+            return Err(cleanup_create_error(
+                error,
+                client,
+                credential,
+                create_base.as_ref(),
+                release_location.as_deref(),
+                &body,
+            )
+            .await);
+        }
+        None => return Err(contract_error(())),
+    };
     if !is_json_content_type(&content_type) {
-        return Err(contract_error(()));
-    }
-    let value = serde_json::from_slice(&body).map_err(|_| {
-        DynamicLanError::with_code(
-            ErrorKind::Contract,
-            "Harness response does not match the expected schema.",
-            schema_failure_code,
+        let error = contract_error(());
+        return Err(cleanup_create_error(
+            error,
+            client,
+            credential,
+            create_base.as_ref(),
+            location.as_deref(),
+            &body,
         )
-    })?;
+        .await);
+    }
+    let value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            let error = DynamicLanError::with_code(
+                ErrorKind::Contract,
+                "Harness response does not match the expected schema.",
+                schema_failure_code,
+            );
+            return Err(cleanup_create_error(
+                error,
+                client,
+                credential,
+                create_base.as_ref(),
+                location.as_deref(),
+                &body,
+            )
+            .await);
+        }
+    };
     Ok(JsonResponse {
         value,
         status,
@@ -161,6 +220,92 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
         location,
         config_revision,
     })
+}
+
+async fn cleanup_create_error(
+    mut error: DynamicLanError,
+    client: &reqwest::Client,
+    credential: Option<&HeaderValue>,
+    base: Option<&Url>,
+    location: Option<&str>,
+    body: &[u8],
+) -> DynamicLanError {
+    let Some(base) = base else {
+        return error;
+    };
+    if let Some(resource) = created_connection_url(base, location, body) {
+        return error_after_release(error, client, &resource, credential).await;
+    }
+    // A successful create may have allocated a resource, but no safe ID was returned.
+    error.release_failure = Some(ErrorKind::Contract);
+    error
+}
+
+fn created_connection_url(base: &Url, location: Option<&str>, body: &[u8]) -> Option<Url> {
+    let body_resource = serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| value["id"].as_str().map(str::to_string))
+        .and_then(|id| connection_resource_url(base, &id).ok());
+    let location_resource = location.and_then(|location| {
+        let location = base.join(location).ok()?;
+        if location.origin() != base.origin()
+            || location.query().is_some()
+            || location.fragment().is_some()
+        {
+            return None;
+        }
+        let id = location.path().strip_prefix("/v1/agent-connections/")?;
+        let resource = connection_resource_url(base, id).ok()?;
+        (resource == location).then_some(resource)
+    });
+    match (body_resource, location_resource) {
+        (Some(body), Some(location)) if body != location => None,
+        (Some(body), _) => Some(body),
+        (None, location) => location,
+    }
+}
+
+#[cfg(test)]
+mod created_connection_url_tests {
+    use super::*;
+
+    #[test]
+    fn recovers_a_connection_from_location_when_the_body_is_invalid() {
+        let base = Url::parse("http://127.0.0.1:9810/").unwrap();
+        let resource = created_connection_url(
+            &base,
+            Some("/v1/agent-connections/aconn_created"),
+            b"not-json",
+        )
+        .unwrap();
+        assert_eq!(resource.path(), "/v1/agent-connections/aconn_created");
+    }
+
+    #[test]
+    fn does_not_release_a_different_connection_when_ids_disagree() {
+        let base = Url::parse("http://127.0.0.1:9810/").unwrap();
+        let resource = created_connection_url(
+            &base,
+            Some("/v1/agent-connections/aconn_other"),
+            br#"{"id":"aconn_created"}"#,
+        );
+        assert!(resource.is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_create_id_reports_deferred_cleanup() {
+        let base = Url::parse("http://127.0.0.1:9810/").unwrap();
+        let error = cleanup_create_error(
+            contract_error(()),
+            &reqwest::Client::new(),
+            None,
+            Some(&base),
+            Some("/v1/agent-connections/aconn_other"),
+            br#"{"id":"aconn_created"}"#,
+        )
+        .await;
+        assert_eq!(error.release_failure(), Some(ErrorKind::Contract));
+    }
 }
 
 // Classify using our requested operation, never text supplied by the remote server.

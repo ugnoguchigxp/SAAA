@@ -123,7 +123,7 @@ pub(crate) async fn begin_larm_voice_session(
         })
     });
     drop(current);
-    // Microphone readiness includes the complete claimed provider set.
+    // The conversation lease claims the complete provider set; ASR starts independently.
     self::current(&conversation_id)
         .await
         .map(|_| ())

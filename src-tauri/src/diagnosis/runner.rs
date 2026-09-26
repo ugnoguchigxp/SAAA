@@ -131,9 +131,11 @@ async fn stream(state: &AppState, mut on_batch: impl FnMut(Vec<DiagnosisItem>)) 
     let mut pending: Vec<
         std::pin::Pin<Box<dyn std::future::Future<Output = Vec<DiagnosisItem>> + Send + '_>>,
     > = vec![
+        // select_all polls in list order. Begin LARM readiness before other
+        // diagnosis checks, then let them proceed while LARM is pending.
+        Box::pin(async { checks::harness::harness(state).await }),
         Box::pin(async { vec![checks::sqlite::sqlite(state)] }),
         Box::pin(async { vec![checks::settings::settings(state)] }),
-        Box::pin(async { checks::harness::harness(state).await }),
         Box::pin(async { checks::memory::memory(state) }),
     ];
     for provider in &enabled {

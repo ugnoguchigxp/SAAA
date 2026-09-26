@@ -1,5 +1,5 @@
 import { createVoiceAsrChannel } from "./ipcChannels";
-import { prepareLarmVoiceSession, failLarmVoiceSession } from "./larmVoiceRuntime";
+import { currentLarmVoice, prepareLarmVoiceSession, failLarmVoiceSession } from "./larmVoiceRuntime";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   CommitVoiceAsrUtteranceInput,
@@ -12,20 +12,17 @@ export async function startVoiceAsrSession(
   input: StartVoiceAsrSessionInput,
   onEvent: (event: VoiceAsrStreamEvent) => void,
 ): Promise<void> {
-  let owner: Awaited<ReturnType<typeof prepareLarmVoiceSession>> = null;
   try {
-    // The conversation lease can fail when an LLM provider is unavailable.
-    // ASR has its own Harness route, so keep microphone capture available.
-    try {
-      owner = await prepareLarmVoiceSession(input.conversationId);
-    } catch {
-      owner = null;
-    }
+    // ASR has an independent Harness route. Prepare the conversation lease in
+    // parallel so an unavailable LLM cannot delay microphone capture.
+    void prepareLarmVoiceSession(input.conversationId).catch(() => null);
     const channel = createVoiceAsrChannel(input, onEvent);
     return await invoke("start_voice_asr_session", { input, onEvent: channel });
   } catch (error) {
-    if (!["asr-session-exists", "asr-cancelled", "Error: asr-cancelled"].includes(String(error)))
-      await failLarmVoiceSession(owner);
+    if (!["asr-session-exists", "asr-cancelled", "Error: asr-cancelled"].includes(String(error))) {
+      const owner = currentLarmVoice();
+      if (owner?.conversationId === input.conversationId) await failLarmVoiceSession(owner);
+    }
     throw error;
   }
 }

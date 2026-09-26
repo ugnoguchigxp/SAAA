@@ -366,6 +366,10 @@ pub fn run() {
                 context_segments_enabled: app_state::context_segments_from_env(),
                 wire_prefixes: Mutex::new(std::collections::VecDeque::new()),
             });
+            // Start LARM readiness before the remaining startup recovery and workers.
+            // The diagnosis runner begins with the harness check, which creates the
+            // SAAA Agent Connection without blocking the window setup.
+            diagnosis::runner::spawn_startup(app.handle().clone());
             let recovery_now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_millis() as i64)
@@ -378,7 +382,6 @@ pub fn run() {
                 })
                 .map_err(|error| format!("role-routing startup recovery: {error}"))?;
             providers::reachability_watcher::spawn(&app.state::<AppState>());
-            diagnosis::runner::spawn_startup(app.handle().clone());
             adaptive_improvement::start_worker(
                 app.state::<AppState>().sqlite_writer.clone(),
                 app.state::<AppState>().data_directory.clone(),

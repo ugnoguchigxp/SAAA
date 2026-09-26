@@ -2,10 +2,9 @@ use super::item;
 use crate::diagnosis::contract::{DiagnosisItem, DiagnosisSeverity, DiagnosisStatus};
 use crate::persistence::{load_model_providers, load_routing_settings};
 use crate::providers::service_harness::{HarnessResolution, HarnessServiceStatus};
-use crate::voice::network_asr::NetworkAsrRuntime;
 use crate::AppState;
 use rusqlite::OptionalExtension;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem> {
     let settings = match state.sqlite_readers.read(load_model_providers) {
@@ -13,7 +12,7 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
         Err(_) => return Vec::new(),
     };
     if settings.harness.address.trim().is_empty() {
-        return vec![
+        let mut items = vec![
             item(
                 "harness.reachability",
                 "harness",
@@ -33,6 +32,18 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
                 None,
             ),
         ];
+        for capability in ["llm", "backchannel", "asr", "tts", "embedding"] {
+            items.push(item(
+                &format!("harness.{capability}"),
+                "harness",
+                &format!("LARM {capability}"),
+                DiagnosisStatus::Skipped,
+                DiagnosisSeverity::Info,
+                "Agent Connection address is not configured",
+                None,
+            ));
+        }
+        return items;
     }
     let legacy =
         crate::providers::service_harness::legacy_dynamic_lan_host(&settings.harness.address)
@@ -43,28 +54,13 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
         .sqlite_readers
         .read(load_routing_settings)
         .is_ok_and(|routing| routing.voice_transcribe.source == "harness");
-    let recent_asr = recent_asr_result(state);
-    let legacy_asr = async {
-        if uses_harness_asr {
-            legacy_asr_item(&settings.harness.address, recent_asr).await
-        } else {
-            None
-        }
-    };
+    let recent_asr = uses_harness_asr.then(|| recent_asr_result(state)).flatten();
     let stored_profile = settings.harness.larm_profile.as_deref();
-    let preference = crate::larm_voice::profile::preference(stored_profile);
-    let advertised = async {
-        if legacy {
-            advertised_llms(&settings.harness.address, &preference).await
-        } else {
-            None
-        }
-    };
     let resolution = crate::providers::service_harness::resolve_with_legacy_llm(
         &settings.harness.address,
         stored_profile,
     );
-    let (resolution, legacy_asr, advertised) = tokio::join!(resolution, legacy_asr, advertised);
+    let resolution = resolution.await;
     let mut items = Vec::new();
     match resolution {
         Ok(resolution) => {
@@ -75,13 +71,16 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
             );
             items.push(readiness.clone());
             items.extend(items_from_resolution(&resolution));
-            if let Some(detail) = advertised.as_deref() {
-                if let Some(llm) = items.iter_mut().find(|item| item.id == "harness.llm") {
-                    llm.message = detail.to_string();
+            if legacy {
+                if let Some(asr) = items.iter_mut().find(|item| item.id == "harness.asr") {
+                    if let Some(event) = recent_asr.as_ref() {
+                        let (status, message) = observed_asr_status(event);
+                        asr.status = status;
+                        asr.message = message.into();
+                    } else {
+                        asr.message = "ASR Provider ready; microphone capture and transcription were not tested".into();
+                    }
                 }
-            }
-            if readiness.status == DiagnosisStatus::Ok {
-                promote_response(&mut items, &readiness.message);
             }
             if legacy {
                 items.push(item(
@@ -109,27 +108,10 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
                         None,
                     ));
                 }
-                let (embedding, binding) =
-                    probe_embedding(&settings.harness.address, preference).await;
-                items.push(item(
-                    "harness.larm.inference",
-                    "harness",
-                    "Provider inference",
-                    embedding.status,
-                    DiagnosisSeverity::Degraded,
-                    &embedding.message,
-                    None,
-                ));
-                items.retain(|item| item.id != "harness.embedding");
-                items.push(embedding);
-                items.extend(binding);
             }
         }
         Err(error) => {
-            let message = match advertised.as_deref() {
-                Some(detail) => format!("{detail}\n{error}"),
-                None => error,
-            };
+            let message = error;
             let host = if legacy {
                 crate::providers::service_harness::legacy_dynamic_lan_host(
                     &settings.harness.address,
@@ -160,56 +142,7 @@ pub(in crate::diagnosis) async fn harness(state: &AppState) -> Vec<DiagnosisItem
             push_failure(&mut items, legacy, reached_tcp, reached_http, &message);
         }
     }
-    if let Some(legacy_asr) = legacy_asr {
-        items.retain(|item| item.id != "harness.asr");
-        items.push(legacy_asr);
-    }
     items
-}
-
-fn advertised_detail(catalog: &saaa_larm_session::catalog::CatalogProfile) -> Option<String> {
-    let lines = ["llm", "backchannel"]
-        .into_iter()
-        .filter_map(|name| {
-            catalog
-                .provider(name)
-                .map(|provider| format!("{name}: {} · {}", provider.model, provider.endpoint))
-        })
-        .collect::<Vec<_>>();
-    if lines.is_empty() {
-        None
-    } else {
-        Some(lines.join("\n"))
-    }
-}
-
-async fn advertised_llms(
-    address: &str,
-    preference: &saaa_larm_session::ProfilePreference,
-) -> Option<String> {
-    let saaa_larm_session::ProfilePreference::Variant(variant) = preference else {
-        return None;
-    };
-    let host = crate::providers::service_harness::legacy_dynamic_lan_host(address)
-        .ok()
-        .flatten()?;
-    let base = crate::providers::dynamic_lan::control_base_url(&host).ok()?;
-    let credential = crate::providers::dynamic_lan::credential::load().ok()?;
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(8))
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .build()
-        .ok()?;
-    let catalog = tokio::time::timeout(
-        Duration::from_secs(8),
-        saaa_larm_session::catalog::fetch(&client, &base, credential.token(), variant.selector()),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    advertised_detail(&catalog)
 }
 
 fn push_failure(
@@ -263,6 +196,17 @@ fn push_failure(
             message,
             None,
         ));
+        for capability in ["llm", "backchannel", "asr", "tts", "embedding"] {
+            items.push(item(
+                &format!("harness.{capability}"),
+                "harness",
+                &format!("LARM {capability}"),
+                DiagnosisStatus::Fail,
+                DiagnosisSeverity::Degraded,
+                message,
+                None,
+            ));
+        }
         return;
     }
     items.push(readiness_item(
@@ -343,53 +287,10 @@ fn observed_asr_status(event: &(String, String)) -> (DiagnosisStatus, &'static s
         ),
         ("asr-utterance-discarded", _) => (DiagnosisStatus::Warn, "Recent speech was discarded"),
         _ => (
-            DiagnosisStatus::Warn,
-            "ASR started, but no transcription was confirmed",
+            DiagnosisStatus::Ok,
+            "ASR Provider is ready; transcription was not yet confirmed",
         ),
     }
-}
-
-async fn legacy_asr_item(address: &str, recent: Option<(String, String)>) -> Option<DiagnosisItem> {
-    let host = crate::providers::service_harness::legacy_dynamic_lan_host(address)
-        .ok()
-        .flatten()?;
-    let probe = async {
-        let cancellation = Arc::new(crate::RunCancellation::default());
-        if crate::providers::service_harness::resolve_service_cancellable(
-            address,
-            "asr",
-            &cancellation,
-        )
-        .await
-        .is_ok()
-        {
-            return Ok(());
-        }
-        NetworkAsrRuntime::new()?
-            .resolve(&host, cancellation)
-            .await
-            .map(|_| ())
-    };
-    let (status, message) = match tokio::time::timeout(Duration::from_secs(8), probe).await {
-        Ok(Ok(())) => recent.as_ref().map(observed_asr_status).unwrap_or((
-            DiagnosisStatus::Warn,
-            "ASR endpoint is reachable; microphone capture and transcription were not tested",
-        )),
-        Ok(Err(_)) => (DiagnosisStatus::Fail, "ASR service is unavailable"),
-        Err(_) => (
-            DiagnosisStatus::Fail,
-            "ASR service did not respond within 8s",
-        ),
-    };
-    Some(item(
-        "harness.asr",
-        "voice",
-        "Harness ASR",
-        status,
-        DiagnosisSeverity::Degraded,
-        message,
-        None,
-    ))
 }
 
 pub(super) fn items_from_resolution(resolution: &HarnessResolution) -> Vec<DiagnosisItem> {
@@ -398,7 +299,7 @@ pub(super) fn items_from_resolution(resolution: &HarnessResolution) -> Vec<Diagn
         .iter()
         .map(service_item)
         .collect::<Vec<_>>();
-    for capability in ["llm", "asr", "tts", "embedding"] {
+    for capability in ["llm", "backchannel", "asr", "tts", "embedding"] {
         if items
             .iter()
             .any(|item| item.id == format!("harness.{capability}"))
@@ -416,136 +317,6 @@ pub(super) fn items_from_resolution(resolution: &HarnessResolution) -> Vec<Diagn
         ));
     }
     items
-}
-
-async fn probe_embedding(
-    address: &str,
-    preference: saaa_larm_session::ProfilePreference,
-) -> (DiagnosisItem, Vec<DiagnosisItem>) {
-    let probed = tokio::time::timeout(
-        Duration::from_secs(8),
-        request_embedding(address, preference),
-    )
-    .await;
-    let (status, message, binding) = match probed {
-        Ok(Ok(binding)) => (
-            DiagnosisStatus::Ok,
-            "Embedding request returned a vector".to_string(),
-            binding,
-        ),
-        Ok(Err(error)) => (DiagnosisStatus::Fail, error, Vec::new()),
-        Err(_) => (
-            DiagnosisStatus::Fail,
-            "Embedding did not respond within 8s".to_string(),
-            Vec::new(),
-        ),
-    };
-    (
-        item(
-            "harness.embedding",
-            "harness",
-            "Harness embedding",
-            status,
-            DiagnosisSeverity::Degraded,
-            &message,
-            None,
-        ),
-        binding,
-    )
-}
-
-fn binding_items(session: &saaa_larm_session::Session) -> Vec<DiagnosisItem> {
-    let selector = session.selector().unwrap_or("explicit");
-    let revision = session.catalog_revision().unwrap_or("none");
-    vec![
-        item(
-            "harness.larm.selector",
-            "harness",
-            "LARM selector",
-            DiagnosisStatus::Ok,
-            DiagnosisSeverity::Info,
-            selector,
-            None,
-        ),
-        item(
-            "harness.larm.catalog-revision",
-            "harness",
-            "LARM catalog revision",
-            DiagnosisStatus::Ok,
-            DiagnosisSeverity::Info,
-            revision,
-            None,
-        ),
-    ]
-}
-
-async fn request_embedding(
-    address: &str,
-    preference: saaa_larm_session::ProfilePreference,
-) -> Result<Vec<DiagnosisItem>, String> {
-    let credential = crate::providers::dynamic_lan::credential::load()
-        .map_err(|error| error.code().to_string())?;
-    let (_stop, cancel) = tokio::sync::watch::channel(false);
-    let session = saaa_larm_session::Session::connect_with_profile_credential_and_key(
-        address,
-        preference,
-        credential.token().to_string(),
-        format!("saaa-session-{}", uuid::Uuid::new_v4()),
-        cancel,
-    )
-    .await
-    .map_err(|error| error.to_string())?;
-    let mut binding = binding_items(&session);
-    let summary = session.provider_summary().await;
-    for name in ["llm", "backchannel"] {
-        let Some(provider) = summary.iter().find(|provider| provider.name == name) else {
-            continue;
-        };
-        let max_tokens = provider
-            .context_window
-            .map(|window| window.max_tokens.to_string())
-            .unwrap_or_else(|| "none".to_string());
-        binding.push(item(
-            &format!("harness.larm.{name}"),
-            "harness",
-            &format!("LARM {name}"),
-            DiagnosisStatus::Ok,
-            DiagnosisSeverity::Info,
-            &format!(
-                "model={} endpoint={} maxTokens={max_tokens}",
-                provider.model, provider.endpoint
-            ),
-            None,
-        ));
-    }
-    let embedded = session.embed_query(&["診断".to_string()]).await;
-    let _ = session.close().await;
-    let vectors = embedded?;
-    if vectors.first().is_some_and(|vector| !vector.is_empty()) {
-        Ok(binding)
-    } else {
-        Err("Embedding response was empty".to_string())
-    }
-}
-
-fn promote_response(items: &mut Vec<DiagnosisItem>, message: &str) {
-    if let Some(llm) = items.iter_mut().find(|item| item.id == "harness.llm") {
-        if llm.status == DiagnosisStatus::Skipped {
-            llm.status = DiagnosisStatus::Ok;
-            llm.severity = DiagnosisSeverity::Degraded;
-            llm.message = message.to_string();
-        }
-        return;
-    }
-    items.push(item(
-        "harness.llm",
-        "harness",
-        "Harness llm",
-        DiagnosisStatus::Ok,
-        DiagnosisSeverity::Degraded,
-        message,
-        None,
-    ));
 }
 
 fn service_item(service: &HarnessServiceStatus) -> DiagnosisItem {
@@ -609,6 +380,15 @@ mod tests {
                 .map(|item| item.status),
             Some(DiagnosisStatus::Fail)
         );
+        for capability in ["llm", "backchannel", "asr", "tts", "embedding"] {
+            assert_eq!(
+                items
+                    .iter()
+                    .find(|item| item.id == format!("harness.{capability}"))
+                    .map(|item| item.status),
+                Some(DiagnosisStatus::Fail)
+            );
+        }
     }
     use rusqlite::Connection;
 
@@ -677,7 +457,7 @@ mod tests {
                 message: "ready".into(),
             }],
         });
-        assert_eq!(ready.len(), 4);
+        assert_eq!(ready.len(), 5);
         let embedding = ready
             .iter()
             .find(|item| item.id == "harness.embedding")
@@ -686,25 +466,21 @@ mod tests {
         assert_eq!(embedding.severity, DiagnosisSeverity::Info);
         assert!(ready.iter().any(|item| item.id == "harness.asr"));
 
-        let mut missing = items_from_resolution(&HarnessResolution {
+        let missing = items_from_resolution(&HarnessResolution {
             state: "degraded",
             revision: "rev".into(),
             services: vec![],
         });
-        assert_eq!(missing.len(), 4);
+        assert_eq!(missing.len(), 5);
         assert!(missing
             .iter()
             .all(|item| item.status == DiagnosisStatus::Skipped));
-        promote_response(
-            &mut missing,
-            "Agent connection and model readiness probe succeeded",
-        );
         assert_eq!(
             missing
                 .iter()
                 .find(|item| item.id == "harness.llm")
                 .map(|item| item.status),
-            Some(DiagnosisStatus::Ok)
+            Some(DiagnosisStatus::Skipped)
         );
     }
 
@@ -720,41 +496,7 @@ mod tests {
         );
         assert_eq!(
             observed_asr_status(&(String::from("asr-ready"), String::new())).0,
-            DiagnosisStatus::Warn
-        );
-    }
-
-    #[test]
-    fn advertised_detail_shows_model_and_endpoint() {
-        let catalog = saaa_larm_session::catalog::CatalogProfile {
-            revision: "rev".into(),
-            selector: "SAAA".into(),
-            id: "saaa-conversation-ornith15".into(),
-            providers: vec![
-                saaa_larm_session::catalog::CatalogProvider {
-                    name: "llm".into(),
-                    capability: "llm.general".into(),
-                    protocol: "openai.chat-completions.v1".into(),
-                    endpoint: "/v1/chat/completions".into(),
-                    model: "ornith-1.5-35b".into(),
-                    context_window: None,
-                },
-                saaa_larm_session::catalog::CatalogProvider {
-                    name: "backchannel".into(),
-                    capability: "llm.backchannel.classifier".into(),
-                    protocol: "openai.chat-completions.v1".into(),
-                    endpoint: "/v1/chat/completions".into(),
-                    model: "qwen3.5-2b-fast-response".into(),
-                    context_window: None,
-                },
-            ],
-            services: Vec::new(),
-        };
-        assert_eq!(
-            advertised_detail(&catalog).as_deref(),
-            Some(
-                "llm: ornith-1.5-35b · /v1/chat/completions\nbackchannel: qwen3.5-2b-fast-response · /v1/chat/completions"
-            )
+            DiagnosisStatus::Ok
         );
     }
 

@@ -14,6 +14,7 @@ export const enDiagnosis = {
   },
   services: {
     llm: "Response",
+    backchannel: "Backchannel response",
     asr: "Speech recognition",
     tts: "Speech synthesis",
     embedding: "Embedding",

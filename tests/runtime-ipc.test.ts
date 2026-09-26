@@ -328,6 +328,50 @@ describe("frontend IPC wrappers", () => {
     expect(invokeCalls.map((call) => call.command)).toContain("start_voice_asr_session");
   });
 
+  test("starts ASR while the LARM conversation lease is still preparing", async () => {
+    ownLarmVoice("c-pending-lease");
+    let finishPreparation = () => undefined;
+    const preparation = new Promise<void>((resolve) => {
+      finishPreparation = resolve;
+    });
+    invokeImpl.handler = async (command) => {
+      if (command === "begin_larm_voice_session") await preparation;
+      return command;
+    };
+    await startVoiceAsrSession(
+      { sessionId: "asr-pending-lease", conversationId: "c-pending-lease", sampleRate: 16_000 },
+      () => undefined,
+    );
+    expect(invokeCalls.map((call) => call.command)).toContain("start_voice_asr_session");
+    finishPreparation();
+  });
+
+  test("ends a pending LARM lease when ASR startup fails", async () => {
+    ownLarmVoice("c-asr-failure-during-lease");
+    let finishPreparation = () => undefined;
+    const preparation = new Promise<void>((resolve) => {
+      finishPreparation = resolve;
+    });
+    invokeImpl.handler = async (command) => {
+      if (command === "begin_larm_voice_session") await preparation;
+      if (command === "start_voice_asr_session") throw new Error("asr-provider-unavailable");
+      if (command === "end_larm_voice_session") finishPreparation();
+      return command;
+    };
+    await expect(
+      startVoiceAsrSession(
+        {
+          sessionId: "asr-failure-during-lease",
+          conversationId: "c-asr-failure-during-lease",
+          sampleRate: 16_000,
+        },
+        () => undefined,
+      ),
+    ).rejects.toThrow("asr-provider-unavailable");
+    expect(currentLarmVoice()).toBeNull();
+    expect(invokeCalls.map((call) => call.command)).toContain("end_larm_voice_session");
+  });
+
   test("does not fail a LARM owner when ASR start is cancelled", async () => {
     invokeImpl.handler = async (command) => {
       if (command === "start_voice_asr_session") throw new Error("asr-cancelled");

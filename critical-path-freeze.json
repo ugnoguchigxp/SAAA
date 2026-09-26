@@ -2,8 +2,8 @@
   "version": 1,
   "domains": {
     "asr": {
-      "acceptedAt": "2026-09-26T01:47:35.990Z",
-      "reason": "Skip native backend status probing when native capture is unavailable; ASR regression tests passed (16 Bun, 38 Rust).",
+      "acceptedAt": "2026-09-26T03:38:34.144Z",
+      "reason": "Start Harness ASR while LARM conversation lease prepares; Bun ASR regressions 27 passed and Rust streaming ASR 38 passed.",
       "files": {
         "src-tauri/src/voice/network_asr.rs": "53e14d522b058a6bd4a2a3b949d44ce11f095d6315314b06aec67f7025abfcf4",
         "src-tauri/src/voice/network_asr/discovery.rs": "2010c7a177dd3dd0e5056cefcb1eb823721f7878bd41fb77e47b0cab86a94063",
@@ -28,12 +28,12 @@
         "src/features/voice/useAmbientVoiceSession.ts": "de6c2326d13a48a8dbe0f43a6904bc89c12ab61878bd699cda545ccddb5726c1",
         "src/features/voice/voiceCaptureSettings.ts": "f23cbcb78821a63cc78d8b45f1fc4546515ff8f7dcdd6199ea5b3534627d2900",
         "src/lib/microphone.ts": "c16d977c6c74916b139f01e69ab2ad2f8ca24f09464715243cebbe0b420a40fa",
-        "src/lib/voiceAsrRuntime.ts": "801bbb829e5817580a3f33e532a937f6993414ba536faa0e12ff38dc009b8807"
+        "src/lib/voiceAsrRuntime.ts": "e86f35072591ea6cdef7b8049feeac67dc71e66cb0d4970b241521d022d6c769"
       }
     },
     "initial-response": {
-      "acceptedAt": "2026-09-26T01:47:41.637Z",
-      "reason": "Resolve provider and reasoner timeout tie in favor of the session budget; targeted role regression passed, quality check passed, desktop smoke to follow.",
+      "acceptedAt": "2026-09-26T04:10:29.501Z",
+      "reason": "Review LARM claim compatibility: embedding daemonURL no longer blocks LLM claim parsing; Dynamic LAN tests 46 passed and quality check passed; macOS smoke follows.",
       "files": {
         "src-tauri/src/persistence/app_commands.rs": "0e93155944cafd837e0eecffc129b327e74093e0876b63db00b305c6c946bdfd",
         "src-tauri/src/persistence/schema.rs": "591633043388875e2ed97008ce1c4a243b93aa22272f4a4d558f6d0a6e3e2a6b",
@@ -74,20 +74,20 @@
         "src-tauri/src/providers/chat_completions/world_eval_tests.rs": "1e4abf4df6d05a79f4e668fe551f3384410f54c126b01ce82995fa4bf96029b3",
         "src-tauri/src/providers/chat_completions/world_trim.rs": "49a4ce21e3f9f0f0ad56b0f8b32f3a32d91cc2ca56343ca1a5f0019eb7712d71",
         "src-tauri/src/providers/dynamic_lan/auth.rs": "2fd8e294058e1e56e2c0de83f8c892d5f3ee0b835b8320df33925d4c8c0da712",
-        "src-tauri/src/providers/dynamic_lan/connection_lifecycle.rs": "ced49c7ffa5cf57a895c290ee360fb20fcb50f9e39e13b6b7f4ee5e17c07e7d3",
-        "src-tauri/src/providers/dynamic_lan/connection_runtime.rs": "7d3d6a3cf7345e0da81e40c7b9858a5a99bd76043142b094c5292490fdeb8ce0",
-        "src-tauri/src/providers/dynamic_lan/connection_types.rs": "d283aeb17069e0ae0fd5ac878c1784058d20cebb6ca130f6c62eb5d7a6d0bab0",
+        "src-tauri/src/providers/dynamic_lan/connection_lifecycle.rs": "d15232d80c7efbdead8d9350ca606afe18ad3d1fa1065ca728d5f139918cbd0e",
+        "src-tauri/src/providers/dynamic_lan/connection_runtime.rs": "b188b265f5aa5a6cdf20e6198ea405831002d15bf2b8e6da5cbeb80514abfeb0",
+        "src-tauri/src/providers/dynamic_lan/connection_types.rs": "41f0486061db8005abf46515569cc920a98fd8efcf955fe1d5ad121cd4da8376",
         "src-tauri/src/providers/dynamic_lan/credential.rs": "11f39fa816b91daf5712dae24e59dc1cef55c47235d1c2d8e382f177667150c6",
-        "src-tauri/src/providers/dynamic_lan/http.rs": "0ce42475f030a967a67babc77147e571319125e3e426c8341663a6d44788fab0",
+        "src-tauri/src/providers/dynamic_lan/http.rs": "3fbf301bf1dbd77849f0f0b57684ebc58a8c65ec407cd487594c50009b5a2f0b",
         "src-tauri/src/providers/dynamic_lan/mod.rs": "8ff4af26f772678d4483909d63a35ca513e1ec87bffec0cdd8b5ce6cdacd3c27",
         "src-tauri/src/providers/dynamic_lan/probe.rs": "e9b923adaf6b9464c1bbee1f297553b23c079a434c2e79d097f4682f590e0693",
         "src-tauri/src/providers/dynamic_lan/profile_catalog.rs": "3b60430bec0edaf32fefdd4c5180f5955d272fe10c4a218acf5326ba581bce02",
-        "src-tauri/src/providers/dynamic_lan/tests/fixtures_and_contracts.rs": "6dcc214ddddc35871e740cc97fc1da42c9fcfc0233a21dee8c880453a55ecbf7",
+        "src-tauri/src/providers/dynamic_lan/tests/fixtures_and_contracts.rs": "6a654ead1c7f084b82a17cff6c51930ef594bf4461de88339937857303297af4",
         "src-tauri/src/providers/dynamic_lan/tests/lifecycle_tests.rs": "50feb579215cb93d1e32cec3a05cc71b2b4923ca89fc903fcf937915ac3dfec2",
         "src-tauri/src/providers/dynamic_lan/tests/resolution_tests.rs": "2795331d11f8b425d9a979f59448b523f8c37881dcd8e0f3791e960f88ad0eff",
-        "src-tauri/src/providers/dynamic_lan/tests/selector_tests.rs": "21679452775f20dbd80d18919707920253255e63b94d598a664c5f390bd71b72",
+        "src-tauri/src/providers/dynamic_lan/tests/selector_tests.rs": "4849bbe4ec1eaa51c36d65843a753d2b4a061d32976aa193e4464e2dda5918fa",
         "src-tauri/src/providers/dynamic_lan/urls.rs": "6824ae27ef76a7ff291e0b9da5eeff32d8f22245f927d7358461ac0e62c4d81b",
-        "src-tauri/src/providers/dynamic_lan/validate.rs": "8cd6605f78d8e8b65b64f3f54905bef3bcb649ed51af4e0c4129ac9089e32107",
+        "src-tauri/src/providers/dynamic_lan/validate.rs": "80c8a2617170d7d5c4b880724dee53f9e435fda9dfcc746dc14068c653771624",
         "src-tauri/src/providers/openai_compatible.rs": "47f535bd5ff66e597a45db378e77b5f76ade928972ba18ff59ddfcd5e04d3ed6",
         "src-tauri/src/providers/routing.rs": "23604f6438d365b26dbdc6dd7675bcaa66ca62b56bd46f3156d63e77efe3ff6a",
         "src-tauri/src/providers/routing/service_harness.rs": "217aa40083215934fe4f605fc5e34c44f4d47afaa27c16b7307216043f312608",

@@ -6,6 +6,7 @@ import { useDiagnosisReport } from "./useDiagnosisReport";
 const LARM_PROVIDER_ID = "provider.lan-llm-dynamic";
 const LARM_SERVICES = [
   { id: "llm", itemId: "harness.llm" },
+  { id: "backchannel", itemId: "harness.backchannel" },
   { id: "asr", itemId: "harness.asr" },
   { id: "tts", itemId: "harness.tts" },
   { id: "embedding", itemId: "harness.embedding" },
@@ -225,33 +226,9 @@ function ItemRows({ title, items }: { title: string; items: DiagnosisItem[] }) {
 
 function larmServices(items: DiagnosisItem[]) {
   return LARM_SERVICES.flatMap((service) => {
-    const found =
-      service.id === "llm"
-        ? responseItem(items)
-        : service.id === "tts"
-          ? speechItem(items)
-          : items.find((item) => item.id === service.itemId);
+    const found = items.find((item) => item.id === service.itemId);
     return found ? [card(service.id, found)] : [];
   });
-}
-
-function speechItem(items: DiagnosisItem[]) {
-  const harness = items.find((item) => item.id === "harness.tts");
-  const system = items.find((item) => item.id === "provider.system-tts");
-  const candidates = [harness, system].filter((item): item is DiagnosisItem => item != null);
-  return (
-    candidates.find((item) => item.status === "ok" || item.status === "warn") ??
-    candidates.find((item) => item.status === "fail") ??
-    candidates[0]
-  );
-}
-
-function responseItem(items: DiagnosisItem[]) {
-  const llm = items.find((item) => item.id === "harness.llm");
-  const readiness = items.find((item) => item.id === "harness.reachability");
-  if (llm && llm.status !== "skipped") return llm;
-  if (readiness && readiness.status !== "skipped") return readiness;
-  return llm ?? readiness;
 }
 
 function localState(items: DiagnosisItem[]) {
