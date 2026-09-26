@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAAA 回答Preview</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif; color: #1d2732; background: #f4f6f7; }
+    body { margin: 0; } main { max-width: 740px; margin: auto; padding: 28px; }
+    h1 { font-size: 21px; } p { line-height: 1.6; }
+    section { background: white; border: 1px solid #d9e0e5; border-radius: 12px; padding: 18px; margin-top: 16px; }
+    .muted { color: #576876; font-size: 13px; }
+    .states { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .states > div { padding: 12px; background: #f4f7f8; border-radius: 8px; }
+    .label { display: block; color: #576876; font-size: 12px; margin-bottom: 4px; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 100px; padding: 12px; border: 1px solid #b8c5cf; border-radius: 8px; font: inherit; resize: vertical; }
+    button { padding: 10px 16px; border: 0; border-radius: 8px; background: #145f83; color: white; font: inherit; cursor: pointer; }
+    button.secondary { background: #e4ebef; color: #183344; }
+    button:disabled { opacity: .5; cursor: default; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    #answer { white-space: pre-wrap; min-height: 56px; }
+    #error { color: #a22b26; min-height: 20px; }
+  </style>
+</head>
+<body><main>
+  <h1>SAAA 回答Preview</h1>
+  <p class="muted">隔離DBの設定を読み、実Qwenと選択済みTTSで1件ずつ応答します。</p>
+  <section><div class="states">
+    <div><span class="label">実行環境</span><strong id="resource">未開始</strong><div id="phase" class="muted"></div></div>
+    <div><span class="label">選択済み</span><strong id="model">—</strong><div id="tts" class="muted"></div></div>
+  </div><div class="actions"><button id="open">開始</button><button id="close" class="secondary" disabled>終了</button></div></section>
+  <section><label for="input">テキスト入力</label><textarea id="input" maxlength="4096" placeholder="ここに入力してください"></textarea>
+    <div class="actions"><button id="submit" disabled>送信</button><button id="stop-speech" class="secondary" disabled>読み上げ停止</button><button id="stop-response" class="secondary" disabled>この応答を中止</button></div>
+  </section>
+  <section><div class="states"><div><span class="label">本文</span><strong id="frontdesk">—</strong></div><div><span class="label">音声</span><strong id="speech">—</strong></div></div>
+    <p id="answer"></p><p id="error" role="alert"></p>
+  </section>
+</main>
+<script>
+  const invoke = window.__TAURI__?.core?.invoke;
+  const listen = window.__TAURI__?.event?.listen;
+  const el = id => document.getElementById(id);
+  const terminal = new Set(['completed','unsupported','failed','cancelled','interrupted']);
+  const speechTerminal = new Set(['played','stopped','failed','interrupted']);
+  let draftId = null;
+  let lastVersion = 0;
+  let responseId = null;
+  let liveText = '';
+  let lastDeltaSeq = -1;
+  let frontdeskTerminal = false;
+  let resourceStart = null;
+  let resourcePhase = '';
+  function updateElapsed() {
+    if (resourceStart === null) return;
+    el('phase').textContent = `${resourcePhase} · ${Math.floor((Date.now() - resourceStart) / 1000)}秒`;
+  }
+  setInterval(updateElapsed, 1000);
+  async function call(name, args) {
+    if (!invoke) throw new Error('Tauri IPCを利用できません。');
+    return invoke(name, args);
+  }
+  function showError(error) { el('error').textContent = String(error); }
+  function render(data) {
+    if (data.version < lastVersion) return;
+    lastVersion = data.version;
+    el('resource').textContent = data.resourceState;
+    resourcePhase = data.resourcePhase;
+    resourceStart = Date.now() - data.resourceElapsedMs;
+    updateElapsed();
+    el('model').textContent = data.model;
+    el('tts').textContent = `${data.tts.kind === 'system' ? 'System TTS' : 'LARM TTS'} · ${data.tts.voice}`;
+    const response = data.response;
+    frontdeskTerminal = !response || terminal.has(response.frontdeskState);
+    if (response?.responseId !== responseId) {
+      responseId = response?.responseId ?? null;
+      liveText = response?.publicText ?? '';
+      lastDeltaSeq = -1;
+    }
+    if (!response || terminal.has(response.frontdeskState)) liveText = response?.publicText ?? '';
+    else if (!liveText.startsWith(response.publicText)) liveText = response.publicText;
+    el('frontdesk').textContent = response?.frontdeskState ?? '—';
+    el('speech').textContent = response?.speechState ?? '—';
+    el('answer').textContent = liveText;
+    if (response?.failureCode) showError(`${response.failureStage}: ${response.failureCode}`);
+    const busy = response && (!terminal.has(response.frontdeskState) || !speechTerminal.has(response.speechState));
+    el('submit').disabled = data.resourceState !== 'ready' || busy;
+    el('stop-speech').disabled = !response || speechTerminal.has(response.speechState);
+    el('stop-response').disabled = !response || terminal.has(response.frontdeskState);
+    el('open').disabled = true; el('close').disabled = false;
+  }
+  el('open').onclick = async () => { try { render(await call('open_preview')); } catch (error) { showError(error); } };
+  el('input').addEventListener('input', () => { draftId = null; });
+  el('submit').onclick = async () => {
+    if (!draftId) draftId = crypto.randomUUID();
+    const inputId = draftId;
+    const text = el('input').value;
+    try {
+      await call('submit_text', { inputId, text });
+      if (draftId === inputId && el('input').value === text) {
+        draftId = null;
+        el('input').value = '';
+      }
+      el('error').textContent = '';
+      render(await call('get_snapshot'));
+    } catch (error) { showError(error); }
+  };
+  el('stop-speech').onclick = async () => { try { await call('stop_response', { scope: 'speech' }); render(await call('get_snapshot')); } catch (error) { showError(error); } };
+  el('stop-response').onclick = async () => { try { await call('stop_response', { scope: 'response' }); render(await call('get_snapshot')); } catch (error) { showError(error); } };
+  el('close').onclick = async () => { try { await call('close_preview'); location.reload(); } catch (error) { showError(error); } };
+  if (listen) {
+    listen('preview-state', event => render(event.payload));
+    listen('preview-delta', event => {
+      const delta = event.payload;
+      if (frontdeskTerminal || delta.responseId !== responseId || delta.seq <= lastDeltaSeq) return;
+      lastDeltaSeq = delta.seq;
+      liveText = delta.text;
+      el('answer').textContent = liveText;
+    });
+  }
+  call('get_snapshot').then(render).catch(() => {});
+</script></body></html>
