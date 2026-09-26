@@ -76,13 +76,15 @@ struct Turn {
     steps: Vec<(i64, String, String, String)>,
     bodies: Vec<serde_json::Value>,
     hits: Vec<String>,
+    creates: usize,
     sink: Sink,
 }
 
 async fn run_turn(run_id: &str, origin: &str, transition: &'static str, content: &str) -> Turn {
     let _environment = crate::test_environment::larm_lock().lock().await;
+    SHUTTING_DOWN.store(false, Ordering::Release);
     let h = Harness::new();
-    let route = if origin == "voice" { "butler" } else { "dynamic-lan" };
+    let route = if origin == "voice" { "butler" } else { "shared-larm" };
     let (fake, server) = if origin == "voice" {
         Fake::start(route, transition, h.fixture.clock.clone()).await
     } else {
@@ -127,6 +129,7 @@ async fn run_turn(run_id: &str, origin: &str, transition: &'static str, content:
         started: AtomicBool::new(false),
         lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
         sqlite_writer: h.state.sqlite_writer.clone(),
+        phase: new_phase(),
     }));
     let input = crate::StartTurnInput {
         run_id: run_id.into(),
@@ -175,6 +178,7 @@ async fn run_turn(run_id: &str, origin: &str, transition: &'static str, content:
     }).unwrap();
     let bodies = fake.bodies.lock().unwrap().clone();
     let hits = fake.hits.lock().unwrap().clone();
+    let creates = fake.creates.load(std::sync::atomic::Ordering::SeqCst);
     shutdown().await;
     server.abort();
     Turn {
@@ -182,6 +186,7 @@ async fn run_turn(run_id: &str, origin: &str, transition: &'static str, content:
         steps,
         bodies,
         hits,
+        creates,
         sink: events,
     }
 }
@@ -209,6 +214,14 @@ async fn role_routed_voice_turn_reaches_larm_for_every_step() {
         turn.hits
     );
     assert_eq!(turn.message, "ornith-answer");
+}
+
+#[tokio::test]
+async fn idle_released_provider_request_reconnects_and_completes_once() {
+    let turn = run_turn("run_butler_idle_reconnect", "voice", "idle-provider-reject", "u").await;
+    assert_eq!(turn.message, "ornith-answer");
+    assert_eq!(turn.creates, 2);
+    assert_eq!(turn.hits.iter().filter(|name| name.as_str() == "llm").count(), 1);
 }
 
 #[tokio::test]

@@ -217,6 +217,7 @@ pub(crate) async fn render_http_session(
                 let ready = crate::larm_voice::current_at(conversation, settings).await?;
                 crate::voice::http_audio::play_larm_with_situation(
                     &ready.session,
+                    conversation,
                     settings.tts_voice.as_deref(),
                     Some(settings),
                     expression,

@@ -20,6 +20,7 @@ pub(crate) use larm_voice::*;
 #[cfg(test)]
 pub(crate) use recall_dispatch::execute_recall_tool;
 
+#[derive(Clone)]
 pub(crate) struct ModelStreamContext<'a> {
     pub(crate) reasoning_effort: &'a str,
     pub(crate) max_output_tokens: u32,

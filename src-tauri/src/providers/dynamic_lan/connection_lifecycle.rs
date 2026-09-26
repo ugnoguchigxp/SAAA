@@ -145,7 +145,7 @@ impl DynamicLanConnection {
             &RunCancellation::default(),
         )
         .await;
-        let created = match created {
+        let mut created = match created {
             Err(error) if matches!(error.kind, ErrorKind::Network | ErrorKind::Timeout) => {
                 send_json_response::<ConnectionState>(
                     &client,
@@ -160,10 +160,25 @@ impl DynamicLanConnection {
             }
             result => result?,
         };
+        if created.value.id.is_empty() {
+            if let Some(location) = created.location.as_deref() {
+                let url = control_base.join(location).map_err(contract_error)?;
+                if url.origin() == control_base.origin()
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+                {
+                    if let Some(id) = url.path().strip_prefix("/v1/agent-connections/") {
+                        if !id.contains('/') {
+                            created.value.id = id.to_string();
+                        }
+                    }
+                }
+            }
+        }
         if !matches!(created.status, StatusCode::CREATED | StatusCode::ACCEPTED)
             || (created.status == StatusCode::CREATED && created.value.status != "ready")
             || (created.status == StatusCode::ACCEPTED
-                && !matches!(created.value.status.as_str(), "pending" | "probing"))
+                && !matches!(created.value.status.as_str(), "pending" | "deploying" | "probing"))
         {
             let error = contract_error(());
             return if let Ok(url) = connection_resource_url(&control_base, &created.value.id) {
@@ -189,15 +204,6 @@ impl DynamicLanConnection {
             }
         };
         let connection_url = connection_resource_url(&control_base, &identity.id)?;
-        if created.status == StatusCode::ACCEPTED && created.location.is_none() {
-            return Err(error_after_release(
-                contract_error(()),
-                &client,
-                &connection_url,
-                control_credential.as_ref(),
-            )
-            .await);
-        }
         if matches!(created.status, StatusCode::CREATED | StatusCode::ACCEPTED) {
             if let Err(error) = validate_create_location(
                 created.location.as_deref(),
@@ -218,7 +224,7 @@ impl DynamicLanConnection {
         loop {
             match state.status.as_str() {
                 "ready" => break,
-                "pending" | "probing" => {}
+                "pending" | "deploying" | "probing" => {}
                 "failed" => {
                     let kind = state
                         .error

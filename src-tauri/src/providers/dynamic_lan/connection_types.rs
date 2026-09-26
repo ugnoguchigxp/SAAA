@@ -80,6 +80,7 @@ struct SelectedLlmProfile {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectionState {
+    #[serde(default)]
     id: String,
     allocation_id: String,
     boot_epoch: String,

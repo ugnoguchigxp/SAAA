@@ -66,10 +66,7 @@ pub(crate) fn projects_only_the_final_user_message_as_the_current_instruction() 
 
     assert_eq!(window.health.current_instruction_count, 1);
     assert_eq!(window.messages.last().expect("current exists").role, "user");
-    assert_eq!(
-        window.messages.last().expect("current exists").content,
-        "u"
-    );
+    assert_eq!(window.messages.last().expect("current exists").content, "u");
     assert_eq!(
         window
             .messages
@@ -104,12 +101,7 @@ pub(crate) fn creates_source_backed_continuity_groups_for_older_dialogue() {
     let connection = database();
     for index in 0..40 {
         let role = if index % 2 == 0 { "user" } else { "assistant" };
-        insert(
-            &connection,
-            index,
-            role,
-            &format!("h{index}"),
-        );
+        insert(&connection, index, role, &format!("h{index}"));
     }
     insert(&connection, 40, "user", "u");
 
@@ -393,12 +385,7 @@ pub(crate) fn continuity_selection_omits_groups_without_a_user_request() {
 #[test]
 pub(crate) fn stale_system_records_are_excluded_from_historical_context() {
     let connection = database();
-    insert(
-        &connection,
-        0,
-        "system",
-        "stale-system",
-    );
+    insert(&connection, 0, "system", "stale-system");
     insert(&connection, 1, "user", "u");
 
     let window = build(&connection, "primary", "message-1").expect("context builds");
@@ -444,12 +431,7 @@ pub(crate) fn source_scan_reports_when_older_history_exceeds_the_bounded_load() 
     for index in 0..=MAX_SOURCE_MESSAGES {
         insert(&connection, index, "assistant", &format!("history {index}"));
     }
-    insert(
-        &connection,
-        MAX_SOURCE_MESSAGES + 1,
-        "user",
-        "u",
-    );
+    insert(&connection, MAX_SOURCE_MESSAGES + 1, "user", "u");
 
     let window = build(
         &connection,

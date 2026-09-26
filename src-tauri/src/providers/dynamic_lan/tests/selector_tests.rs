@@ -115,7 +115,7 @@ async fn text_path_queries_saaa_selector() {
     assert!(!requests[1].contains("\"agentProfile\":"));
     assert!(requests[1]
         .to_ascii_lowercase()
-        .contains("prefer: wait=300"));
+        .contains("prefer: wait=0"));
     assert!(requests[1].contains("\"expectedCatalogRevision\":\"rev-fixture\""));
     if let Some(token) = previous_token {
         env::set_var(API_TOKEN_ENV, token);

@@ -94,14 +94,17 @@ async fn releases_the_original_connection_when_poll_identity_changes() {
                     "202 Accepted",
                     "application/json",
                     "Location: /v1/agent-connections/aconn_original\r\nRetry-After: 1\r\n",
-                    &connection_state_json(
-                        "aconn_original",
-                        "pending",
-                        AUDIENCE,
-                        &created_at,
-                        &expires_at,
-                    )
-                    .to_string(),
+                    &{
+                        let mut state = connection_state_json(
+                            "aconn_original",
+                            "pending",
+                            AUDIENCE,
+                            &created_at,
+                            &expires_at,
+                        );
+                        state.as_object_mut().unwrap().remove("id");
+                        state.to_string()
+                    },
                 ),
                 2 => write_response(
                     &mut stream,

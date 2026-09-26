@@ -22,6 +22,7 @@ export async function tryStartNativeVoiceCapture(input: {
   clearTranscript: () => void;
   onEnded?: (reason: string) => void;
 }): Promise<boolean> {
+  if (!input.nativeCapture) return false;
   const native = await audioBackendStatus().catch(() => null);
   if (!native || !nativeCapturePreferred(native, input.settings.aecEnabled)) return false;
   try {

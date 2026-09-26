@@ -176,7 +176,8 @@ mod tests {
         assert_eq!(spoken_line(&tagged).as_deref(), Some("x"));
         let dollar = parse(r#"{"kind":"nod","reply":"[$t] x"}"#).expect("dollar");
         assert_eq!(spoken_line(&dollar).as_deref(), Some("x"));
-        let wrapped = parse("y\n```json\n{\"kind\":\"greeting\",\"reply\":\"x\"}\n```").expect("wrapped");
+        let wrapped =
+            parse("y\n```json\n{\"kind\":\"greeting\",\"reply\":\"x\"}\n```").expect("wrapped");
         assert_eq!(spoken_line(&wrapped).as_deref(), Some("x"));
         let long = "x".repeat(81);
         let too_long = parse(&format!(r#"{{"kind":"nod","reply":"{long}"}}"#)).expect("long");

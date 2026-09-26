@@ -32,6 +32,27 @@ pub(crate) async fn stream_voice_aware_dynamic_lan_provider(
             larm_provider,
         )
         .await
+    } else if let Some(persistence) = context.output_persistence {
+        if crate::larm_voice::ensure_conversation_owner(
+            conversation_id,
+            settings,
+            persistence.state.sqlite_writer.clone(),
+        )
+        .await
+        .is_err()
+        {
+            return failed(ProviderFailureKind::Unavailable);
+        }
+        stream_larm_voice_provider(
+            settings,
+            provider.request_options.clone(),
+            conversation_id,
+            history,
+            timeout_ms,
+            context,
+            larm_provider,
+        )
+        .await
     } else {
         super::stream_dynamic_lan_provider(
             provider,
@@ -54,6 +75,60 @@ async fn stream_larm_voice_provider(
     context: ModelStreamContext<'_>,
     larm_provider: &'static str,
 ) -> ProviderAttemptOutcome {
+    let mut used = None;
+    let first = stream_larm_voice_provider_once(
+        settings,
+        request_options.clone(),
+        conversation_id,
+        history,
+        timeout_ms,
+        context.clone(),
+        larm_provider,
+        &mut used,
+    )
+    .await;
+    if matches!(
+        first,
+        ProviderAttemptOutcome::Failed {
+            kind: ProviderFailureKind::AllocationLost,
+            output_started: false,
+            ..
+        }
+    ) {
+        if let Some(session) = used {
+            if crate::larm_voice::invalidate_connection(conversation_id, &session)
+                .await
+                .is_ok()
+            {
+                let mut retry_used = None;
+                return stream_larm_voice_provider_once(
+                    settings,
+                    request_options,
+                    conversation_id,
+                    history,
+                    timeout_ms,
+                    context,
+                    larm_provider,
+                    &mut retry_used,
+                )
+                .await;
+            }
+        }
+    }
+    first
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stream_larm_voice_provider_once(
+    settings: &HarnessSettings,
+    request_options: Option<saaa_larm_session::http_api::LlmOptions>,
+    conversation_id: &str,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    context: ModelStreamContext<'_>,
+    larm_provider: &'static str,
+    used: &mut Option<std::sync::Arc<saaa_larm_session::Session>>,
+) -> ProviderAttemptOutcome {
     let cancellation = context.cancellation.clone();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
     let ready = tokio::select! { biased;
@@ -64,10 +139,12 @@ async fn stream_larm_voice_provider(
             Err(_) => return failed(ProviderFailureKind::Timeout),
         }
     };
+    *used = Some(ready.session.clone());
     let lease = tokio::select! { biased;
         _ = cancellation.cancelled() => return cancelled(),
         result = tokio::time::timeout_at(deadline, ready.session.acquire(larm_provider)) => match result {
             Ok(Ok(lease)) => lease,
+            Ok(Err("larm_session_closed" | "larm_connection_idle_released" | "larm_expired")) => return failed(ProviderFailureKind::AllocationLost),
             Ok(Err(_)) => return failed(ProviderFailureKind::Unavailable),
             Err(_) => return failed(ProviderFailureKind::Timeout),
         }

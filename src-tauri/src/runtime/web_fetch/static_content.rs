@@ -65,9 +65,9 @@ fn public_url(raw: &str) -> Result<Url, WebFetchFailure> {
         || !matches!(url.scheme(), "http" | "https")
         || url.username() != ""
         || url.password().is_some()
-        || url.port().is_some_and(|port| {
-            !matches!((url.scheme(), port), ("http", 80) | ("https", 443))
-        })
+        || url
+            .port()
+            .is_some_and(|port| !matches!((url.scheme(), port), ("http", 80) | ("https", 443)))
         || matches!(url.host(), Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)))
         || host == "localhost"
         || host.ends_with(".localhost")

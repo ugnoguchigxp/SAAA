@@ -69,6 +69,27 @@ async fn transcribe_one(
                 .request_budget(Duration::from_millis(budget))
                 .map_err(str::to_string)?
                 .as_millis() as u64;
+            let result = crate::voice::cloud_asr::transcribe_with_api_key(
+                &crate::larm_voice::audio::asr_settings(lease.provider()),
+                samples,
+                sample_rate,
+                budget,
+                cancellation.clone(),
+                Some(lease.provider().token()),
+            )
+            .await;
+            if !matches!(&result, Err(error) if error == crate::ProviderFailureKind::AllocationLost.public_message().as_str())
+            {
+                return result;
+            }
+            drop(lease);
+            crate::larm_voice::invalidate_connection(conversation, &ready.session).await?;
+            let ready = crate::larm_voice::current_at(conversation, settings).await?;
+            let lease = ready.session.acquire("asr").await.map_err(str::to_string)?;
+            let budget = lease
+                .request_budget(Duration::from_millis(budget))
+                .map_err(str::to_string)?
+                .as_millis() as u64;
             crate::voice::cloud_asr::transcribe_with_api_key(
                 &crate::larm_voice::audio::asr_settings(lease.provider()),
                 samples,

@@ -40,9 +40,9 @@ pub(super) fn project_group(messages: &[&SourceMessage]) -> ContinuityGroup {
     let latest_user_index = messages
         .iter()
         .rposition(|message| matches!(message.role.as_str(), "user" | "transcript"));
-    let opening_request = user_messages
-        .first()
-        .map(|message| truncate_utf8(&message.content, 320));
+    let opening_request = user_messages.first().map(|message| {
+        super::projected_context_message::truncate_recent_history(&message.content, 320)
+    });
     let latest_request = user_messages
         .last()
         .filter(|message| {
@@ -50,7 +50,9 @@ pub(super) fn project_group(messages: &[&SourceMessage]) -> ContinuityGroup {
                 .first()
                 .is_none_or(|first_message| first_message.id != message.id)
         })
-        .map(|message| truncate_utf8(&message.content, 320));
+        .map(|message| {
+            super::projected_context_message::truncate_recent_history(&message.content, 320)
+        });
     let latest_response = latest_user_index
         .and_then(|index| {
             messages[index + 1..]
@@ -58,7 +60,9 @@ pub(super) fn project_group(messages: &[&SourceMessage]) -> ContinuityGroup {
                 .rev()
                 .find(|message| message.role == "assistant")
         })
-        .map(|message| truncate_utf8(&message.content, 640));
+        .map(|message| {
+            super::projected_context_message::truncate_recent_history(&message.content, 640)
+        });
     let open_loop = matches!(last.role.as_str(), "user" | "transcript");
     ContinuityGroup {
         group_ref: opaque_ref("continuity_group", &format!("{}:{}", first.id, last.id)),

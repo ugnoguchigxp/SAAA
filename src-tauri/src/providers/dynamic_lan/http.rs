@@ -100,12 +100,12 @@ pub(crate) async fn send_json_response<T: for<'de> Deserialize<'de>>(
     let schema_failure_code = response_schema_failure_code(url.path());
     let is_create = method == Method::POST && url.path().ends_with("/v1/agent-connections");
     let mut request = client.request(method, url).timeout(if is_create {
-        Duration::from_secs(315)
+        Duration::from_secs(10)
     } else {
         REQUEST_TIMEOUT
     });
     if is_create {
-        request = request.header("Prefer", "wait=300");
+        request = request.header("Prefer", "wait=0");
     }
     if let Some(credential) = credential {
         request = request.header(AUTHORIZATION, credential.clone());
@@ -377,16 +377,24 @@ pub(crate) fn classify_status(status: StatusCode, code: &str) -> DynamicLanError
 pub(crate) fn classify_api_error(code: &str) -> DynamicLanError {
     match code {
         "catalog_revision_mismatch" | "revision_mismatch" => DynamicLanError::with_code(
-            ErrorKind::Contract, "LARM catalog revision changed before provide.", "larm_revision_mismatch",
+            ErrorKind::Contract,
+            "LARM catalog revision changed before provide.",
+            "larm_revision_mismatch",
         ),
         "idempotency_conflict" => DynamicLanError::with_code(
-            ErrorKind::Contract, "LARM rejected an idempotency key conflict.", "larm_idempotency_conflict",
+            ErrorKind::Contract,
+            "LARM rejected an idempotency key conflict.",
+            "larm_idempotency_conflict",
         ),
         "unknown_profile" | "unknown_selector" => DynamicLanError::with_code(
-            ErrorKind::Contract, "LARM rejected the requested selector.", "larm_unknown_selector",
+            ErrorKind::Contract,
+            "LARM rejected the requested selector.",
+            "larm_unknown_selector",
         ),
         "provider_conflict" | "connection_audience_unavailable" => DynamicLanError::with_code(
-            ErrorKind::Capacity, "LARM provider is reserved by another consumer.", "larm_provider_conflict",
+            ErrorKind::Capacity,
+            "LARM provider is reserved by another consumer.",
+            "larm_provider_conflict",
         ),
         "capacity_exhausted" | "admission_denied" | "provider_busy" => DynamicLanError::new(
             ErrorKind::Capacity,
@@ -401,6 +409,8 @@ pub(crate) fn classify_api_error(code: &str) -> DynamicLanError {
             "The dynamic LAN provider did not pass semantic readiness checks.",
         ),
         "connection_inactive"
+        | "connection_idle_released"
+        | "foreground_idle_timeout"
         | "connection_expired"
         | "connection_released"
         | "connection_boot_epoch_mismatch"

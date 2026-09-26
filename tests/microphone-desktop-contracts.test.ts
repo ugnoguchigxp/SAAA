@@ -108,14 +108,14 @@ describe("macOS microphone bundle configuration", () => {
     expect(
       containsSource(
         app,
-        "const observation = context.activityDetector.current?.observe(event.data)",
+        "const observation = input.activityDetector.current?.observe(input.frame)",
       ),
     ).toBe(true);
     expect(
-      containsSource(app, "voiceSegmentCommitReason(observation, context.packetCount())"),
+      containsSource(app, "voiceSegmentCommitReason(observation, input.packetCount())"),
     ).toBe(true);
     expect(containsSource(app, "observation?.hasSpeech && observation.shouldFinalize")).toBe(true);
-    expect(containsSource(app, "context.packetFrame(event.data)")).toBe(true);
+    expect(containsSource(app, "input.packetFrame(input.frame)")).toBe(true);
     expect(containsSource(app, "VoiceAsrPacketizer")).toBe(true);
     expect(containsSource(app, "VoiceAsrPacketSender")).toBe(true);
     expect(containsSource(app, "voiceAsrPacketizerRef.current.append(frame)")).toBe(true);

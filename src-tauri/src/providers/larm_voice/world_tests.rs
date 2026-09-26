@@ -41,6 +41,7 @@ async fn voice_session_restart_keeps_media_variant() {
             started: AtomicBool::new(false),
             lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
             sqlite_writer: h.state.sqlite_writer.clone(),
+            phase: new_phase(),
         }));
         current(crate::PRIMARY_CONVERSATION_ID).await.unwrap();
         end(&format!("media-variant-{round}")).await.unwrap();
@@ -49,6 +50,82 @@ async fn voice_session_restart_keeps_media_variant() {
         fake.catalog_queries.lock().unwrap().as_slice(),
         ["profile=SAAA-w-Image", "profile=SAAA-w-Image"]
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn idle_release_reconnects_once_for_parallel_foreground_requests() {
+    let _environment = crate::test_environment::larm_lock().lock().await;
+    let h = Harness::new();
+    let (fake, server) = Fake::start("shared-larm", "ready", h.fixture.clock.clone()).await;
+    let (cancel, _) = watch::channel(false);
+    let owner_id = "idle-reconnect-test";
+    *OWNER.lock().await = Some(Arc::new(Owner {
+        id: owner_id.into(),
+        conversation: crate::PRIMARY_CONVERSATION_ID.into(),
+        base: fake.base.clone(),
+        profile: "SAAA".into(),
+        cancel,
+        ready: OnceCell::new(),
+        started: AtomicBool::new(false),
+        lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
+        sqlite_writer: h.state.sqlite_writer.clone(),
+        phase: new_phase(),
+    }));
+    let (first, duplicate) = tokio::join!(
+        current(crate::PRIMARY_CONVERSATION_ID),
+        current(crate::PRIMARY_CONVERSATION_ID)
+    );
+    let first = first.unwrap();
+    assert!(Arc::ptr_eq(&first.session, &duplicate.unwrap().session));
+    assert_eq!(fake.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        larm_voice_connection_status(crate::PRIMARY_CONVERSATION_ID.into())
+            .await
+            .unwrap()
+            .state,
+        "ready"
+    );
+    fake.idle_released.store(true, Ordering::SeqCst);
+    let (left, right) = tokio::join!(
+        current(crate::PRIMARY_CONVERSATION_ID),
+        current(crate::PRIMARY_CONVERSATION_ID)
+    );
+    let left = left.unwrap();
+    let right = right.unwrap();
+    assert!(!Arc::ptr_eq(&first.session, &left.session));
+    assert!(Arc::ptr_eq(&left.session, &right.session));
+    assert_eq!(fake.creates.load(Ordering::SeqCst), 2);
+    assert!(first.session.acquire("llm").await.is_err());
+    end(owner_id).await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn text_conversation_uses_one_persistent_owner_for_parallel_requests() {
+    let _environment = crate::test_environment::larm_lock().lock().await;
+    SHUTTING_DOWN.store(false, Ordering::Release);
+    let h = Harness::new();
+    let (fake, server) = Fake::start("shared-larm", "ready", h.fixture.clock.clone()).await;
+    let mut settings = h
+        .state
+        .sqlite_readers
+        .read(|connection| Ok(crate::persistence::load_model_providers(connection)?.harness))
+        .unwrap();
+    settings.address = fake.base.clone();
+    settings.larm_profile = Some("SAAA".into());
+    let conversation = crate::PRIMARY_CONVERSATION_ID;
+    let (left, right) = tokio::join!(
+        ensure_conversation_owner(conversation, &settings, h.state.sqlite_writer.clone()),
+        ensure_conversation_owner(conversation, &settings, h.state.sqlite_writer.clone()),
+    );
+    left.unwrap();
+    right.unwrap();
+    let (left, right) = tokio::join!(current(conversation), current(conversation));
+    assert!(Arc::ptr_eq(&left.unwrap().session, &right.unwrap().session));
+    assert_eq!(fake.creates.load(Ordering::SeqCst), 1);
+    end(&format!("conversation-{conversation}")).await.unwrap();
+    assert!(fake.released.load(Ordering::SeqCst));
     server.abort();
 }
 
@@ -85,6 +162,7 @@ async fn shared_larm_claim_context_still_tool_result_and_final_answer_are_one_fl
         started: AtomicBool::new(false),
         lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
         sqlite_writer: h.state.sqlite_writer.clone(),
+        phase: new_phase(),
     }));
     let input: crate::StartTurnInput = serde_json::from_value(json!({
         "runId": crate::memory::personal_state::world::runtime_test_support::RUN_ID,
@@ -190,6 +268,7 @@ async fn matrix_case(route: &'static str, transition: &'static str, emit: bool) 
             started: AtomicBool::new(false),
             lease_key: current_lease_key(&h.state.sqlite_writer).unwrap(),
             sqlite_writer: h.state.sqlite_writer.clone(),
+            phase: new_phase(),
         }));
     }
     let input:crate::StartTurnInput=serde_json::from_value(json!({"runId":crate::memory::personal_state::world::runtime_test_support::RUN_ID,"conversationId":crate::PRIMARY_CONVERSATION_ID,"content":"hello","inputOrigin":if route=="shared-larm" {"voice"}else{"text"},"presentationMode":"visual"})).unwrap();

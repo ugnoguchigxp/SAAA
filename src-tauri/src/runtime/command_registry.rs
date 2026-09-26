@@ -64,6 +64,7 @@ macro_rules! saaa_invoke_handler {
             window_shutdown_grace::save_settings_documents,
             window_shutdown_grace::set_voice_listening_enabled,
             larm_voice::begin_larm_voice_session,
+            larm_voice::larm_voice_connection_status,
             larm_voice::end_larm_voice_session,
             larm_voice::frontdesk::receive_lfm_utterance,
             larm_voice::frontdesk::speak_lfm_reply,

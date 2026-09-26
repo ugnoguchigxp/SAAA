@@ -227,13 +227,14 @@ pub(crate) fn validate_state_shape(
         || !valid_bounded_identifier(&provider.route, 160)
         || !matches!(
             provider.readiness.as_str(),
-            "pending" | "probing" | "ready" | "failed" | "released" | "expired"
+            "pending" | "deploying" | "probing" | "ready" | "failed" | "released" | "expired"
         )
         || (state.status == "ready" && (!provider.claimable || provider.readiness != "ready"))
         || (state.status != "ready" && provider.claimable)
         || (state.status == "failed" && state.error.is_none())
         || (!terminal
             && state.status != "pending"
+            && state.status != "deploying"
             && state.status != "probing"
             && state.status != "ready")
     {

@@ -30,6 +30,25 @@ pub(crate) async fn send_with(
         if response.status().is_success() {
             return Ok(response);
         }
+        if response.status().as_u16() == 409 {
+            let mut stream = response.bytes_stream();
+            let mut body = Vec::new();
+            use futures_util::StreamExt;
+            while let Some(part) = stream.next().await {
+                let part = part.map_err(|_| Failure::Network)?;
+                if body.len() + part.len() > 4096 {
+                    return Err(Failure::Contract);
+                }
+                body.extend_from_slice(&part);
+            }
+            if serde_json::from_slice::<serde_json::Value>(&body)
+                .ok()
+                .is_some_and(|value| value["error"]["code"] == "connection_idle_released")
+            {
+                return Err(Failure::AllocationLost);
+            }
+            return Err(Failure::Contract);
+        }
         let kind = status_failure(response.status().as_u16());
         if allow_retry && attempt < 2 && matches!(response.status().as_u16(), 429 | 503) {
             let delay = response
@@ -76,5 +95,44 @@ pub(crate) fn status_failure(status: u16) -> Failure {
         503 => Failure::Unavailable,
         300..=399 => Failure::Contract,
         _ => Failure::Upstream,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{routing::post, Json, Router};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn idle_release_conflict_is_not_resent_with_old_credential() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = requests.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || {
+                let observed = observed.clone();
+                async move {
+                    observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (
+                        axum::http::StatusCode::CONFLICT,
+                        Json(json!({"error":{"code":"connection_idle_released"}})),
+                    )
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let url = format!("http://{address}/v1/chat/completions");
+        let result = send(
+            reqwest::Client::new().post(url),
+            &RunCancellation::default(),
+            true,
+        )
+        .await;
+        assert!(matches!(result, Err(Failure::AllocationLost)));
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+        server.abort();
     }
 }

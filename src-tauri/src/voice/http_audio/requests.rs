@@ -32,6 +32,7 @@ pub(crate) async fn play_with_situation(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn play_larm_with_situation(
     session: &Arc<saaa_larm_session::Session>,
+    conversation: &str,
     voice: Option<&str>,
     harness: Option<&crate::HarnessSettings>,
     expression: crate::voice::cloud_tts::speech_directive::SpeechExpression,
@@ -46,7 +47,7 @@ pub(crate) async fn play_larm_with_situation(
         return Ok(());
     }
     let started = std::time::Instant::now();
-    let lease = tokio::select! { biased;
+    let mut lease = tokio::select! { biased;
         _ = cancellation.cancelled() => return Err("Speech cancelled".into()),
         result = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), session.acquire("tts")) => result.map_err(|_| "TTS lease acquisition timed out")?.map_err(str::to_string)?,
     };
@@ -74,7 +75,31 @@ pub(crate) async fn play_larm_with_situation(
         cancellation.clone(),
         Some(lease.provider().token()),
     )
-    .await?;
+    .await;
+    let response = if matches!(&response, Err(error) if error == crate::ProviderFailureKind::AllocationLost.public_message().as_str())
+    {
+        drop(lease);
+        let renewed = crate::larm_voice::reconnect_after_idle(conversation, session).await?;
+        lease = renewed.acquire("tts").await.map_err(str::to_string)?;
+        let provider = crate::voice::cloud_tts::speech_directive::apply_expression(
+            &crate::larm_voice::audio::tts_settings(lease.provider(), voice, harness)?,
+            expression,
+        );
+        let remaining = lease
+            .request_budget(receive_budget.saturating_sub(headers_started.elapsed()))
+            .map_err(str::to_string)?
+            .as_millis() as u64;
+        crate::voice::cloud_tts::request_audio_with_api_key(
+            &provider,
+            text,
+            remaining,
+            cancellation.clone(),
+            Some(lease.provider().token()),
+        )
+        .await?
+    } else {
+        response?
+    };
     play_response(
         response,
         &provider.response_format,

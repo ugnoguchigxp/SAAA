@@ -28,6 +28,10 @@ struct Fake {
     fail_release: AtomicBool,
     wrong_renew_id: AtomicBool,
     released: AtomicBool,
+    idle_released: AtomicBool,
+    partial_ready: AtomicBool,
+    terminal_pending: AtomicBool,
+    location_only: AtomicBool,
 }
 impl Fake {
     fn state(&self, status: &str) -> Value {
@@ -41,7 +45,7 @@ impl Fake {
             .filter(|_| selector.starts_with("SAAA"))
             .unwrap_or(&selector)
             .to_string();
-        let providers = contract::required_providers()
+        let mut providers = contract::required_providers()
             .into_iter()
             .map(|name| {
                 json!({
@@ -52,6 +56,10 @@ impl Fake {
                 })
             })
             .collect::<Vec<_>>();
+        if status == "ready" && self.partial_ready.load(Ordering::SeqCst) {
+            providers[0]["readiness"] = json!("probing");
+            providers[0]["claimable"] = json!(false);
+        }
         let services = match selector.as_str() {
             "SAAA-w-Image" => vec![service_decl("image")],
             "SAAA-w-music" => vec![service_decl("music")],
@@ -168,7 +176,7 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
                 .unwrap()
                 .starts_with(prefix));
             if !path.ends_with("/renew") {
-                assert_eq!(request.headers()["prefer"], "wait=300");
+                assert_eq!(request.headers()["prefer"], "wait=0");
             }
             let body = axum::body::to_bytes(request.into_body(), 10000)
                 .await
@@ -203,6 +211,14 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             if fake.slow_create.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
+            let mut state = fake.state(if fake.pending.load(Ordering::SeqCst) {
+                "pending"
+            } else {
+                "ready"
+            });
+            if fake.location_only.load(Ordering::SeqCst) {
+                state.as_object_mut().unwrap().remove("id");
+            }
             return (
                 if fake.pending.load(Ordering::SeqCst) {
                     axum::http::StatusCode::ACCEPTED
@@ -210,19 +226,25 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
                     axum::http::StatusCode::CREATED
                 },
                 [("location", "/v1/agent-connections/session-1")],
-                Json(fake.state(if fake.pending.load(Ordering::SeqCst) {
-                    "pending"
-                } else {
-                    "ready"
-                })),
+                Json(state),
             )
                 .into_response();
         }
-        return Json(fake.state(if fake.pending.load(Ordering::SeqCst) {
-            "probing"
+        return Json(if fake.terminal_pending.load(Ordering::SeqCst) {
+            let mut state = fake.state("failed");
+            state["error"] = json!({"code":"semantic_probe_failed"});
+            state
+        } else if fake.idle_released.load(Ordering::SeqCst) {
+            let mut state = fake.state("released");
+            state["reason"] = json!("foreground_idle_timeout");
+            state
         } else {
-            "ready"
-        }))
+            fake.state(if fake.pending.load(Ordering::SeqCst) {
+                "probing"
+            } else {
+                "ready"
+            })
+        })
         .into_response();
     }
     let name = path.split('/').nth(1).unwrap();
@@ -272,6 +294,10 @@ async fn fixture() -> (Arc<Fake>, tokio::task::JoinHandle<()>) {
         fail_release: AtomicBool::new(false),
         wrong_renew_id: AtomicBool::new(false),
         released: AtomicBool::new(false),
+        idle_released: AtomicBool::new(false),
+        partial_ready: AtomicBool::new(false),
+        terminal_pending: AtomicBool::new(false),
+        location_only: AtomicBool::new(false),
         profile: Mutex::new(String::new()),
         catalog: Mutex::new(Some(catalog(&[("saaa-conversation-ornith15", FIVE)]))),
         catalog_gets: AtomicUsize::new(0),
@@ -353,6 +379,96 @@ async fn embedding_uses_claimed_endpoint_model_space_and_bearer() {
     assert_eq!(vectors[0].len(), 384);
     assert_eq!(count(&fake, "/embedding/v1/embed"), 1);
     session.close().await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn foreground_idle_release_invalidates_every_claimed_credential() {
+    let (fake, server) = fixture().await;
+    let (_stop, receiver) = watch::channel(false);
+    let session = Session::connect(&fake.base, receiver).await.unwrap();
+    assert!(session.check_status().await.is_ok());
+    fake.idle_released.store(true, Ordering::SeqCst);
+    assert_eq!(
+        session.check_status().await,
+        Err("larm_connection_idle_released")
+    );
+    for name in contract::required_providers() {
+        assert!(
+            session.acquire(name).await.is_err(),
+            "{name} retained a credential"
+        );
+    }
+    session.close().await.unwrap();
+    assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn connection_phase_reports_ready_then_idle_release() {
+    let (fake, server) = fixture().await;
+    let (_stop, receiver) = watch::channel(false);
+    let (phase, _) = watch::channel(ConnectionPhase::ModelPreparing);
+    let session = Session::connect_with_profile_credential_key_and_phase(
+        &fake.base,
+        ProfilePreference::Variant(ProfileVariant::Conversation),
+        "test-control-token".into(),
+        "saaa-session-phase-test".into(),
+        receiver,
+        Some(phase.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(*phase.borrow(), ConnectionPhase::Ready);
+    session.report_phase(&json!({"status":"pending","reason":"capacity_wait"}));
+    assert_eq!(*phase.borrow(), ConnectionPhase::CapacityWaiting);
+    session.report_phase(&json!({"status":"probing"}));
+    assert_eq!(*phase.borrow(), ConnectionPhase::SemanticProbing);
+    fake.idle_released.store(true, Ordering::SeqCst);
+    assert_eq!(
+        session.check_status().await,
+        Err("larm_connection_idle_released")
+    );
+    assert_eq!(*phase.borrow(), ConnectionPhase::IdleReleased);
+    session.close().await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn ready_status_with_one_unready_provider_never_claims() {
+    let (fake, server) = fixture().await;
+    fake.partial_ready.store(true, Ordering::SeqCst);
+    let (_stop, receiver) = watch::channel(false);
+    let result = Session::connect(&fake.base, receiver).await;
+    assert_eq!(result.err().unwrap().code, "larm_invalid_provider");
+    assert_eq!(count(&fake, "/v1/agent-connections/session-1/claim"), 0);
+    assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+#[tokio::test]
+async fn later_partial_readiness_revokes_the_previous_generation() {
+    let (fake, server) = fixture().await;
+    let (_stop, receiver) = watch::channel(false);
+    let session = Session::connect(&fake.base, receiver).await.unwrap();
+    fake.partial_ready.store(true, Ordering::SeqCst);
+    assert_eq!(session.check_status().await, Err("larm_invalid_provider"));
+    assert!(session.acquire("llm").await.is_err());
+    assert!(session.acquire("asr").await.is_err());
+    session.close().await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn terminal_poll_returns_bounded_reason_and_releases_connection() {
+    let (fake, server) = fixture().await;
+    fake.pending.store(true, Ordering::SeqCst);
+    fake.terminal_pending.store(true, Ordering::SeqCst);
+    let (_stop, receiver) = watch::channel(false);
+    let error = Session::connect(&fake.base, receiver).await.err().unwrap();
+    assert_eq!(error.code, "larm_startup_terminal");
+    assert_eq!(error.reason.as_deref(), Some("semantic_probe_failed"));
+    assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
     server.abort();
 }
 
@@ -969,6 +1085,7 @@ async fn direct_saaa_selector_creates_ready_without_discovery() {
 async fn accepted_create_polls_location_until_ready() {
     let (fake, server) = fixture().await;
     fake.pending.store(true, Ordering::SeqCst);
+    fake.location_only.store(true, Ordering::SeqCst);
     let (_stop, receiver) = watch::channel(false);
     let base = fake.base.clone();
     let connect = tokio::spawn(async move { Session::connect(&base, receiver).await });

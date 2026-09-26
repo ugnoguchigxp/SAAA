@@ -738,7 +738,6 @@ async fn wait_for_reasoner(
                 step_cancel.cancel();
                 return ReasonerWait::Finished(attempt.await);
             }
-            outcome = &mut attempt => return ReasonerWait::Finished(outcome),
             _ = interval.tick() => {
                 tick += 1;
                 #[cfg(test)]
@@ -763,6 +762,7 @@ async fn wait_for_reasoner(
                     crate::role_routing::frontend::record_filler_tick(tick);
                 }
             }
+            outcome = &mut attempt => return ReasonerWait::Finished(outcome),
         }
         if speak {
             tokio::select! {

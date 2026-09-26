@@ -1,6 +1,6 @@
 //! Desktop-only owner: ephemeral credentials stay in Rust, shared with the embedded MCP service.
 use rusqlite::{params, OptionalExtension};
-use saaa_larm_session::Session;
+use saaa_larm_session::{ConnectionPhase, Session};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, OnceLock,
@@ -30,6 +30,31 @@ struct Owner {
     started: AtomicBool,
     lease_key: String,
     sqlite_writer: Arc<crate::persistence::SqliteWriter>,
+    phase: watch::Sender<ConnectionPhase>,
+}
+fn new_phase() -> watch::Sender<ConnectionPhase> {
+    watch::channel(ConnectionPhase::ModelPreparing).0
+}
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConnectionStatus {
+    state: &'static str,
+    message: &'static str,
+}
+fn connection_status(phase: ConnectionPhase) -> ConnectionStatus {
+    let message = match phase {
+        ConnectionPhase::ModelPreparing => "モデル準備待ち",
+        ConnectionPhase::CapacityWaiting => "capacity待ち",
+        ConnectionPhase::SemanticProbing => "semantic probe中",
+        ConnectionPhase::Ready => "ready",
+        ConnectionPhase::IdleReleased => "idle解放済み",
+        ConnectionPhase::Reconnecting => "再接続中",
+        ConnectionPhase::TerminalFailure => "terminal failure",
+    };
+    ConnectionStatus {
+        state: phase.as_str(),
+        message,
+    }
 }
 static OWNER: Mutex<Option<Arc<Owner>>> = Mutex::const_new(None);
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
@@ -40,6 +65,17 @@ pub(crate) fn enabled() -> bool {
             .map(|mode| mode != "off")
             .unwrap_or(true)
     })
+}
+#[tauri::command]
+pub(crate) async fn larm_voice_connection_status(
+    conversation_id: String,
+) -> Option<ConnectionStatus> {
+    OWNER
+        .lock()
+        .await
+        .as_ref()
+        .filter(|owner| owner.conversation == conversation_id)
+        .map(|owner| connection_status(*owner.phase.borrow()))
 }
 #[tauri::command]
 pub(crate) async fn begin_larm_voice_session(
@@ -83,6 +119,7 @@ pub(crate) async fn begin_larm_voice_session(
             started: AtomicBool::new(false),
             lease_key,
             sqlite_writer: state.sqlite_writer.clone(),
+            phase: new_phase(),
         })
     });
     drop(current);
@@ -116,12 +153,13 @@ async fn initialize(owner: &Owner) -> Result<Arc<Ready>, StartupError> {
     let control_token = credential.token().to_string();
     #[cfg(test)]
     let control_token = "test-control-token".to_string();
-    let session = Session::connect_with_profile_credential_and_key(
+    let session = Session::connect_with_profile_credential_key_and_phase(
         &owner.base,
         profile::from_label(&owner.profile),
         control_token,
         owner.lease_key.clone(),
         owner.cancel.subscribe(),
+        Some(owner.phase.clone()),
     )
     .await
     .map_err(|error| StartupError {
@@ -217,33 +255,178 @@ pub(crate) async fn current_at(
                 started: AtomicBool::new(false),
                 lease_key,
                 sqlite_writer: owner.sqlite_writer.clone(),
+                phase: new_phase(),
             }));
         }
     }
     current(conversation).await
 }
-pub(crate) async fn current(conversation: &str) -> Result<Arc<Ready>, String> {
-    let owner = OWNER
-        .lock()
-        .await
-        .clone()
-        .ok_or("LARM voice session is not started")?;
-    if owner.conversation != conversation || *owner.cancel.borrow() {
-        return Err("LARM voice session mismatch".into());
+pub(crate) async fn ensure_conversation_owner(
+    conversation: &str,
+    settings: &crate::HarnessSettings,
+    writer: Arc<crate::persistence::SqliteWriter>,
+) -> Result<(), String> {
+    crate::validate_identifier(conversation, "conversation id")?;
+    let profile = profile::label(&profile::preference(settings.larm_profile.as_deref()));
+    let mut slot = OWNER.lock().await;
+    if SHUTTING_DOWN.load(Ordering::Acquire) {
+        return Err("LARM runtime is shutting down".into());
     }
-    owner.started.store(true, Ordering::Release);
-    // Startup retains cleanup ownership if the caller reaches its request deadline.
-    tokio::spawn(async move {
-        owner
-            .ready
-            .get_or_init(|| initialize(&owner))
+    if let Some(owner) = slot.as_ref() {
+        if owner.conversation == conversation
+            && owner.base == settings.address
+            && owner.profile == profile
+        {
+            return Ok(());
+        }
+        owner.cancel.send_replace(true);
+        close_owner(owner).await?;
+    }
+    let lease_key = current_lease_key(&writer)?;
+    let (cancel, _) = watch::channel(false);
+    *slot = Some(Arc::new(Owner {
+        id: format!("conversation-{conversation}"),
+        conversation: conversation.into(),
+        base: settings.address.clone(),
+        profile,
+        cancel,
+        ready: OnceCell::new(),
+        started: AtomicBool::new(false),
+        lease_key,
+        sqlite_writer: writer,
+        phase: new_phase(),
+    }));
+    Ok(())
+}
+pub(crate) async fn current(conversation: &str) -> Result<Arc<Ready>, String> {
+    loop {
+        let owner = OWNER
+            .lock()
             .await
-            .as_ref()
-            .cloned()
-            .map_err(|e| e.message.clone())
-    })
-    .await
-    .map_err(|_| "LARM startup worker stopped".to_string())?
+            .clone()
+            .ok_or("LARM voice session is not started")?;
+        if owner.conversation != conversation || *owner.cancel.borrow() {
+            return Err("LARM voice session mismatch".into());
+        }
+        let newly_claiming = owner.ready.get().is_none();
+        owner.started.store(true, Ordering::Release);
+        // Startup retains cleanup ownership if the caller reaches its request deadline.
+        let worker = owner.clone();
+        let ready = tokio::spawn(async move {
+            worker
+                .ready
+                .get_or_init(|| initialize(&worker))
+                .await
+                .as_ref()
+                .cloned()
+                .map_err(|e| e.message.clone())
+        })
+        .await
+        .map_err(|_| "LARM startup worker stopped".to_string())??;
+        if newly_claiming
+            && OWNER
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|active| Arc::ptr_eq(active, &owner))
+            && !*owner.cancel.borrow()
+        {
+            return Ok(ready);
+        }
+        match ready.session.check_status().await {
+            Ok(()) => {
+                if OWNER
+                    .lock()
+                    .await
+                    .as_ref()
+                    .is_some_and(|active| Arc::ptr_eq(active, &owner))
+                    && !*owner.cancel.borrow()
+                {
+                    return Ok(ready);
+                }
+            }
+            Err(
+                "larm_connection_idle_released"
+                | "larm_expired"
+                | "larm_startup_terminal"
+                | "larm_session_closed"
+                | "larm_invalid_provider"
+                | "larm_missing_provider",
+            ) => {
+                let mut slot = OWNER.lock().await;
+                if slot
+                    .as_ref()
+                    .is_some_and(|active| Arc::ptr_eq(active, &owner))
+                {
+                    owner.phase.send_replace(ConnectionPhase::Reconnecting);
+                    owner.cancel.send_replace(true);
+                    close_owner(&owner).await?;
+                    let lease_key = current_lease_key(&owner.sqlite_writer)?;
+                    let (cancel, _) = watch::channel(false);
+                    *slot = Some(Arc::new(Owner {
+                        id: owner.id.clone(),
+                        conversation: owner.conversation.clone(),
+                        base: owner.base.clone(),
+                        profile: owner.profile.clone(),
+                        cancel,
+                        ready: OnceCell::new(),
+                        started: AtomicBool::new(false),
+                        lease_key,
+                        sqlite_writer: owner.sqlite_writer.clone(),
+                        phase: owner.phase.clone(),
+                    }));
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+/// Called only after a provider definitively rejected a request before executing it.
+pub(crate) async fn invalidate_connection(
+    conversation: &str,
+    session: &Arc<Session>,
+) -> Result<(), String> {
+    session.invalidate_idle_release().await;
+    let mut slot = OWNER.lock().await;
+    let Some(owner) = slot.as_ref() else {
+        return Ok(());
+    };
+    if owner.conversation != conversation
+        || !owner
+            .ready
+            .get()
+            .and_then(|result| result.as_ref().ok())
+            .is_some_and(|ready| Arc::ptr_eq(&ready.session, session))
+    {
+        return Ok(());
+    }
+    owner.cancel.send_replace(true);
+    owner.phase.send_replace(ConnectionPhase::Reconnecting);
+    close_owner(owner).await?;
+    let lease_key = current_lease_key(&owner.sqlite_writer)?;
+    let (cancel, _) = watch::channel(false);
+    *slot = Some(Arc::new(Owner {
+        id: owner.id.clone(),
+        conversation: owner.conversation.clone(),
+        base: owner.base.clone(),
+        profile: owner.profile.clone(),
+        cancel,
+        ready: OnceCell::new(),
+        started: AtomicBool::new(false),
+        lease_key,
+        sqlite_writer: owner.sqlite_writer.clone(),
+        phase: owner.phase.clone(),
+    }));
+    Ok(())
+}
+
+pub(crate) async fn reconnect_after_idle(
+    conversation: &str,
+    session: &Arc<Session>,
+) -> Result<Arc<Session>, String> {
+    invalidate_connection(conversation, session).await?;
+    Ok(current(conversation).await?.session.clone())
 }
 pub(crate) async fn shutdown() {
     SHUTTING_DOWN.store(true, Ordering::Release);

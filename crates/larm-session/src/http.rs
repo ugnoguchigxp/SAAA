@@ -6,13 +6,13 @@ pub(crate) async fn json(
 ) -> Result<Value, &'static str> {
     json_response(call, statuses)
         .await
-        .map(|(_, value, _)| value)
+        .map(|(_, value, _, _)| value)
 }
 
 pub(crate) async fn json_response(
     call: reqwest::RequestBuilder,
     statuses: &[u16],
-) -> Result<(u16, Value, Option<String>), &'static str> {
+) -> Result<(u16, Value, Option<String>, Option<std::time::Duration>), &'static str> {
     let response = call.send().await.map_err(|_| "larm_transport_failed")?;
     let status = response.status().as_u16();
     let accepted = statuses.contains(&status);
@@ -21,6 +21,25 @@ pub(crate) async fn json_response(
         .get(reqwest::header::LOCATION)
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .parse::<u64>()
+                .ok()
+                .map(std::time::Duration::from_secs)
+                .or_else(|| {
+                    chrono::DateTime::parse_from_rfc2822(value)
+                        .ok()
+                        .map(|date| {
+                            date.signed_duration_since(chrono::Utc::now())
+                                .to_std()
+                                .unwrap_or_default()
+                        })
+                })
+        });
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -38,11 +57,12 @@ pub(crate) async fn json_response(
         return Err(classify_error(status, &code));
     }
     let value = serde_json::from_slice(&bytes).map_err(|_| "larm_invalid_json")?;
-    Ok((status, value, location))
+    Ok((status, value, location, retry_after))
 }
 
 fn classify_error(status: u16, code: &str) -> &'static str {
     match (status, code) {
+        (409, "connection_idle_released") => "larm_connection_idle_released",
         (409, "catalog_revision_mismatch" | "revision_mismatch") => "larm_revision_mismatch",
         (409, "idempotency_conflict") => "larm_idempotency_conflict",
         (409, "provider_conflict" | "connection_audience_unavailable") => "larm_provider_conflict",

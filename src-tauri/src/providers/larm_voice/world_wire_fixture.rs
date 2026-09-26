@@ -12,7 +12,11 @@ pub(super) struct Fake {
     pub bodies: StdMutex<Vec<Value>>,
     pub hits: StdMutex<Vec<String>>,
     pub catalog_queries: StdMutex<Vec<String>>,
+    selected_profile: StdMutex<String>,
     pub released: AtomicBool,
+    pub idle_released: AtomicBool,
+    pub creates: std::sync::atomic::AtomicUsize,
+    provider_idle_rejected: AtomicBool,
     route: &'static str,
     transition: &'static str,
     expires: String,
@@ -41,7 +45,11 @@ impl Fake {
             bodies: StdMutex::new(vec![]),
             hits: StdMutex::new(vec![]),
             catalog_queries: StdMutex::new(vec![]),
+            selected_profile: StdMutex::new("SAAA".into()),
             released: AtomicBool::new(false),
+            idle_released: AtomicBool::new(false),
+            creates: std::sync::atomic::AtomicUsize::new(0),
+            provider_idle_rejected: AtomicBool::new(false),
             route,
             transition,
             created: created.to_rfc3339(),
@@ -72,7 +80,11 @@ impl Fake {
                 provider
             })
             .collect::<Vec<_>>();
-        let services = match selector { "SAAA-w-Image" => vec![declared_service("image")], "SAAA-w-music" => vec![declared_service("music")], _ => vec![] };
+        let services = match selector {
+            "SAAA-w-Image" => vec![declared_service("image")],
+            "SAAA-w-music" => vec![declared_service("music")],
+            _ => vec![],
+        };
         json!({"id":"world-fixture","allocationId":"world-allocation","bootEpoch":"epoch-fixture","catalogRevision":"0".repeat(64),"profile":selector,"agentProfile":"saaa-conversation-ornith15","profileRevision":"0".repeat(64),"audience":"saaa-desktop","audienceRevision":"0".repeat(64),"status":"ready","providers":providers,"services":services,"createdAt":self.created,"expiresAt":self.expires,"error":null})
     }
 }
@@ -198,6 +210,7 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
         assert!(request.headers().get("authorization").is_some());
         if request.method() == "DELETE" {
             f.released.store(true, Ordering::SeqCst);
+            f.idle_released.store(false, Ordering::SeqCst);
             return axum::http::StatusCode::NO_CONTENT.into_response();
         }
         if path.ends_with("/claim") {
@@ -219,7 +232,11 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
                         "protocol": protocol,
                         "baseUrl": format!("{}/{name}/v1", f.base),
                         "model": fixture_model(name),
-                        "configuration": {"fields": {"baseURL":format!("{}/{name}/v1", f.base),"model":fixture_model(name)}},
+                        "configuration": {"fields": if *name == "embedding" {
+                            json!({"daemonURL":format!("{}/{name}/v1", f.base),"model":fixture_model(name),"dimension":384})
+                        } else {
+                            json!({"baseURL":format!("{}/{name}/v1", f.base),"model":fixture_model(name)})
+                        }},
                         "credential": {"token": format!("token-{name}")},
                         "health": {"url": format!("{}/{name}/health", f.base), "maxAgeMs": 10000},
                         "contextWindow": fixture_window(name),
@@ -236,11 +253,17 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
             }))
             .into_response();
         }
-        if f.transition == "initial" {
+        let is_create = request.method() == axum::http::Method::POST;
+        if is_create {
+            f.creates.fetch_add(1, Ordering::SeqCst);
+        }
+        if f.transition == "initial" && is_create {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
-        f.clock.fetch_add(3000, Ordering::SeqCst);
-        let requested_profile = if *request.method() == axum::http::Method::POST {
+        if is_create {
+            f.clock.fetch_add(3000, Ordering::SeqCst);
+        }
+        let requested_profile = if is_create {
             let bytes = axum::body::to_bytes(request.into_body(), 65536)
                 .await
                 .unwrap();
@@ -249,14 +272,45 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
                 .and_then(|body| body["profile"].as_str().map(str::to_string))
                 .unwrap_or_else(|| "SAAA".into())
         } else {
-            "SAAA".into()
+            f.selected_profile.lock().unwrap().clone()
         };
-        let value = if f.route == "dynamic-lan" {
+        if is_create {
+            *f.selected_profile.lock().unwrap() = requested_profile.clone();
+        }
+        let mut value = if f.route == "dynamic-lan" {
             f.dynamic_state(&requested_profile)
         } else {
-            { let providers = ["tts", "llm", "embedding", "backchannel", "asr"].into_iter().map(|name| { let mut provider = declared_provider(name); provider["readiness"] = json!("ready"); provider["claimable"] = json!(true); provider }).collect::<Vec<_>>(); let services = match requested_profile.as_str() { "SAAA-w-Image" => vec![declared_service("image")], "SAAA-w-music" => vec![declared_service("music")], _ => vec![] }; json!({"id":"world-fixture","profile":requested_profile,"agentProfile":"saaa-conversation-ornith15","status":"ready","allocationId":"world-allocation","expiresAt":f.expires,"providers":providers,"services":services}) }
+            {
+                let providers = ["tts", "llm", "embedding", "backchannel", "asr"]
+                    .into_iter()
+                    .map(|name| {
+                        let mut provider = declared_provider(name);
+                        provider["readiness"] = json!("ready");
+                        provider["claimable"] = json!(true);
+                        provider
+                    })
+                    .collect::<Vec<_>>();
+                let services = match requested_profile.as_str() {
+                    "SAAA-w-Image" => vec![declared_service("image")],
+                    "SAAA-w-music" => vec![declared_service("music")],
+                    _ => vec![],
+                };
+                json!({"id":"world-fixture","profile":requested_profile,"agentProfile":"saaa-conversation-ornith15","status":"ready","allocationId":"world-allocation","expiresAt":f.expires,"providers":providers,"services":services})
+            }
         };
-        return (axum::http::StatusCode::CREATED, Json(value)).into_response();
+        if !is_create && f.idle_released.load(Ordering::SeqCst) {
+            value["status"] = json!("released");
+            value["reason"] = json!("foreground_idle_timeout");
+        }
+        return (
+            if is_create {
+                axum::http::StatusCode::CREATED
+            } else {
+                axum::http::StatusCode::OK
+            },
+            Json(value),
+        )
+            .into_response();
     }
     let name = if f.route == "dynamic-lan" {
         "llm"
@@ -268,6 +322,17 @@ async fn handle(State(f): State<Arc<Fake>>, request: Request) -> Response {
             request.headers()["authorization"],
             format!("Bearer token-{name}")
         );
+    }
+    if f.transition == "idle-provider-reject"
+        && name == "llm"
+        && !f.provider_idle_rejected.swap(true, Ordering::SeqCst)
+    {
+        f.idle_released.store(true, Ordering::SeqCst);
+        return (
+            axum::http::StatusCode::CONFLICT,
+            Json(json!({"error":{"code":"connection_idle_released"}})),
+        )
+            .into_response();
     }
     if path.ends_with("/health") {
         let protocol = match name {

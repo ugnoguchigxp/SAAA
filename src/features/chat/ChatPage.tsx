@@ -19,6 +19,8 @@ import {
     subscribeImageClaimed,
   } from "./composerImage";
 import { discardComposerImage, prepareComposerImage } from "../../lib/runtime";
+import { useLarmConnectionStatus } from "./useLarmConnectionStatus";
+import { invoke } from "@tauri-apps/api/core";
 
 const VOICE_BAR_WEIGHTS = [0.18, 0.32, 0.54, 0.78, 1, 0.7, 0.48, 0.72, 0.46, 0.28, 0.16];
 
@@ -69,6 +71,20 @@ export function ChatPage({
 }: ChatPageProps) {
   const { t } = useTranslation();
   const [imageDrag, setImageDrag] = useState(false);
+  const larmStatus = useLarmConnectionStatus(
+    selectedConversation?.id ?? null,
+    Boolean(selectedConversation?.id),
+  );
+  useEffect(() => {
+    const conversationId = selectedConversation?.id;
+    if (!conversationId) return;
+    return () => {
+      void invoke("end_larm_voice_session", {
+        ownerId: `conversation-${conversationId}`,
+        drain: false,
+      }).catch(() => undefined);
+    };
+  }, [selectedConversation?.id]);
   const [imagePhase, setImagePhase] = useState<"idle" | "processing" | "ready" | "submitting" | "failed">("idle");
   const [imageNote, setImageNote] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<{
@@ -446,6 +462,7 @@ export function ChatPage({
           </div>
         </div>
         <div className="composer-meta" aria-live="polite">
+          {larmStatus && <span className="composer-hint" data-larm-connection-status={larmStatus.state}>{larmStatus.message}</span>}
           {imagePhase === "processing" && (
             <span className="composer-hint">{t("chat.imageProcessing")}</span>
           )}

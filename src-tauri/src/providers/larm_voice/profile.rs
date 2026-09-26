@@ -73,14 +73,8 @@ mod tests {
 
     #[test]
     fn unsupported_saved_profile_uses_saaa_selector() {
-        assert_eq!(
-            preference(Some("custom-x")),
-            conversation()
-        );
-        assert_eq!(
-            preference(Some("auto")),
-            conversation()
-        );
+        assert_eq!(preference(Some("custom-x")), conversation());
+        assert_eq!(preference(Some("auto")), conversation());
     }
 
     #[test]

@@ -152,15 +152,25 @@ async fn complete_command(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0);
-    let message =
-        persist_conversation_success_with_state(state, input, content, |connection, message| {
+    let message = persist_conversation_success_with_state(
+        state,
+        input,
+        content,
+        |connection, message| {
+            connection
+                .execute(
+                    "UPDATE rr_steps SET status='running' WHERE root_id=?1 AND purpose='respond' AND status='planned'",
+                    [&input.run_id],
+                )
+                .map_err(|error| error.to_string())?;
             crate::role_routing::repository::accept_provider_turn(
                 connection,
                 &input.run_id,
                 &message.id,
                 now_ms,
             )
-        })?;
+        },
+    )?;
     crate::memory::personal_state::output::send_completed(state, input, on_event, &message)?;
     Ok(())
 }

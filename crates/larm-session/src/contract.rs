@@ -73,7 +73,7 @@ pub(crate) fn validate_created(
         return Err("larm_invalid_contract");
     }
     let status = string(value, "status")?;
-    if !matches!(status, "ready" | "pending" | "probing") {
+    if !matches!(status, "ready" | "pending" | "deploying" | "probing") {
         return Err("larm_startup_terminal");
     }
     let raw = value["providers"]
@@ -320,7 +320,11 @@ pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapsho
             None
         };
         let fields = &raw["configuration"]["fields"];
-        let url_field = if name == "embedding" { "daemonURL" } else { "baseURL" };
+        let url_field = if name == "embedding" {
+            "daemonURL"
+        } else {
+            "baseURL"
+        };
         if fields[url_field] != raw["baseUrl"] || fields["model"] != raw["model"] {
             return Err("larm_invalid_provider_configuration");
         }

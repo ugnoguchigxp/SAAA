@@ -505,6 +505,19 @@ pub(super) fn render_recent_line(message: &SourceMessage) -> String {
     format!(
         "{label} source={} content={}",
         event_ref(&message.id),
-        quote_history(&truncate_utf8(&message.content, MAX_RECENT_ITEM_BYTES))
+        quote_history(&truncate_recent_history(
+            &message.content,
+            MAX_RECENT_ITEM_BYTES
+        ))
     )
+}
+pub(super) fn truncate_recent_history(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+    let marker = "\n...[source truncated]...\n";
+    let keep = (max_bytes - marker.len()) / 2;
+    let head = value.floor_char_boundary(keep);
+    let tail = value.ceil_char_boundary(value.len().saturating_sub(keep));
+    format!("{}{marker}{}", &value[..head], &value[tail..])
 }

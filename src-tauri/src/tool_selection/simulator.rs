@@ -816,16 +816,22 @@ async fn migration_reregister() -> ScenarioReport {
         return report;
     };
     let path = dir.path().join("migrated.sqlite");
-    if crate::open_database_writer(&path).is_err() {
-        report.fail("fixture", "could not build the pre-migration database");
-        return report;
-    }
-    if let Err(error) = rusqlite::Connection::open(&path)
-        .and_then(|connection| connection.pragma_update(None, "user_version", 40))
-    {
+    let writer = match crate::open_database_writer(&path) {
+        Ok(writer) => writer,
+        Err(_) => {
+            report.fail("fixture", "could not build the pre-migration database");
+            return report;
+        }
+    };
+    if let Err(error) = writer.write(|connection| {
+        connection
+            .pragma_update(None, "user_version", 40)
+            .map_err(|error| error.to_string())
+    }) {
         report.fail("fixture", error.to_string());
         return report;
     }
+    drop(writer);
     let writer = match crate::open_database_writer(&path) {
         Ok(writer) => writer,
         Err(error) => {
