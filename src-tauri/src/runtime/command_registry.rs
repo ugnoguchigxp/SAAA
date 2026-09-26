@@ -37,6 +37,7 @@ macro_rules! saaa_invoke_handler {
             window_shutdown_grace::clear_situation_history,
             runtime::turns::command::start_turn,
             runtime::conversation_check::submit_conversation_text,
+            runtime::conversation_check::transcribe_conversation_audio,
             runtime::image_input::commands::prepare_composer_image,
             runtime::image_input::commands::discard_composer_image,
             runtime::image_input::commands::claim_turn_image,

@@ -143,6 +143,14 @@ export async function submitConversationText(
   return invoke("submit_conversation_text", { input: { inputId, text, source } });
 }
 
+export async function transcribeConversationAudio(audioUploadId: string): Promise<{
+  text: string;
+  language: string | null;
+  providerLabel: string;
+}> {
+  return invoke("transcribe_conversation_audio", { input: { audioUploadId } });
+}
+
 export async function prepareComposerImage(png: Uint8Array): Promise<{
   id: string;
   width: number;

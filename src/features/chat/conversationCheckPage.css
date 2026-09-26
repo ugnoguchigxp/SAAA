@@ -80,6 +80,74 @@
   margin: 0;
   color: #f2aeb7;
 }
+.conversation-check-audio {
+  display: grid;
+  gap: 8px;
+}
+.conversation-check-audio > button {
+  width: fit-content;
+  border: 1px solid #39756d;
+  border-radius: 8px;
+  background: #1c4d47;
+  color: #e7fffb;
+  padding: 8px 12px;
+}
+.conversation-check-audio > button:disabled {
+  opacity: 0.5;
+}
+.conversation-check-audio > span,
+.conversation-check-capture-list {
+  font-size: 0.8rem;
+}
+.conversation-check-capture-list {
+  max-height: 260px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+}
+.conversation-check-capture-list h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #b8c8d8;
+}
+.conversation-check-capture-list > p {
+  margin: 0;
+  color: #9aabba;
+}
+.conversation-check-audio-preview {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #34404f;
+  border-radius: 8px;
+  padding: 10px;
+  background: #121820;
+}
+.conversation-check-audio-preview svg {
+  width: 100%;
+  max-width: 500px;
+  height: 48px;
+  fill: #64cbbb;
+}
+.conversation-check-audio-preview audio {
+  width: 100%;
+  max-width: 500px;
+}
+.conversation-check-audio-preview p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.conversation-check-audio-preview button {
+  width: fit-content;
+  border: 1px solid #39756d;
+  border-radius: 8px;
+  background: #1c4d47;
+  color: #e7fffb;
+  padding: 6px 10px;
+}
+.conversation-check-audio-preview small {
+  color: #9aabba;
+}
 .conversation-check-composer {
   display: grid;
   grid-template-columns: 1fr auto;

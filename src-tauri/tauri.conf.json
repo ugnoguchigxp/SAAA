@@ -24,6 +24,7 @@
         "default-src": "'self' customprotocol: asset:",
         "connect-src": "ipc: http://ipc.localhost",
         "img-src": "'self' asset: data:",
+        "media-src": "'self' blob: asset:",
         "style-src": "'self' 'unsafe-inline'"
       }
     }

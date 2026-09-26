@@ -1,5 +1,5 @@
-//! Small text response path for checking the selected conversation provider in the normal UI.
-//! The full ASR, reasoning, and speech response host is still under construction.
+//! Small conversation check path for ASR and text response in the normal UI.
+//! The full reasoning and speech response host is still under construction.
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -50,6 +50,95 @@ pub(crate) struct SubmitResult {
     content: String,
     model: String,
     provider_label: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TranscribeInput {
+    audio_upload_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TranscribeResult {
+    text: String,
+    language: Option<String>,
+    provider_label: String,
+}
+
+#[tauri::command]
+pub(crate) async fn transcribe_conversation_audio(
+    state: tauri::State<'_, AppState>,
+    input: TranscribeInput,
+) -> Result<TranscribeResult, String> {
+    let samples = state
+        .audio_uploads
+        .consume(&input.audio_upload_id, "conversation-asr")?;
+    if samples.len() < 1_600 || samples.len() > 16_000 * 120 {
+        return Err("録音は0.1秒以上、2分以内にしてください。".into());
+    }
+    let (providers, route) = state.sqlite_readers.read(|connection| {
+        Ok((
+            persistence::load_model_providers(connection)?,
+            persistence::load_routing_settings(connection)?.voice_transcribe,
+        ))
+    })?;
+    let cancellation = Arc::new(RunCancellation::default());
+    let (text, language, provider_label) = if route.source == "harness" {
+        let session = connect_larm(&providers).await?;
+        let result = async {
+            let lease = session.acquire("asr").await.map_err(str::to_string)?;
+            if lease.provider().protocol != "openai.audio-transcriptions.v1" {
+                return Err("選択済みLARMのASRプロトコルに対応していません。".into());
+            }
+            let budget = lease
+                .request_budget(std::time::Duration::from_millis(
+                    route.timeout_ms.min(120_000),
+                ))
+                .map_err(str::to_string)?;
+            let provider = crate::providers::larm_resources::audio::asr_settings(lease.provider());
+            crate::voice::cloud_asr::transcribe_with_api_key(
+                &provider,
+                &samples,
+                16_000,
+                budget.as_millis() as u64,
+                cancellation,
+                Some(lease.provider().token()),
+            )
+            .await
+        }
+        .await;
+        if session.close().await.is_err() {
+            return Err("LARM接続の解放を確認できませんでした。".into());
+        }
+        let (text, language) = result?;
+        (text, language, "LARM ASR".to_string())
+    } else {
+        let provider = providers
+            .providers
+            .iter()
+            .find(|candidate| {
+                route.provider_id.as_deref() == Some(candidate.id()) && candidate.enabled()
+            })
+            .ok_or("設定済みのASR Providerが見つかりません。")?;
+        let ModelProviderSettings::CloudAsr(provider) = provider else {
+            return Err("設定済みの音声入力ルートはASR Providerではありません。".into());
+        };
+        let (text, language) = crate::voice::cloud_asr::transcribe(
+            provider,
+            &samples,
+            16_000,
+            route.timeout_ms.min(120_000),
+            cancellation,
+        )
+        .await?;
+        (text, language, provider.label.clone())
+    };
+    Ok(TranscribeResult {
+        text,
+        language,
+        provider_label,
+    })
 }
 
 #[tauri::command]
@@ -169,29 +258,7 @@ async fn complete_larm(
     text: &str,
     timeout_ms: u64,
 ) -> Result<(String, String), String> {
-    let credential = crate::providers::dynamic_lan::credential::load()
-        .map_err(|error| error.code().to_string())?;
-    let preference = crate::providers::larm_resources::profile::preference(
-        providers.harness.larm_profile.as_deref(),
-    );
-    let (_stop, receiver) = tokio::sync::watch::channel(false);
-    let connection = saaa_larm_session::Session::connect_with_profile_credential_and_key(
-        &providers.harness.address,
-        preference,
-        credential.token().to_string(),
-        format!("saaa-conversation-check-{}", uuid::Uuid::new_v4().simple()),
-        receiver,
-    )
-    .await;
-    let session = match connection {
-        Ok(session) => session,
-        Err(error) => {
-            if let Some(cleanup) = &error.cleanup {
-                let _ = cleanup.close().await;
-            }
-            return Err(format!("LARMへの接続に失敗しました: {error}"));
-        }
-    };
+    let session = connect_larm(providers).await?;
     let answer = async {
         let lease = session
             .acquire("backchannel")
@@ -223,6 +290,35 @@ async fn complete_larm(
         return Err("LARM接続の解放を確認できませんでした。".into());
     }
     answer
+}
+
+async fn connect_larm(
+    providers: &crate::ModelProvidersSettings,
+) -> Result<Arc<saaa_larm_session::Session>, String> {
+    let credential = crate::providers::dynamic_lan::credential::load()
+        .map_err(|error| error.code().to_string())?;
+    let preference = crate::providers::larm_resources::profile::preference(
+        providers.harness.larm_profile.as_deref(),
+    );
+    let (_stop, receiver) = tokio::sync::watch::channel(false);
+    let connection = saaa_larm_session::Session::connect_with_profile_credential_and_key(
+        &providers.harness.address,
+        preference,
+        credential.token().to_string(),
+        format!("saaa-conversation-check-{}", uuid::Uuid::new_v4().simple()),
+        receiver,
+    )
+    .await;
+    let session = match connection {
+        Ok(session) => session,
+        Err(error) => {
+            if let Some(cleanup) = &error.cleanup {
+                let _ = cleanup.close().await;
+            }
+            return Err(format!("LARMへの接続に失敗しました: {error}"));
+        }
+    };
+    Ok(session)
 }
 
 async fn complete_http(
