@@ -23,7 +23,7 @@
 
 ## 2. 棚卸しの範囲
 
-[inventory.json](../evidence/response-runtime-deletion-20260926/inventory.json)に関連146ファイルのパス、分類、SHA-256、凍結domainを記録した。うち28ファイルは現在のfreeze manifestに含まれる。**146ファイルすべてを削除する一覧ではない。** 下表のA〜Iに対応する、変更判断の対象一覧である。静的検索と主要実装の読取りに基づき、完全なコンパイラcall graphや実行到達性の証明ではない。
+[inventory.json](../evidence/response-runtime-deletion-20260926/inventory.json)に関連144ファイルのパス、分類、SHA-256を記録した。**144ファイルすべてを削除する一覧ではない。** 下表のA〜Iに対応する、変更判断の対象一覧である。静的検索と主要実装の読取りに基づき、完全なコンパイラcall graphや実行到達性の証明ではない。
 
 ここでの「撤去」は利用者からの入口・実行処理をなくすこと。「移設後撤去」は必要な低水準機能を小さな境界へ移して元の実装をなくすこと。「部分撤去」は共有ファイルの会話制御だけを外すことを指す。表の省略パスはリポジトリルート基準、実在する全パスはinventoryに展開済み。
 
@@ -37,7 +37,7 @@
 | F：共有入口・UI・保存 | `runtime/{start_turn,turns,event_hub}.rs`、`runtime/turns/`、`butler_loop/`の接続・台帳、`lib.rs`、`app_state.rs`、`persistence/{schema,app_commands}.rs`、`providers/session_store.rs`、`ChatPage.tsx`、`useConversationTurn.ts`、`conversationTurnControls.ts`、`reasoningRun*`等 | 部分撤去。coding dispatch、履歴表示、DB接続、汎用取消まで一括削除しない。通常会話の入力保留・再起動・相槌・音声開始判断を外す |
 | G：Memory・World接続 | `useWorldScope.ts`、`WorldScopeSelector.tsx`、`requiredContextRecovery.ts`、`runtime/context/`のbroker・scope・world経路、`providers/chat_completions/{mod,generation,world_body}.rs`、`providers/stream/attempt.rs`、`memory/personal_state/{output,product_binding,worker}.rs` | 新会話への接続を切る。共有ファイル・管理機能は保持。会話成立をMemory/Worldの接続・scope・生成許可へ依存させない |
 | H：純粋処理・I/Oの再利用候補 | `qwen_control_stream.rs`、ASRのbatch engine・reconciler・speaker gate、PCM packetizer/sender、capture resources、native/worklet bridge | 自動的には削除しない。依存と契約を確認し、純粋処理だけ移設可。既存の判定アルゴリズムが正しいという保証にはしない |
-| I：登録・試験・文書 | IPC契約・生成binding・tests、freezeスクリプト/manifest、size/clippy基準、Runtime/Voice README、旧実装計画 | 実装置換と同じ変更単位で更新。古い構造を復元させる指示を残さず、試験対象を消して合格を装わない |
+| I：登録・試験・文書 | IPC契約・生成binding・tests、size/clippy基準、Runtime/Voice README、旧実装計画 | 実装置換と同じ変更単位で更新。古い構造を復元させる指示を残さず、試験対象を消して合格を装わない |
 
 `runtime/`、`providers/`、`voice/`、`role_routing/`をディレクトリごと削除する操作は計画に含めない。
 
@@ -110,7 +110,7 @@ TTSの既存chunkerには最低長・目標長等の方針があるため、単�
 | D2：新経路の隔離と接続切断 | 新Sessionを隔離hostへ配線し、Memory/World、旧Role Routing/Butler、旧UI turn制御を接続しない。通常UIの旧経路とはsession/DBを分ける | 新経路の依存・通信監査で旧回答処理/Memory/World呼出0。準備失敗も有限で表示される |
 | D3：最小経路の実機合格 | 再構築提案R0の実ASR→Qwen→TTSと実ASR→Qwen→ornith→TTSを確認。生成中のQwen応対と停止も確認 | 最終回答の保存・可聴再生まで実測。mockやHTTP疎通だけを合格にしない。ここは削除本体へ進むための依存作業 |
 | D4：入口切替と旧本体削除 | 旧入力受付を閉じ、稼働中処理の終了/取消と音声停止を確認。通常会話の入口を新Sessionへ切替。A/C/D/Eの旧制御とFの会話枝を削除 | 旧IPC・timer・worker・復旧起動がなく、同一入力/資源/音声の所有者が一つ。codingと履歴等は維持 |
-| D5：残存物の撤去・受入 | 未参照import、旧feature/env分岐、登録、試験、型、文書を整理。freeze保護を移す。隔離DBのmigration・実機回帰を実施 | 新旧fallbackなし、旧会話実行シンボルへの参照なし（履歴migration/検証fixture等の明示例外を除く）、所定チェックと実機合格 |
+| D5：残存物の撤去・受入 | 未参照import、旧feature/env分岐、登録、試験、型、文書を整理。隔離DBのmigration・実機回帰を実施 | 新旧fallbackなし、旧会話実行シンボルへの参照なし（履歴migration/検証fixture等の明示例外を除く）、所定チェックと実機合格 |
 
 D4をD3より前に実行して通常利用の音声経路を全て失う運用は、この計画では採らない。新実装はD2から旧経路を一切使わず、旧コードの存在が新構造を規定しないようにする。高度な機能の完成をD4の条件にはしない。
 
@@ -141,15 +141,7 @@ D4をD3より前に実行して通常利用の音声経路を全て失う運用�
 
 migration試験は空DB、現行DBの隔離コピー、旧LFM列を含むfixtureで行い、`PRAGMA integrity_check` と `PRAGMA foreign_key_check`、履歴件数・設定fingerprint・話者登録を確認する。新しい仕事台帳が必要なら追加migrationとして設計するが、削除段階で旧テーブルを破壊して合わせない。
 
-## 8. 試験・freeze・生成物
-
-### 凍結対象は新実装へ引き継ぐ
-
-[critical-path-freeze.ts](../../scripts/critical-path-freeze.ts) は固定pathへ `statSync` を行う。保護対象ファイルを削除すると、通常の `freeze:accept` だけでは存在しないpathで失敗する。
-
-削除を行う変更単位では、対象domainのpath定義を新Listening/Frontdesk/Reasoning等へ明示的に移す。欠落pathを無視する処理や空の保護対象に変えて通さない。新配置へ移したことでASR/初回応答の保護が抜けないよう、対象数と責務の対応を記録する。
-
-順序は「実装と試験を移す → 指定回帰を実行 → domainのpath対応を確認 → 理由付きaccept → freeze:check」。他domainの理由やhashを上書きしない。
+## 8. 試験・生成物
 
 ### 必須の確認
 
@@ -160,9 +152,9 @@ migration試験は空DB、現行DBの隔離コピー、旧LFM列を含むfixture
 | 初回応答 | `bun run quality:check`、macOSで `bun run desktop:smoke` | snapshotとprimary conversationをロード。品質評価を新入口へ移し、Memory/World未接続と通常回答成功を別評価する |
 | TTS | 現行 `tests/streaming-speech.test.ts` と `voice::streaming_tts` の回帰を新Speakingへ移す | 句順、早期合成、取消、遅着音声、二重最終イベント、共有通知、forget時の発声抑止 |
 | IPC/UI | `bun run typecheck`、`bun run ipc:generate`、`bun run ipc:check` | command_registry、Rust契約、TS生成物、fixtureを同時更新。生成物だけ手修正しない |
-| 全体 | `bun run check`。完了時はプロジェクトの整形/lintを含む `bun run check:local` | coding/履歴/設定/管理機能の共有回帰とfreeze。関連変更単位の検証後、最終段階で全体を確認 |
+| 全体 | `bun run check`。完了時はプロジェクトの整形/lintを含む `bun run check:local` | coding/履歴/設定/管理機能の共有回帰。関連変更単位の検証後、最終段階で全体を確認 |
 
-ASR/初回応答の変更時は、AGENTS.md指定の回帰を成功させてから `bun run freeze:accept:asr --reason "..."` / `bun run freeze:accept:initial-response --reason "..."`、最後に `bun run freeze:check`。新実装と無関係な既存失敗は根拠付きで分離するが、失敗・0件・skipを成功と報告しない。
+新実装と無関係な既存失敗は根拠付きで分離するが、失敗・0件・skipを成功と報告しない。
 
 削除専用の確認も追加する。
 

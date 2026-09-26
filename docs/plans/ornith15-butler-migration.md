@@ -14,7 +14,6 @@
 - 作業ツリーには本件と関係のない未コミット変更がある。触らない。コミットは Phase ごとに、この文書に列挙したファイルだけを `git add -p` で選ぶ。
 - 行番号は 2026-09-25 時点。ずれていたら関数名や文字列で検索する。
 - **完了の根拠は、会話ターンの入口（`execute_conversation_turn_with_candidates`）から通すテストだけにする**（`saaa-butler-role-routing.md` 0.1 と同じ）。新しく書いた関数を直接呼ぶ単体テストは補助。
-- 凍結対象（`critical-path-freeze.json` の ASR / initial-response）に触れる Phase では、AGENTS.md の回帰テストを実行し、`bun run freeze:accept:<domain> --reason "..."` で該当 domain だけを更新する。**`freeze:check` は 2026-09-25 時点で、本件と無関係な 3 ファイル（`role_routing/schema.rs`、`conversation_provider_route.d/01.rs`、`conversation_turn.rs`）の差分により失敗している。** Phase 1 の前に、この差分の持ち主と承認方法をユーザーに確認する。
 
 ### 0.1 これまでの経緯（なぜ 2 つの LLM が噛み合わなかったか）
 

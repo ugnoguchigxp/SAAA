@@ -134,7 +134,6 @@ LARM から Provider を借りる部分。新しい構成でもそのまま必�
 
 **触らない（本件と無関係の未コミット変更）**
 
-`.github/workflows/ci.yml`、`critical-path-freeze.json`、`package.json`、`src-tauri/src/artifact_preview/**`、`src-tauri/src/bin/toolchain_simulate.rs`、`src-tauri/src/generated_capabilities/tools.rs`、`src-tauri/src/providers/chat_completions/mod.rs`、`src-tauri/src/providers/chat_completions/voice_progress.rs`、`src-tauri/src/providers/stream/agent_dispatch.rs`、`src-tauri/src/tests/typed_memory_tools_are_routed_only_from_a_valid_.rs`、`src-tauri/src/tool_selection/**`、`src/features/chat/artifacts/**`、`tests/artifact-tab.test.ts`。戻さない、コミットにも含めない。
 
 ## 3. 決定事項
 

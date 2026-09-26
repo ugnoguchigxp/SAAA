@@ -134,11 +134,7 @@ R0の実機試験は、Qwen単独とornith引継ぎを固定した日本語入�
 
 試験も整理する。旧内部経路だけを固定したテストは置換時に廃止し、利用者が期待する挙動・既知の不具合ケースは新Runtimeの試験へ移す。新しく必要なのは、境界の依存チェック、期限・取消・遅着・重複の決定的試験と、実機の細い経路の反復である。mock成功だけで実機合格としない。
 
-凍結対象を変更する実装時は、AGENTS.mdに従う。
-
-- ASR：`bun test tests/ambient-voice-session.test.tsx tests/voice-capture-races.test.ts tests/voice-asr-packet-sender.test.ts` と `cargo test --manifest-path src-tauri/Cargo.toml voice::streaming_asr`。
-- 初回応答：`bun run quality:check` とmacOSで `bun run desktop:smoke`。後者はsnapshotとprimary conversationを読み込んだ状態で行う。
-- 対応するdomainだけ、理由付きで `bun run freeze:accept:asr --reason "..."` または `bun run freeze:accept:initial-response --reason "..."`、最後に `bun run freeze:check`。失敗をfreeze更新で覆い隠さない。
+ASRと初回応答の検証には、対応するBun/Rust回帰試験、`bun run quality:check`、macOSの `bun run desktop:smoke` を使用する。結果と未検証条件を変更記録に残す。
 
 今回は文書だけを追加した。実装・削除・本番DB更新・Provider要求・回帰テストは行っていない。次の実装の成果判定を「新しいクラスやテストが増えた」から「旧経路に頼らず、実音声で二つの回答経路が繰り返し完走した」へ変更する。
 

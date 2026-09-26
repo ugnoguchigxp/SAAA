@@ -74,7 +74,6 @@ Tool検索のrerankerはembeddingとは別の処理である。5種類という�
 
 実機の速度・5サービス同時稼働・会話品質の改善は、本書作成によって達成したものとは扱わない。
 
-前回のレビュー反映では3文書へ分割し、ローカル参照36件、Markdownの表・コードフェンス・空白を確認した。`bun run freeze:check` も通過した。全体の `spec-html check` は再実行しておらず、上記は作成時の結果である。Runtimeの回帰試験・分類評価・実機計測は文書改訂では実行していない。無音300ms、主要遅延p95で2.5秒、相槌後の再開p95で1秒・判定待ち期限1.5秒、分類精度等の値は初期目標案であり、達成済みの値ではない。
 
 ## 3. 実装時の検証手順
 
@@ -100,41 +99,25 @@ bun run quality:check
 bun run desktop:smoke
 
 # 最終的な凍結確認と通常ゲート
-bun run freeze:check
 bun run check
 ```
 
-ASRまたは初回応答の凍結対象を明示的な依頼で変更した場合だけ、必要な回帰後に対象domainの `freeze:accept:asr` または `freeze:accept:initial-response` を理由付きで更新する。ユーザー設定のリセットやProviderの勝手な置換で起動・試験を通さない。移行試験はコピーまたは隔離DBで行う。
 
-対象domainを更新する際は `bun run freeze:accept:asr --reason "変更理由と回帰結果"` または `bun run freeze:accept:initial-response --reason "変更理由と回帰結果"` を実行し、その後に `bun run freeze:check` を通す。文書だけの改訂ではacceptしない。
 
 ## 4. 今回時点の未コミット差分の保存
 
-2026-09-26の文書改訂時点で、HEAD `cf031f8835a232459e560672c5635d887c16ad7d` に対する、`src-tauri/`、`src/`、`tests/`、`critical-path-freeze.json` 配下の追跡済み変更25ファイルを保存した。これらの実装変更は本タスクで作成したものではなく、保存のために編集・commitしていない。
 
-- [差分パッチ](../evidence/jarvis-five-provider/2026-09-26-runtime-worktree.patch)：HEADから保存時点への差分。SHA-256は `edfcdcbc948a2cd2d4eddf07e4344842513b00b38e919e1083ec0996e946970e`。
-- [保存情報とファイル別SHA-256](../evidence/jarvis-five-provider/2026-09-26-runtime-worktree.json)：UTC取得時刻、基準commit、対象ファイル、除外範囲、適用検証の結果。
 
 基準commitの対象ファイルを一時ディレクトリへ取り出し、パッチを適用して、生成された全25ファイルのSHA-256が保存時点の作業ツリーと一致することを確認した。再現時もクリーンな基準commitの隔離checkoutでパッチのハッシュを確認し、`git apply --check` 後に適用する。現行の作業ツリーへ重ねて適用しない。
 
 文書のarchive移動、未追跡・ignore対象、ユーザー設定・DB、起動中build、Provider配備状態は保存対象外である。以前の調査状態やリポジトリ全体・実機環境の完全なスナップショットとは扱わない。
 
-今回の第二レビュー反映では、3文書のローカル参照40件、Markdownの表・コードフェンス・空白、証跡パッチのハッシュと25ファイルの一致を確認した。`bun run freeze:check` は通過した。実装の変更、分類評価の実行、実機の遅延・音声品質試験は行っていない。
 
 ## 5. 後続の実装着手とJ0実機調査
 
 上の作成時記録の後、J1の入力dispatcherを追加し、既存Rust ASR監査チャネルから観測専用で接続した。途中認識・最終認識・commit区切りを処理するが、通常のfinal配送、Provider要求、仕事登録、TTSには介入しない。記録するのは版・確定状態・キュー件数等の匿名化した監査情報で、認識本文は記録しない。observerの入力チャネルは上限付きで、満杯でもASRを待たせない。
 
-J1の純粋ロジック10件、監査チャネル2件、指定ASR回帰（Bun 16件、Rust 38件）が通過した。`bun run freeze:check`、`bun run quality:check`、`bun run build:frontend`、`bun run ipc:check`、`bun run typecheck`、`cargo fmt --check`、`git diff --check`も通過した。`bun run size:check` は本変更以外の既存違反で失敗しており、J1追加ファイルは違反一覧にない。
 
 J0の実Qwen出力が複数行JSONの制御レコードから本文へ続いたため、J2bの純粋な増分解析器も追加した。SSEのdelta境界に依存せずJSONオブジェクトの終端を見つけ、本文を別イベントとして渡す。分割・引用符内の波括弧・不完全レコード・上限を扱う単体試験4件が通過した。通信adapterと通常入口への接続は未実装である。
 
 LARMはAPIのAgent Connection要求によって遠隔実行環境を確保する。保存済み設定を読み取って一時接続を作成し、claimしたProviderへ実際に生成要求を送った。Qwenとornithの同時応答を1回観測し、Qwenが1要求で複数行JSON制御レコードから本文へ続く形式を10/10件で確認した。接続準備は64〜267秒とばらつき、別の試行では210秒経過後もprobing、さらに約280秒のprobing後にfailedとなった。全試行は接続をreleaseした。詳細な数値、未測定条件、J0判定は[J0証跡](../evidence/jarvis-five-provider/2026-09-26-j0-feasibility.md)に記す。実音声のp95、制御項目と分類の受入、固定評価集合、J3以降は未完了である。
-
-実音声で「ジュゲムの名前を発声してください」を入力した際、Qwenが `nod` と「待ってください」を返してrunを完了した。監査と隔離DBにはornithへの引き継ぎがなく、ornithの停止とは判定しない。明示的な質問・依頼が `nod` と誤分類された場合はhostが `handoff` に修正する保守的なガードを追加し、純粋ロジックとButler経路の回帰試験を通した。初回応答の凍結対象を理由付きで更新し、`quality:check`、macOSの`desktop:smoke`（snapshot・primary conversationをロード）、`freeze:check` が通過した。1〜20の読み上げは割り込み評価用の発話時間を確保できず、実機割り込みの成否には算入しない。
-
-その後の保存済み会話では、意図した寿限無の依頼がASRで「発生してください。」と確定した。Qwenの結果は `handoff`、18:21:05に「少し考えます。」を記録した。ornith Contextは完成したが、Agent Connectionの準備開始後にreadyと生成要求の記録はなく、約114秒後にrunが取消された。ユーザーは待機が長すぎて自分で停止したと確認した。これはornithの生成失敗ではなく、遠隔実行環境の確保待ちである。ASRが主語を落とした原因は現監査情報だけでは分離できない。主語のない「発声して／発生してください」等は長考へ送らず「何を読み上げましょうか？」と確認するガードを追加した。対応する単体試験とButler経路試験、`quality:check`、macOSの`desktop:smoke`、`freeze:check` が通過し、初回応答の凍結対象を理由付きで更新した。実際に接続する依頼では、APIによる事前確保・待機上限・失敗時の可視応答を引き続き設計する必要がある。
-
-実機観測で、マイクが赤くなってから発話の読み取り開始時点が分かりにくいと指摘された。画面の赤色を単なるcaptureの `recording` ではなく、現在のASR sessionの `ready` と録音開始が両方成立した場合に限定し、準備中と発話可能時点の案内を分けた。ASRの `ready` はdecoderとsessionの準備完了を示し、発話中に行う本人照合の結果まで保証するものではない。赤色になった直後の語頭欠落が解消したとする実機証拠はまだなく、話者ゲートとASR復号の切り分けが必要である。指定ASR回帰（Bun 17件、Rust 38件）、typecheck、frontend build、`quality:check`、macOSの`desktop:smoke`、`freeze:check` を通し、ASRと初回応答の凍結対象をそれぞれ理由付きで更新した。
-
-コードレビューで、TTS開始時にWebView側のASRを停止する経路と、TTS中・状況による発声保留中のASR起動を妨げる条件を確認して修正した。音声入力が有効ならTTS中も取得とASR sessionを継続する。実スピーカーでの自声除去は受入未了のため、再生中の認識を会話入力へ渡さず自動割り込みも保留し、画面で入力制限を示す。これらの縮退は本人の重ね発話を取りこぼし得るため、常時応対の実機受入とは扱わない。指定ASR回帰（Bun 21件、Rust `voice::streaming_asr`）、`quality:check`、macOSの`desktop:smoke`（snapshot・primary conversationをロード）、`freeze:check` が通過し、変更した凍結領域を理由付きで更新した。

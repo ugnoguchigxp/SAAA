@@ -91,6 +91,5 @@ node --test server/test/session-task-coordinator.test.mjs \
 5. 古いASR final、重複final、再生中の自己音声、ASR失敗、空の認識結果を別々に扱う。
 6. 実LARMと隔離DBでcold/ready/busyを通し、実要求→最終回答保存→UI→TTS完了を検証する。Qwenのp50/p95も比較する。
 
-凍結対象を変更する場合はAGENTS.md指定のASR/初回応答回帰試験と理由付きfreeze更新が必要。今回は調査文書のみの変更。比較先LICENSEはApache-2.0表記を確認したが、コード転載は今回行っていない。
 
 運用ツールの会話累計: initial_instructions 1回、context_compile 3回、compile_eval 3回（今回の評価保存済み）。

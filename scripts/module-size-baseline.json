@@ -33,10 +33,6 @@
       "total": 31,
       "production": 31
     },
-    "scripts/critical-path-freeze.ts": {
-      "total": 122,
-      "production": 122
-    },
     "scripts/delegated-work-eval.ts": {
       "total": 26,
       "production": 26

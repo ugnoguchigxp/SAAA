@@ -147,9 +147,7 @@ SAAA側で先に直せるのは、準備待ち/実行枠待ち/生成中の区�
 - 実LANと隔離DBを使う受入試験で、handoff→接続→生成→最終message保存→UI表示→音声完了を通す。DB上のcompletedだけではモデル回答成功と判定しない。
 - 元runの正確なAgent Connection ID、poll回数・body、別coding要求の呼出元、当時の画面表示、起動バイナリと現在ソースの完全な一致は未確認。別要求の呼出元を別Codex chatなどと推定しない。
 - 基本の対象テスト: `cargo test --manifest-path crates/larm-session/Cargo.toml`、`cargo test --manifest-path src-tauri/Cargo.toml butler_route_tests`、`bun test tests/larm-voice-owner.test.ts tests/larm-voice-drain.test.ts tests/larm-voice-lifetime.test.tsx`。これに上記の遅延・取消・競合条件を追加する。今回、これらを実装回帰の完了として実行したとは主張しない。
-- 実装時に初回応答凍結域を変更するなら `bun run quality:check` とmacOSの `bun run desktop:smoke`、理由付き `freeze:accept:initial-response` が必要。ASRを変更するならAGENTS.md指定の3つのBunテストとRust `voice::streaming_asr`、ASR域だけのfreeze更新が必要。
 
-調査中は製品実装・本番設定・本番DBを変更していない。`bun run freeze:check` は成功。既存の別Codex chatへの送信は行っていない。調査用ランナーの初回ビルドでは補助constructorのfeature不足があり、`quality-eval-harness` を付けて成功した。これは製品の失敗ではない。
 
 ## 保存した証拠
 

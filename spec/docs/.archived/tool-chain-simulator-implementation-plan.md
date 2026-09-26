@@ -98,7 +98,6 @@ runner は次の順で本番 API を呼ぶ。
 | 4. Runner/CLI | 隔離 DB、シナリオ、時系列レポート、JSON 出力を実装 | CLI と CI が同じ runner で全シナリオを再現する |
 | 5. 統合 | React reducer/IPC の契約テスト、macOS 実機の最小スモーク | 実機測定前に予測が確定し、実機との差異を個別に記録できる |
 
-CI では runner の全シナリオ、Rust の tool selection/artifact テスト、WebView UI 契約テスト、型チェックを実行する。マイグレーションは隔離 DB で検証する。実装で `critical-path-freeze.json` の initial-response または ASR 対象ファイルを変更する場合は、対象ドメインの指定回帰テストと `freeze:accept` を理由付きで実施する。現時点では provider request に offer snapshot を渡す部分が frozen ファイルへ及ぶ可能性があるため、実装開始時に変更対象を確定する。
 
 ## 実機でのみ測る項目
 

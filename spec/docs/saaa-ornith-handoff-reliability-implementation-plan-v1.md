@@ -103,7 +103,6 @@ H5完了には少なくとも正常完走1件と、busy条件の再現試験が�
 
 ## 7. 凍結、切替、戻し方
 
-初回応答の凍結対象に触れるH2/H3は、`bun run quality:check` とmacOSの `bun run desktop:smoke`（snapshot・primary conversationをロード）を通し、理由付き `bun run freeze:accept:initial-response --reason "..."` 後に `bun run freeze:check` を通す。ASRの凍結対象を変更する場合だけ、AGENTS.md指定のBun 3試験とRust `voice::streaming_asr` を通し、ASR domainのみ理由付きでacceptする。凍結外の変更を一緒にacceptしない。
 
 最初は隔離DBと明示モードで新しい待機契約を有効にし、本番保存済み設定をリセットしない。切替後の回帰では新規入力のみ旧経路へ戻し、既にLARMへ送った要求やTool操作を旧経路で自動再送しない。Ownerの接続はreleaseを確認し、失敗した場合はcleanup責任とlease keyを保持する。
 
@@ -119,5 +118,4 @@ H5完了には少なくとも正常完走1件と、busy条件の再現試験が�
 - H1（一部）: SAAA側の接続・lease・生成要求の開始と終端を監査し、claim後のAgent Connection IDとallocation IDをcredentialなしで相関できるようにした。取消も接続・leaseの終端として残す。create受理とpoll状態変化のID付き監査は未実装。
 - H2（一部）: voice handoffの接続待ちを暫定25秒、生成用残余を最低30秒とした。rootのDB期限で各role stepの予算を切り、AllocationLost再試行に残余だけを渡す。準備未了は `preparation-deferred` 監査イベントと明示メッセージで終了する。UIは認識済み入力をcomposerへ戻して編集後に新しい入力として再試行できる。Qwenのhandoff文面を接続準備中に変更し、繰り返しの音声fillerを停止した。provider sessionの既存CHECK制約には `timeout` を保存し、handoff固有の結果は監査に保存する。claim後の生成queue待ちに同じ短い期限を適用するには、LARMの開始状態契約が必要。
 - H3: 既存Ownerの遅延claimと、callerが期限を迎えても準備とcleanupの責任を保持するworkerを維持した。通常入口での全Provider先行claimは有効化していない。
-- 回帰: `bun run quality:check`、`bun run desktop:smoke`（snapshotとprimary conversationを含む）、`bun run freeze:check`、`cargo test --manifest-path crates/larm-session/Cargo.toml`、LARM ownerのBun 11件が通過。混雑fixtureでは25秒後に明示メッセージを保存し、ornith生成リクエストは0件だった。既存の共有LARM世界試験2件も再実行して通過。
 - 実LAN: LARM APIでcatalog 200、Agent Connection作成成功。41.1秒後も `probing` でclaimに至らず、接続は解放した。これを最終回答成功の証拠にはしない。H4のdaemon側改修とH5の正常完走・UI/TTS確認は未了。

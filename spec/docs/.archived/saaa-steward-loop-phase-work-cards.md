@@ -12,7 +12,6 @@ Step 1 のカードは既存の[M3Aカード](saaa-personal-world-model-m3-work-
 
 | ID | 対象 | いつ | 実装すること | 合格条件 |
 | --- | --- | --- | --- | --- |
-| SL-00 | spec/evidence/steward-loop/progress.md | フェーズ開始 | HEAD、dirty差分、Role Routing 未コミットを凍結対象として記録。M2結果と WorldFrame 未配線を転記 | 巻き戻し0。並行差分を本フェーズの欠陥としない |
 | SL-01 | M3-00〜21 | Step 1 | 既存M3カードを順に完走 | m3-results.md に全カード証拠。本表へ再掲しない |
 | SL-02 | M3B計画 | Step 1 完了後 | [saaa-personal-world-model-m3b-plan.md](saaa-personal-world-model-m3b-plan.md) を正本とする | グラフ深化なし。TTL延長なし。default OFF。カード10枚 |
 | SL-03 | M3Bカード | Step 2 | SL-02 のカードを順に完走。記録は m3b-results.md | 誤断定増0、Scope漏洩0、命令位置1 |

@@ -13,7 +13,6 @@
 
 ## 2. 計画作成時に確認した再利用箇所と不足
 
-HEADは `cf031f8835a232459e560672c5635d887c16ad7d`。[保存済み差分](../evidence/jarvis-five-provider/2026-09-26-runtime-worktree.json)の25ファイルは今回の読取り時点でもハッシュが一致した。以下は追加のコード照合であり、実効設定・実モデル・実機成功を示さない。
 
 | 領域 | 確認したコード | 計画への反映 |
 | --- | --- | --- |
@@ -63,7 +62,6 @@ J0の終了時に次の判断を記録する。話者ゲート後の残り時間
 
 ### J1：最初の変更単位 — 入力dispatcher
 
-RustのRuntime側に小さいdispatcherを置く。初期の純粋ロジックは `runtime/voice_frontend.rs` に置く。通常入口の観測接続はRustの既存 `VoiceAsrAuditChannel` が受ける `Partial/Final` から正規化する方針とし、UIからの新しいIPCは作らない。ASRの認識方式・凍結された発行箇所・既存final配送は変更しない。音声区切りは既存のcommitイベントとASR finalを対応付け、対応付けを確認できない経路は観測未対応と記録する。監査wrapperの変更だけならASR凍結ファイルには触れないが、凍結されたsession/commands/capture actionsを変更する必要が生じた時点でASR回帰と `freeze:accept:asr` を実施する。
 
 - 入力キーはsession・conversation・utterance・ASR revision・確定状態。ASR revisionとwork revisionは別の型にする。タイマーは注入可能な単調時計を使う。
 - 発話中は1.5秒周期、区切り時は最新の未送信更新を即時flushする。後着最終認識・訂正も即時投入する。周期と区切りが同時でも同じ版は一度だけ送る。
@@ -141,11 +139,9 @@ J1の観測経路を通常入口へ切り替える条件はJ2a・J2b・JE・J3�
 
 ### 規模・リスクと停止条件
 
-相対的な見積もりはJ0/J1が小、J2a/J2b/JEが中、J3/J4が大、J5/J6が大とする。J3はactive root・台帳migration、J4は`rr_speech`のunique制約・player状態、J5は実機統合が主なリスクである。J3/J4で初回応答の凍結対象を変える場合、毎回 `quality:check` とmacOSの `desktop:smoke` が通るまでその単位を完了にしない。日数はJ0の実機・Provider可用性が分かってから見積もる。
 
 J0の3つの成立条件が未達ならJ2以降の通常入口切替を止める。JEの集合と採点器が未完成、J3の重大誤適用が残る、J2aの自声除去が未成立、またはJ4の単一音声所有が破れる場合もJ5へ進めない。各停止時は未達の条件、代案、再測定条件を記録する。
 
-## 4. 検証ゲートと凍結対象
 
 各単位で変更箇所に必要な試験を行い、J5/J6で統合する。以下は実装時の予定コマンドであり、今回実行済みではない。
 
@@ -162,9 +158,7 @@ J0の3つの成立条件が未達ならJ2以降の通常入口切替を止める
 | 初回応答保護域の変更 | `bun run quality:check` と `bun run desktop:smoke` | macOSでsnapshotをloadしprimary conversationを用意して両方成功 |
 | IPC変更・統合 | `bun run ipc:generate`、`bun run ipc:check`、最終的に `bun run check` | 生成契約・型・既存回帰が一致。未実行や環境失敗を合格に含めない |
 
-`critical-path-freeze.json` は着手時に読み直す。候補では、ASR contracts/session/capture actionsはASR域、Qwen経路・Role Routing schema・persistence schemaは初回応答域に含まれる。新規ファイルに分けても保護された入口を変えれば該当する。両方を変えた単位は両方の指定回帰を必要とする。
 
-必要な回帰が成功した後だけ、`bun run freeze:accept:asr --reason "変更理由と回帰結果"` または `bun run freeze:accept:initial-response --reason "変更理由と回帰結果"` で該当domainを更新し、`bun run freeze:check` を実行する。desktop smokeの前提がない場合は未完了とし、acceptで先に通さない。現時点のJ1純粋ロジックは保護対象を変更していない。
 
 試験が失敗したら、既存ベースラインとの差・対象・原因を記録し、対象修正後に同じ条件で再実行する。環境障害は前提を復旧して再試行し、原因不明の反復やtimeout延長だけで合格にしない。模擬試験はProviderなしで実行可能にし、実モデル分類評価・マイク受入・GPU同時負荷試験は明確に別レーンにする。
 
@@ -173,5 +167,3 @@ J0の3つの成立条件が未達ならJ2以降の通常入口切替を止める
 各単位の報告には、変更した契約とファイル、実行した試験と件数、未実行の条件、変更前後の遅延・精度・失敗率、凍結更新理由を残す。実機証跡は実model・設定fingerprint・デバイス・buildと相関IDを付け、文書だけの更新と実装完了を区別する。
 
 今回の実装対象から外すものは、会議録音・呼びかけ先分類、Tool権限の緩和、自律的な仕事の追加、全Memory再設計、複数ornith worker、複数同時TTS、無関係な診断UI改修である。既存変更を捨てず、設定・DBはコピーか隔離環境で試験する。
-
-計画作成時は関連コードの読取り、保存済み差分25件との一致確認を行った。関連4文書のローカルリンク64件とMarkdown構造、`git diff --check`、`bun run freeze:check` は通過した（未追跡の文書は個別の構造検査で確認）。その後、J1のdispatcherとASR監査チャネルからの観測接続に着手した。J0の[実機成立条件の現状](../evidence/jarvis-five-provider/2026-09-26-j0-feasibility.md)、migration、分類データ、通常入口の切替と統合試験は未完了である。

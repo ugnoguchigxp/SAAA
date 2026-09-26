@@ -175,7 +175,6 @@ barge-in:
 | 4 | barge-in（TTS 再生中の VAD 検出で停止）と設定 UI（AEC ON/OFF、ducking level） | 「明日の予定は──」に割り込んだ発話だけが ASR される |
 | 5 | device 切替・Bluetooth・sample rate 変化への対応、desktop smoke | 下記リスク項目の手動確認表を完了 |
 
-Phase 3 は ASR 凍結パス（`src/lib/microphone.ts`、`ambientVoiceCapture.ts`、`ambientVoiceCaptureActions.ts` など）の変更になる。ユーザーの明示承認を得てから着手し、`bun test tests/ambient-voice-session.test.tsx tests/voice-capture-races.test.ts tests/voice-asr-packet-sender.test.ts` と `cargo test --manifest-path src-tauri/Cargo.toml voice::streaming_asr` を通したうえで `bun run freeze:accept:asr --reason "..."` を実行する。TTS 経路が initial-response 凍結対象に含まれる場合は `bun run quality:check` と `bun run desktop:smoke` を実行して `freeze:accept:initial-response` を行う。
 
 ## 11. 変更対象（予定）
 

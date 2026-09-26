@@ -2,7 +2,6 @@
 
 作成日: 2026-09-23。状態: **実装済み（固定テスト確認済み）**。
 
-実装記録: HTML の一回取得を最大 2 秒に制限し、DOM から本文・見出し・表の行を内部で復元して、質問に合うプレーンテキストだけを返す。HTML の証拠が足りない場合は残り期限を使って WebView に進む。WebView のテキストも同じ候補選択を通し、`retrievalStatus` と `retrievalMethod` を返す。sidecar の既存契約は保持した。固定テスト、デスクトップの `cargo check`、sidecar テストは成功。NVIDIA 公開ページの live canary は実装中に成功したが、最終確認時は DNS が 3 秒でタイムアウトし、再試行でも同じ結果だった。全体の `freeze:check`・`size:check`・`cargo fmt --check` は WebFetch 外の作業ツリー差分で失敗している。
 
 レビュー追補: 短い本文・値を保持し、表の値を項目と期間ごとに分離した。長い表セルでも項目・期間を各候補へ繰り返して保持する。質問と異なる会計区分・期間の値を候補から外し、自然文の四半期・会計年度表現を正規化した。長いタイトルでも返却上限を超えないようにした。公開 HTTP URL を契約どおり扱い、HTML 解析を期限で中断可能な実行枠へ移した。sidecar への変換前にも Rust 経路と同じ入力検証を行う。
 
@@ -107,7 +106,6 @@ NVIDIA 決算発表 — FY2026 Q2
 | `cargo test --manifest-path src-tauri/Cargo.toml runtime::web_fetch --lib --no-default-features` | 抽出・順位付け・状態・契約の固定ケースが全件成功 | ケースを再現して原因を修正、同条件で再実行 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | デスクトップ本体の型・依存関係が通る | 対象差分のエラーを修正して再実行 |
 | `bun test tests/webfetch-sidecar.test.ts` | rollback 経路の入力・結果互換が成功 | 引数変換を修正して再実行 |
-| `bun run freeze:check` | ASR・初回応答の凍結検査が成功 | 意図しない変更を除去して再実行 |
 | `git diff --check` | 変更差分に空白エラーがない | 修正して再実行 |
 | `cargo fmt --check --manifest-path src-tauri/Cargo.toml` | 変更対象の整形を確認。既存の対象外差分がある場合はファイルと差分を記録 | 対象ファイルのみ修正し、対象外のユーザー変更は保持 |
 | `bun run check` | リポジトリ全体の gate を確認。既存失敗と今回の差分による失敗を区別 | 今回の差分に起因する失敗を修正し、既存失敗は根拠を報告 |
