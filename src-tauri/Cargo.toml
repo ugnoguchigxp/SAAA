@@ -25,6 +25,7 @@ custom-protocol = ["tauri/custom-protocol"]
 quality-eval-harness = []
 provider-diagnostics = []
 provider-unit-test-harness = []
+conversation-queue-e2e = ["tauri/test"]
 
 [[bin]]
 name = "harness_llm_diagnostic"
@@ -75,6 +76,7 @@ regex = "1"
 sha2 = "0.10"
 tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "test-util", "time"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 unicode-segmentation = "1"
 unicode-normalization = "0.1"
 url = "2"

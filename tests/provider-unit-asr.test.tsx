@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import { act } from "react";
 import { installJsdom } from "./jsdomGlobals";
 import { channels, invokeCalls, invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
-import { ProviderUnitTestPage } from "../src/features/providerUnitTest/ProviderUnitTestPage";
+
+const { ProviderUnitTestPage } =
+  await import("../src/features/providerUnitTest/ProviderUnitTestPage");
 
 test("ASR uploads recorded PCM, shows backend stages and retains audio for a failed connection retry", async () => {
   const environment = installJsdom();

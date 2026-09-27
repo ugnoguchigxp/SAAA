@@ -354,6 +354,7 @@ mod tests {
             model: "asr-model".into(),
             language: "auto".into(),
             authentication: "api-key".into(),
+            transport: "http".into(),
         };
         let cancelled = Arc::new(RunCancellation::default());
         cancelled.cancel();

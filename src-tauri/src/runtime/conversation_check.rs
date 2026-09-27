@@ -1,5 +1,9 @@
 //! Conversation-screen turn path: finalized ASR text, Qwen handoff, ornith answer and TTS.
 //! Continuous partial-ASR routing and the durable work queue remain separate runtime work.
+pub(crate) mod queue_runtime;
+#[path = "conversation_check/streaming_speech.rs"]
+mod streaming_speech;
+pub(crate) fn spawn_queue_workers<R: tauri::Runtime>(app: tauri::AppHandle<R>) { queue_runtime::spawn(app); }
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, OnceLock,
@@ -9,6 +13,7 @@ use std::time::Instant;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tauri::Emitter;
 
 use crate::{
     database_error, now_iso, persistence, validate_identifier, AppState, ModelProviderSettings,
@@ -18,6 +23,74 @@ use crate::{
 static BUSY: AtomicBool = AtomicBool::new(false);
 static ASR_SESSION: OnceLock<tokio::sync::Mutex<Option<CachedAsrSession>>> = OnceLock::new();
 static SPEECH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static ACTIVE_SPEECH_CANCEL: OnceLock<std::sync::Mutex<Option<(String, Arc<RunCancellation>)>>> = OnceLock::new();
+static ACTIVE_SPEECH_PLAYBACK: OnceLock<std::sync::Mutex<Option<String>>> = OnceLock::new();
+
+fn speech_playing() -> bool {
+    ACTIVE_SPEECH_PLAYBACK
+        .get()
+        .and_then(|slot| slot.lock().ok())
+        .is_some_and(|slot| slot.is_some())
+}
+
+fn set_speech_playback<R: tauri::Runtime>(app: &tauri::AppHandle<R>, input_id: &str, active: bool) {
+    let slot = ACTIVE_SPEECH_PLAYBACK.get_or_init(|| std::sync::Mutex::new(None));
+    let Ok(mut current) = slot.lock() else {
+        return;
+    };
+    if active {
+        if current.as_deref() == Some(input_id) {
+            return;
+        }
+        *current = Some(input_id.to_string());
+    } else {
+        if current.as_deref() != Some(input_id) {
+            return;
+        }
+        *current = None;
+    }
+    drop(current);
+    let _ = app.emit("conversation-queue-updated", ());
+}
+
+struct PlaybackStateGuard<R: tauri::Runtime> {
+    app: tauri::AppHandle<R>,
+    input_id: String,
+}
+
+impl<R: tauri::Runtime> PlaybackStateGuard<R> {
+    fn new(app: &tauri::AppHandle<R>, input_id: &str) -> Self {
+        Self {
+            app: app.clone(),
+            input_id: input_id.to_string(),
+        }
+    }
+}
+
+impl<R: tauri::Runtime> Drop for PlaybackStateGuard<R> {
+    fn drop(&mut self) {
+        set_speech_playback(&self.app, &self.input_id, false);
+    }
+}
+
+struct ActiveSpeechGuard;
+impl Drop for ActiveSpeechGuard {
+    fn drop(&mut self) {
+        if let Some(slot) = ACTIVE_SPEECH_CANCEL.get() {
+            if let Ok(mut current) = slot.lock() { *current = None; }
+        }
+    }
+}
+
+fn cancel_active_speech(input_id: &str) {
+    if let Some(slot) = ACTIVE_SPEECH_CANCEL.get() {
+        if let Ok(current) = slot.lock() {
+            if let Some((id, cancellation)) = current.as_ref() {
+                if id == input_id { cancellation.cancel(); }
+            }
+        }
+    }
+}
 
 struct CachedAsrSession {
     route: String,
@@ -122,7 +195,7 @@ impl ConversationAudit {
         self.writer.write(|connection| {
             connection.execute(
                 "INSERT INTO audit_events(id,occurred_at,component,event_name,phase,outcome,correlation_id,conversation_id,attributes_json) \
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                 params![
                     format!("audit_{}", uuid::Uuid::new_v4().simple()),
                     now_iso(), component, event_name, phase, outcome,
@@ -437,6 +510,18 @@ async fn transcribe_conversation_audio_inner(
     })
 }
 
+#[cfg(feature = "conversation-queue-e2e")]
+pub(crate) async fn transcribe_fixture_audio(state: &AppState, input_id: &str) -> Result<String, String> {
+    let samples = vec![1_000_i16; 3_200];
+    let audio_upload_id = state.audio_uploads.stage_pcm_for_e2e(&samples);
+    let audit = ConversationAudit::new(state.sqlite_writer.clone(), input_id.into());
+    transcribe_conversation_audio_inner(
+        state,
+        TranscribeInput { audio_upload_id, utterance_id: input_id.into(), kind: "final".into() },
+        &audit,
+    ).await.map(|result| result.text)
+}
+
 #[tauri::command]
 pub(crate) async fn release_conversation_asr_session() -> Result<(), String> {
     let previous = asr_session().lock().await.take();
@@ -455,6 +540,7 @@ pub(crate) async fn release_conversation_asr_session() -> Result<(), String> {
 #[tauri::command]
 pub(crate) async fn speak_conversation_answer(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
     input_id: String,
 ) -> Result<(), String> {
     validate_identifier(&input_id, "input id")?;
@@ -467,7 +553,7 @@ pub(crate) async fn speak_conversation_answer(
         None,
         json!({}),
     );
-    let result = speak_conversation_answer_inner(&state, &input_id, &audit).await;
+    let result = speak_conversation_answer_inner(&state, &app, &input_id, &audit, None).await;
     match &result {
         Ok(()) => audit.event(
             "tts",
@@ -491,15 +577,18 @@ pub(crate) async fn speak_conversation_answer(
     result
 }
 
-async fn speak_conversation_answer_inner(
+async fn speak_conversation_answer_inner<R: tauri::Runtime>(
     state: &AppState,
+    app: &tauri::AppHandle<R>,
     input_id: &str,
     audit: &ConversationAudit,
+    speech_job: Option<&crate::task_queue::Job>,
 ) -> Result<(), String> {
     let _speech = SPEECH_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
+    let _playback_state = PlaybackStateGuard::new(app, input_id);
     let answer_id = format!("reply_{input_id}");
     let (content, providers, route) = state.sqlite_readers.read(|connection| {
         let content: String = connection.query_row(
@@ -512,6 +601,10 @@ async fn speak_conversation_answer_inner(
     if content.trim().is_empty() || content.len() > 8192 {
         return Err("読み上げる回答がありません。".into());
     }
+    let spoken = crate::voice_text::text_for_speech(&content);
+    if spoken.is_empty() { return Err("読み上げ可能な回答本文がありません。".into()); }
+    #[cfg(feature = "conversation-queue-e2e")]
+    if crate::conversation_queue_e2e::capture_speech(&spoken) { return Ok(()); }
     audit.event(
         "tts",
         "conversation-tts-route",
@@ -523,6 +616,21 @@ async fn speak_conversation_answer_inner(
         }),
     );
     let cancellation = Arc::new(RunCancellation::default());
+    *ACTIVE_SPEECH_CANCEL.get_or_init(|| std::sync::Mutex::new(None))
+        .lock().map_err(|_| "音声の取消し状態を取得できません。")? = Some((input_id.to_string(), cancellation.clone()));
+    let _active_speech = ActiveSpeechGuard;
+    if let Some(job) = speech_job {
+        let current = state.sqlite_readers.read(|connection| {
+            connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM task_queue_jobs WHERE id=?1 AND state='running' AND owner=?2 AND generation=?3)",
+                params![job.id,job.owner,job.generation],
+                |row| row.get::<_, bool>(0),
+            ).map_err(database_error)
+        })?;
+        if !current || cancellation.is_cancelled() {
+            return Err("音声の仕事は中止されました。".into());
+        }
+    }
     let output = Arc::new(AtomicBool::new(false));
     if route.source == "harness" {
         let session = cached_larm_asr(&providers, Some(audit)).await?;
@@ -537,6 +645,8 @@ async fn speak_conversation_answer_inner(
             }),
         );
         let playback_audit = audit.clone();
+        let playback_app = app.clone();
+        let playback_id = input_id.to_string();
         let result = crate::voice::http_audio::play_larm_with_situation(
             &session,
             PRIMARY_CONVERSATION_ID,
@@ -544,11 +654,12 @@ async fn speak_conversation_answer_inner(
             Some(&providers.harness),
             crate::voice::cloud_tts::speech_directive::SpeechExpression::Natural,
             output,
-            &content,
+            &spoken,
             route.timeout_ms.min(120_000),
             cancellation,
             move || {
-                playback_audit.event("tts", "conversation-tts-playback", "start", None, json!({}))
+                set_speech_playback(&playback_app, &playback_id, true);
+                playback_audit.event("tts", "conversation-tts-playback", "start", None, json!({}));
             },
             None,
         )
@@ -572,13 +683,16 @@ async fn speak_conversation_answer_inner(
                 }),
             );
             let playback_audit = audit.clone();
+            let playback_app = app.clone();
+            let playback_id = input_id.to_string();
             crate::voice::http_audio::play_with_situation(
                 provider,
-                &content,
+                &spoken,
                 route.timeout_ms.min(120_000),
                 cancellation,
                 output,
                 move || {
+                    set_speech_playback(&playback_app, &playback_id, true);
                     playback_audit.event(
                         "tts",
                         "conversation-tts-playback",
@@ -604,10 +718,10 @@ async fn speak_conversation_answer_inner(
             let directory =
                 tempfile::tempdir().map_err(|_| "TTS一時領域を作成できませんでした。")?;
             let path = crate::voice::system_tts::render_tts_artifact(
-                content,
+                spoken,
                 provider.voice.clone(),
                 directory.path().to_path_buf(),
-                cancellation,
+                cancellation.clone(),
             )
             .await?;
             audit.event(
@@ -618,16 +732,22 @@ async fn speak_conversation_answer_inner(
                 json!({}),
             );
             let playback_audit = audit.clone();
+            let playback_app = app.clone();
+            let playback_id = input_id.to_string();
             tokio::task::spawn_blocking(move || {
                 let mut child = crate::voice::cloud_tts::spawn_audio_player(&path)?;
+                set_speech_playback(&playback_app, &playback_id, true);
                 playback_audit.event("tts", "conversation-tts-playback", "start", None, json!({}));
-                let status = child
-                    .wait()
-                    .map_err(|_| "TTS再生を確認できませんでした。".to_string())?;
-                if status.success() {
-                    Ok(())
-                } else {
-                    Err("TTS再生に失敗しました。".into())
+                loop {
+                    if cancellation.is_cancelled() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err("Speech cancelled".into());
+                    }
+                    if let Some(status) = child.try_wait().map_err(|_| "TTS再生を確認できませんでした。")? {
+                        return if status.success() { Ok(()) } else { Err("TTS再生に失敗しました。".into()) };
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
                 }
             })
             .await
@@ -880,6 +1000,8 @@ async fn submit_conversation_text_inner(
                         None,
                         &[],
                         Some((audit, "configured")),
+                        None,
+                        None,
                     )
                     .await?;
                     (content, provider.model.clone(), provider.label.clone())
@@ -1054,6 +1176,28 @@ async fn complete_larm_jarvis(
     answer
 }
 
+fn fit_role_history(
+    instruction: &str,
+    recent: &[(String, String)],
+    text: &str,
+    capacity: usize,
+) -> Result<Vec<(String, String)>, String> {
+    let mut fitted = recent.to_vec();
+    loop {
+        let mut messages = vec![json!({"role":"system","content":instruction})];
+        messages.extend(fitted.iter().map(|(role, content)| json!({"role":role,"content":content})));
+        messages.push(json!({"role":"user","content":text}));
+        let bytes = serde_json::to_vec(&messages).map_err(|error| error.to_string())?.len();
+        if bytes <= capacity { return Ok(fitted); }
+        let removable = fitted.iter().position(|(_, content)|
+            !content.starts_with("[ORNITH_RESULT") && !content.starts_with("[TOOL_RESULT"));
+        let Some(index) = removable else {
+            return Err("Required context does not fit this provider. Narrow the task scope.".into());
+        };
+        fitted.remove(index);
+    }
+}
+
 async fn complete_larm_role(
     session: &Arc<saaa_larm_session::Session>,
     role: &str,
@@ -1062,6 +1206,21 @@ async fn complete_larm_role(
     timeout_ms: u64,
     audit: &ConversationAudit,
     instruction: &str,
+) -> Result<(String, String), String> {
+    complete_larm_role_with_events(session, role, recent, text, timeout_ms, audit, instruction, None, None).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn complete_larm_role_with_events(
+    session: &Arc<saaa_larm_session::Session>,
+    role: &str,
+    recent: &[(String, String)],
+    text: &str,
+    timeout_ms: u64,
+    audit: &ConversationAudit,
+    instruction: &str,
+    on_delta: Option<&dyn crate::runtime::event_hub::RuntimeEventSender>,
+    cancellation: Option<Arc<RunCancellation>>,
 ) -> Result<(String, String), String> {
     let started = Instant::now();
     audit.event(
@@ -1091,8 +1250,16 @@ async fn complete_larm_role(
         let budget = lease
             .request_budget(std::time::Duration::from_millis(timeout_ms.min(120_000)))
             .map_err(str::to_string)?;
+        let advertised = provider.context_window.ok_or("LARMのコンテキスト上限がありません。")?;
+        // Bytes are a conservative upper bound for input tokens across the supported UTF-8
+        // content. Keep the existing provider budget as an additional local ceiling.
+        let capacity = crate::runtime::context::broker::ProviderInputBudget::openai_compatible()
+            .usable_context_bytes()
+            .min((advertised.max_input_tokens() as usize).saturating_sub(2_048));
+        let fitted = fit_role_history(instruction, recent, text, capacity)?;
         let authorization = zeroize::Zeroizing::new(format!("Bearer {}", provider.token()));
         let options = saaa_larm_session::http_api::LlmOptions {
+            tools: false,
             thinking: if role == "backchannel" {
                 saaa_larm_session::http_api::Thinking::Disabled
             } else {
@@ -1119,8 +1286,10 @@ async fn complete_larm_role(
             Some(&options),
             true,
             Some(instruction),
-            recent,
+            &fitted,
             Some((audit, role)),
+            on_delta,
+            cancellation,
         )
         .await?;
         audit.text(
@@ -1166,8 +1335,18 @@ async fn complete_larm_role(
 async fn connect_larm(
     providers: &crate::ModelProvidersSettings,
 ) -> Result<Arc<saaa_larm_session::Session>, String> {
-    let credential = crate::providers::dynamic_lan::credential::load()
-        .map_err(|error| error.code().to_string())?;
+    #[cfg(feature = "conversation-queue-e2e")]
+    let fixture_token = crate::conversation_queue_e2e::credential();
+    #[cfg(not(feature = "conversation-queue-e2e"))]
+    let fixture_token: Option<String> = None;
+    let token = if let Some(token) = fixture_token {
+        token
+    } else {
+        crate::providers::dynamic_lan::credential::load()
+            .map_err(|error| error.code().to_string())?
+            .token()
+            .to_string()
+    };
     let preference = crate::providers::larm_resources::profile::preference(
         providers.harness.larm_profile.as_deref(),
     );
@@ -1175,7 +1354,7 @@ async fn connect_larm(
     let connection = saaa_larm_session::Session::connect_with_profile_credential_and_key(
         &providers.harness.address,
         preference,
-        credential.token().to_string(),
+        token,
         format!("saaa-conversation-check-{}", uuid::Uuid::new_v4().simple()),
         receiver,
     )
@@ -1212,6 +1391,8 @@ pub(crate) async fn complete_http(
         None,
         &[],
         None,
+        None,
+        None,
     )
     .await
 }
@@ -1228,6 +1409,8 @@ async fn complete_http_with_instruction(
     instruction: Option<&str>,
     recent: &[(String, String)],
     audit: Option<(&ConversationAudit, &str)>,
+    on_delta: Option<&dyn crate::runtime::event_hub::RuntimeEventSender>,
+    cancellation: Option<Arc<RunCancellation>>,
 ) -> Result<String, String> {
     let input = StartTurnInput {
         run_id: format!("check_{}", uuid::Uuid::new_v4().simple()),
@@ -1272,28 +1455,55 @@ async fn complete_http_with_instruction(
     history.push(user);
     let sink = tauri::ipc::Channel::new(|_| Ok(()));
     let options = configured_options.cloned().unwrap_or_default();
-    crate::providers::chat_completions::run_with_proxy_policy(
+    let make_context = || crate::providers::stream::ModelStreamContext {
+        reasoning_effort: "provider-default",
+        max_output_tokens: if instruction.is_some() { 2_048 } else { 512 },
+        input: &input,
+        on_event: on_delta.unwrap_or(&sink),
+        cancellation: cancellation.clone().unwrap_or_else(|| Arc::new(RunCancellation::default())),
+        context_health: "green",
+        context_sources: &[],
+        context_omissions: &[],
+        output_persistence: None,
+    };
+    let mode = if on_delta.is_some() {
+        crate::providers::chat_completions::RequestMode::Stream
+    } else {
+        crate::providers::chat_completions::RequestMode::JsonProbe
+    };
+    let mut result = crate::providers::chat_completions::run_with_proxy_policy(
         endpoint,
         authorization,
         model,
         &history,
         timeout_ms.min(120_000),
-        crate::providers::stream::ModelStreamContext {
-            reasoning_effort: "provider-default",
-            max_output_tokens: if instruction.is_some() { 2_048 } else { 512 },
-            input: &input,
-            on_event: &sink,
-            cancellation: Arc::new(RunCancellation::default()),
-            context_health: "green",
-            context_sources: &[],
-            context_omissions: &[],
-            output_persistence: None,
-        },
-        crate::providers::chat_completions::RequestMode::JsonProbe,
+        make_context(),
+        mode,
         &options,
         no_proxy,
     )
-    .await
+    .await;
+    // Some configured Chat Completions servers reject SSE. Preserve the existing
+    // complete-response path only if no streamed output has reached the speaker.
+    if on_delta.is_some() && matches!(result,
+        Err(crate::providers::stream::ProviderAttemptError::Failed {
+            kind: crate::providers::stream::ProviderFailureKind::Contract
+                | crate::providers::stream::ProviderFailureKind::Protocol,
+            output_started: false, ..
+        })
+    ) {
+        result = crate::providers::chat_completions::run_with_proxy_policy(
+            endpoint, authorization, model, &history, timeout_ms.min(120_000),
+            make_context(), crate::providers::chat_completions::RequestMode::JsonProbe,
+            &options, no_proxy,
+        ).await;
+        if let (Ok(content), Some(on_delta)) = (&result, on_delta) {
+            on_delta.send(crate::ipc_contract::RuntimeEvent::Delta {
+                run_id: input.run_id.clone(), text: content.clone(),
+            }).map_err(|_| "音声用の回答を受け渡せませんでした。".to_string())?;
+        }
+    }
+    result
     .map_err(|error| match error {
         crate::providers::stream::ProviderAttemptError::Failed {
             kind,
@@ -1333,7 +1543,18 @@ async fn complete_http_with_instruction(
 
 #[cfg(test)]
 mod jarvis_tests {
-    use super::{is_standalone_greeting, parse_qwen_decision};
+    use super::{fit_role_history, is_standalone_greeting, parse_qwen_decision};
+
+    #[test]
+    fn provider_window_discards_optional_history_but_keeps_current_input() {
+        let history = vec![("user".into(), "古い会話".repeat(100)), ("user".into(), "WorldModelの資料".into())];
+        let fitted = fit_role_history("固定ポリシー", &history, "今の依頼", 150).unwrap();
+        assert_eq!(fitted.len(), 1);
+        assert!(fitted[0].1.contains("WorldModel"));
+        assert!(fit_role_history("固定ポリシー", &[], &"大".repeat(200), 150).is_err());
+        let required = vec![("user".into(), "[ORNITH_RESULT]".to_string() + &"根拠".repeat(100))];
+        assert!(fit_role_history("固定ポリシー", &required, "今の依頼", 150).is_err());
+    }
 
     #[test]
     fn only_standalone_greetings_use_qwen_directly() {

@@ -5268,6 +5268,46 @@
     "tests/world-scope.test.ts": {
       "total": 26,
       "production": 26
+    },
+    "src-tauri/src/conversation_queue_e2e.rs": {
+      "total": 515,
+      "production": 515
+    },
+    "src-tauri/src/conversation_queue_e2e/cancellation.rs": {
+      "total": 142,
+      "production": 142
+    },
+    "src-tauri/src/runtime/conversation_check/queue_input_state.rs": {
+      "total": 43,
+      "production": 43
+    },
+    "src-tauri/src/runtime/conversation_check/queue_runtime.rs": {
+      "total": 925,
+      "production": 925
+    },
+    "src-tauri/src/voice/qwen_realtime_asr.rs": {
+      "total": 565,
+      "production": 421
+    },
+    "src/lib/conversationAsrCapture.ts": {
+      "total": 695,
+      "production": 695
+    },
+    "src/lib/conversationAsrState.ts": {
+      "total": 67,
+      "production": 67
+    },
+    "src/lib/conversationCaptureAudit.ts": {
+      "total": 49,
+      "production": 49
+    },
+    "src/lib/qwenRealtimeAsr.ts": {
+      "total": 40,
+      "production": 40
+    },
+    "tests/conversation-asr-continuous.test.ts": {
+      "total": 518,
+      "production": 518
     }
   }
 }

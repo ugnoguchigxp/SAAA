@@ -330,6 +330,7 @@ mod tests {
                 model: "asr-model".into(),
                 language: "auto".into(),
                 authentication: if text.is_empty() { "api-key" } else { "none" }.into(),
+                transport: "http".into(),
             };
             let result = super::super::cloud_asr::transcribe_with_api_key(
                 &provider,

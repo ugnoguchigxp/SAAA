@@ -95,6 +95,7 @@ const agentSessionProviderSchema = providerCommonSchema
 const cloudAsrProviderSchema = providerCommonSchema
   .extend({
     kind: z.literal("cloud-asr"),
+    transport: z.enum(["http", "qwen-realtime"]).optional(),
     location: z.enum(["local", "cloud"]),
     endpoint: z.string().url().max(2_048),
     model: z
@@ -369,6 +370,16 @@ export const modelProvidersSettingsSchema = z
                 path: [index, "endpoint"],
               });
           }
+          if (
+            provider.kind === "cloud-asr" &&
+            provider.transport === "qwen-realtime" &&
+            (provider.location !== "cloud" || provider.authentication !== "api-key")
+          )
+            context.addIssue({
+              code: "custom",
+              message: "Qwen Realtime ASR requires a cloud provider with an API key",
+              path: [index],
+            });
         });
         if (enabledDynamicLanProviders > 1)
           context.addIssue({

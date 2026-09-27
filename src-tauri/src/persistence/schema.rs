@@ -23,7 +23,8 @@ use rusqlite::{params, Connection};
 /// 39 adds generation_usage and the records store.
 /// 40 adds context segments and generation wire columns.
 /// 41 adds the butler conversation event, run-input, and work-state tables.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 41;
+/// 42 adds the durable task queue used by the Qwen/Ornith conversation path.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 42;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -217,6 +218,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     crate::generative_ui::store::migrate(&transaction)?;
     crate::coding::repository::migrate(&transaction)?;
     crate::steward::schema::migrate(&transaction)?;
+    crate::task_queue::migrate(&transaction)?;
     crate::coding::recovery::reconcile(&transaction)
         .map_err(rusqlite::Error::InvalidParameterName)?;
     crate::runtime::context::schema::migrate(&transaction)?;

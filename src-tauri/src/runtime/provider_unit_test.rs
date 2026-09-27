@@ -1,4 +1,13 @@
 //! Interactive, read-only probes of one claimed LARM provider at a time.
+#[cfg(feature = "provider-unit-test-harness")]
+pub async fn verify_qwen_local_websocket_fixture() {
+    crate::voice::qwen_realtime_asr::exercise_local_websocket_fixture().await;
+}
+
+#[cfg(feature = "provider-unit-test-harness")]
+pub async fn verify_qwen_rejected_session_fixture() {
+    crate::voice::qwen_realtime_asr::exercise_rejected_session_fixture().await;
+}
 use base64::Engine;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};

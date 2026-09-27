@@ -88,6 +88,7 @@ async fn live_tts_playback_and_asr() {
         model: "qwen3-asr-1.7b".into(),
         language: "auto".into(),
         authentication: "api-key".into(),
+        transport: "http".into(),
     };
     let asr_started = Instant::now();
     let (text, _) = crate::voice::cloud_asr::transcribe_with_api_key(

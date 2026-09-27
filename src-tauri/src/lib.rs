@@ -41,9 +41,12 @@ pub mod runtime;
 mod schedule;
 mod situation;
 mod steward;
-#[cfg(test)]
+mod task_queue;
+#[cfg(feature = "conversation-queue-e2e")]
+pub mod conversation_queue_e2e;
+#[cfg(any(test, feature = "conversation-queue-e2e"))]
 mod test_state;
-#[cfg(test)]
+#[cfg(any(test, feature = "conversation-queue-e2e"))]
 mod test_support;
 pub mod tool_selection;
 mod util;
@@ -351,6 +354,7 @@ pub fn run() {
                 mcp_server: Mutex::new(mcp_server),
                 schedule: Arc::new(schedule::Handle::default()),
                 steward_wake: steward::pump::Wake::default(),
+                conversation_queue_wake: std::sync::Arc::new(tokio::sync::Notify::new()),
                 artifact_preview,
                 reachability: std::sync::Arc::new(providers::reachability::ReachabilityState::default()),
                 reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -372,6 +376,9 @@ pub fn run() {
                         .map(|_| ())
                 })
                 .map_err(|error| format!("role-routing startup recovery: {error}"))?;
+            app.state::<AppState>().sqlite_writer.write(|connection| task_queue::recover(connection,&["qwen","ornith"],&["speech"]))
+                .map_err(|error| format!("conversation queue recovery: {error}"))?;
+            runtime::conversation_check::spawn_queue_workers(app.handle().clone());
             providers::reachability_watcher::spawn(&app.state::<AppState>());
             adaptive_improvement::start_worker(
                 app.state::<AppState>().sqlite_writer.clone(),

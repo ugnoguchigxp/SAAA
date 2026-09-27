@@ -34,6 +34,7 @@ export type AgentSessionProviderSettings = {
 
 export type CloudAsrProviderSettings = {
   kind: "cloud-asr";
+  transport?: "http" | "qwen-realtime";
   id: string;
   enabled: boolean;
   label: string;

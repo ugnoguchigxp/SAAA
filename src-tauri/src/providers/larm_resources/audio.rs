@@ -9,6 +9,7 @@ pub(crate) fn asr_settings(provider: &saaa_larm_session::Provider) -> CloudAsrPr
         model: provider.model.clone(),
         language: "auto".into(),
         authentication: "api-key".into(),
+        transport: "http".into(),
     }
 }
 pub(crate) fn tts_settings(

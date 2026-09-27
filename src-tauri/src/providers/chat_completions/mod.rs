@@ -1,9 +1,13 @@
 //! Small tool-less Chat Completions transport for provider diagnostics and generation.
 //! The removed conversation executor is not reintroduced here.
 use super::stream::{ModelStreamContext, ProviderAttemptError, ProviderFailureKind};
-use crate::ipc_contract::{ConversationMessage, RuntimeEvent};
+use crate::ipc_contract::ConversationMessage;
 use serde_json::{json, Value};
 use std::time::Duration;
+
+mod chunks;
+mod sse;
+mod stream_response;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RequestMode {
@@ -71,7 +75,7 @@ pub(crate) async fn run_with_proxy_policy(
     let mut body = json!({
         "model": model,
         "messages": messages,
-        "stream": false,
+        "stream": mode == RequestMode::Stream,
         "max_tokens": context.max_output_tokens,
     });
     options.apply(
@@ -80,6 +84,7 @@ pub(crate) async fn run_with_proxy_policy(
         context.max_output_tokens,
         context.reasoning_effort,
     );
+    body["stream"] = json!(mode == RequestMode::Stream);
     let mut client_builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5));
@@ -92,6 +97,9 @@ pub(crate) async fn run_with_proxy_policy(
     let mut request = client.post(url).json(&body);
     if let Some(authorization) = authorization {
         request = request.header(reqwest::header::AUTHORIZATION, authorization);
+    }
+    if mode == RequestMode::Stream {
+        return stream_response::run(request, model, timeout_ms, context).await;
     }
     let cancellation = context.cancellation.clone();
     let response = tokio::select! {
@@ -125,14 +133,5 @@ pub(crate) async fn run_with_proxy_policy(
         .filter(|text| !text.trim().is_empty())
         .ok_or_else(|| ProviderAttemptError::failed(Failure::Protocol, false))?
         .to_string();
-    if mode == RequestMode::Stream {
-        context
-            .on_event
-            .send(RuntimeEvent::Delta {
-                run_id: context.input.run_id.clone(),
-                text: content.clone(),
-            })
-            .map_err(|_| ProviderAttemptError::failed(Failure::ClientDisconnected, true))?;
-    }
     Ok(content)
 }

@@ -174,6 +174,16 @@ pub(crate) fn validate_model_providers(settings: &ModelProvidersSettings) -> Res
                 )?;
             }
             ModelProviderSettings::CloudAsr(provider) => {
+                if !matches!(provider.transport.as_str(), "http" | "qwen-realtime") {
+                    return Err(format!("Unsupported ASR transport: {provider_id}"));
+                }
+                if provider.transport == "qwen-realtime"
+                    && (provider.location != "cloud" || provider.authentication != "api-key")
+                {
+                    return Err(format!(
+                        "Qwen Realtime ASR requires a cloud API key: {provider_id}"
+                    ));
+                }
                 validate_cloud_provider(
                     provider_id,
                     &provider.location,

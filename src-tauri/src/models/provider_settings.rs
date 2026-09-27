@@ -43,6 +43,12 @@ pub(crate) struct CloudAsrProviderSettings {
     pub(crate) model: String,
     pub(crate) language: String,
     pub(crate) authentication: String,
+    #[serde(default = "default_asr_transport")]
+    pub(crate) transport: String,
+}
+
+pub(crate) fn default_asr_transport() -> String {
+    "http".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

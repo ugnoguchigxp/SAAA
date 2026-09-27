@@ -102,6 +102,35 @@ describe("reviewed settings boundaries", () => {
 });
 
 describe("HTTP audio provider settings", () => {
+  test("keeps existing ASR providers on HTTP and accepts an explicit Qwen realtime provider", () => {
+    const settings = structuredClone(defaultSettingsDraft.providers);
+    const base = {
+      kind: "cloud-asr" as const,
+      id: "qwen-asr",
+      enabled: true,
+      label: "Qwen ASR",
+      location: "cloud" as const,
+      endpoint: "https://dashscope-intl.aliyuncs.com/api-ws/v1/realtime",
+      model: "qwen3-asr-flash-realtime",
+      language: "auto" as const,
+      authentication: "api-key" as const,
+    };
+    const old = modelProvidersSettingsSchema.parse({ ...settings, providers: [base] });
+    expect(old.providers[0]?.kind === "cloud-asr" && old.providers[0].transport).toBeUndefined();
+    expect(() =>
+      modelProvidersSettingsSchema.parse({
+        ...settings,
+        providers: [{ ...base, transport: "qwen-realtime" }],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      modelProvidersSettingsSchema.parse({
+        ...settings,
+        providers: [{ ...base, transport: "qwen-realtime", authentication: "none" }],
+      }),
+    ).toThrow();
+  });
+
   test("reads existing WAV settings and accepts local PCM without WS fields", () => {
     for (const [kind, extra] of [
       ["cloud-asr", { language: "auto" }],

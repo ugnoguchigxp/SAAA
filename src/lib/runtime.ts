@@ -150,6 +150,33 @@ export async function speakConversationAnswer(inputId: string): Promise<void> {
   return invoke<void>("speak_conversation_answer", { inputId });
 }
 
+export type ConversationQueueJob = {
+  id: string;
+  kind: string;
+  key: string;
+  state: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  error: string | null;
+};
+
+export async function enqueueConversationText(
+  inputId: string,
+  text: string,
+): Promise<{ inputId: string; jobId: string }> {
+  return invoke("enqueue_conversation_text", { inputId, text });
+}
+
+export async function conversationQueueSnapshot(): Promise<{ jobs: ConversationQueueJob[]; speechPlaying: boolean }> {
+  return invoke("conversation_queue_snapshot");
+}
+
+export async function cancelConversationInput(inputId: string): Promise<void> {
+  return invoke("cancel_conversation_input", { inputId });
+}
+
+export async function replayConversationSpeech(inputId: string): Promise<void> {
+  return invoke("replay_conversation_speech", { inputId });
+}
+
 export async function transcribeConversationAudio(
   audioUploadId: string,
   utteranceId: string,

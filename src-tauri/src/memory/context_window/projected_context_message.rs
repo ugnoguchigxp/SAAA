@@ -120,7 +120,7 @@ pub(crate) fn load(
         connection,
         conversation_id,
         current_message_id,
-        false,
+        control_plane::memory_enabled(),
         Some(scope),
     )
 }

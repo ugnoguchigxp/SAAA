@@ -27,6 +27,7 @@ pub(super) struct AppState {
     pub(super) mcp_server: Mutex<Option<tool_selection::mcp_server::ServerHandle>>,
     pub(super) schedule: std::sync::Arc<crate::schedule::Handle>,
     pub(super) steward_wake: crate::steward::pump::Wake,
+    pub(super) conversation_queue_wake: Arc<tokio::sync::Notify>,
     pub(super) artifact_preview: crate::artifact_preview::PreviewRuntime,
     pub(super) reachability: std::sync::Arc<crate::providers::reachability::ReachabilityState>,
     pub(super) reachability_kick: std::sync::Arc<tokio::sync::Notify>,

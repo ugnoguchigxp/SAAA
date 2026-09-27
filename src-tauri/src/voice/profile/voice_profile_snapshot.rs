@@ -104,7 +104,7 @@ impl VoiceProfileRuntime {
         }
     }
 
-    #[cfg(any(test, feature = "quality-eval-harness"))]
+    #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
     pub fn unavailable_for_tests(data_directory: PathBuf) -> Self {
         Self {
             data_directory,

@@ -6,7 +6,10 @@ pub(crate) mod http_audio;
 pub mod language;
 pub mod network_asr;
 pub mod profile;
+pub mod qwen_realtime_asr;
 pub mod speaker;
 pub mod streaming_asr;
 pub mod system_tts;
+#[path = "streaming_tts/chunker.rs"]
+pub(crate) mod tts_chunker;
 pub(crate) mod unavailable_speech;

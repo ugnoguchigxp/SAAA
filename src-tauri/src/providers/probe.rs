@@ -30,7 +30,13 @@ pub(crate) async fn test_model_provider(state: &AppState, input: TestProviderInp
     let result = match &provider {
         ModelProviderSettings::OpenAiCompatible(provider) => probe_model_provider(provider).await,
         ModelProviderSettings::AgentSession(provider) => probe_agent_session(provider).await,
-        ModelProviderSettings::CloudAsr(provider) => crate::voice::cloud_asr::probe(provider).await,
+        ModelProviderSettings::CloudAsr(provider) => {
+            if provider.transport == "qwen-realtime" {
+                crate::voice::qwen_realtime_asr::probe(provider).await
+            } else {
+                crate::voice::cloud_asr::probe(provider).await
+            }
+        }
         ModelProviderSettings::CloudTts(provider) => crate::voice::cloud_tts::probe(provider).await,
         ModelProviderSettings::SystemTts(_) => Ok("System text-to-speech is available".to_string()),
         ModelProviderSettings::DynamicLan(provider) => {
@@ -127,6 +133,7 @@ mod tests {
                     model: "asr-model".into(),
                     language: "auto".into(),
                     authentication: "api-key".into(),
+                    transport: "http".into(),
                 }),
             },
         )

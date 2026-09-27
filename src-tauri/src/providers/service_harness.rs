@@ -332,6 +332,7 @@ async fn probe_claimed_provider(
                     model,
                     language: "auto".into(),
                     authentication: "api-key".into(),
+                    transport: "http".into(),
                 };
                 let samples: Vec<f32> = (0..1600)
                     .map(|index| {
