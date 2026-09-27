@@ -1,22 +1,11 @@
 # Runtime
 
-Owner: conversation/coding turn execution, cancellation, event delivery, and result adoption. Role Routing owns actor authorization; providers own transport.
+The legacy normal-conversation response orchestrator was removed for a clean rebuild. Its former turn, role handoff, Butler, Memory/World context, and voice response code is not a template for the replacement.
 
-Preserve:
-- Bind execution to the persisted input/run and Role Routing permit. Do not reselect an actor downstream.
-- Commit state before effects; reject cancelled, stale, or already-finalized results. Keep message persistence and adoption atomic.
-- UI delivery, provider completion, message commit, and speech completion are distinct stages.
-- Voice and text use the ordinary turn path. Do not restore LFM classification/delegation as a prerequisite for voice reasoning.
-- Keep required-context, scope, generation, and output-permission checks at dispatch and adoption boundaries.
+The remaining runtime modules support coding, capabilities, history, generic cancellation, and shared infrastructure. The generic `start_turn` conversation route remains unavailable. The conversation screen uses `conversation_check/queue_runtime.rs`: it persists user input and runs Ornith's tool loop. During a final `answer` action, SSE content deltas are projected into provisional UI text and sentence chunks for TTS. The final answer is validated and saved once generation completes; successful streamed audio is not replayed by the speech queue.
 
-Locate:
-- IPC/start/cancel: `start_turn.rs`, `turns.rs` and `turns.d/`; search `prepare_runtime_run` / `execute_turn`.
-- Conversation orchestration: `conversation_turn.rs`; provider execution: `conversation_provider_route.rs` and its `.d/`; SDK: `conversation_codex_dispatch.rs`.
-- Role permit: `conversation_inputs_roles.d/01.rs`; multi-step results: `conversation_role_steps.rs`, `role_step_sink.rs`, `../role_routing/repository_turns/`.
-- Context: `conversation_inputs.rs`, `conversation_context.rs`, `context/`; search `generation`, `scope`, `world` only as needed.
-- Final persistence: `../providers/session_store.rs`; delivery: `event_hub.rs`, `voice_response.rs`.
-- Tools: `agent_tools.rs`, `../providers/stream/agent_dispatch.rs`; web tools: `web_fetch/`.
-- Process lifecycle: `supervisor.rs`, `codex_supervise.rs`, `pi/`; recovery: `conversation_recovery.rs`.
-- Tests: `conversation_inputs_roles.d/02.rs`, adjacent tests, `pi/tests.rs`.
+For Ornith, `queue_context.rs` loads the bounded conversation and Personal State projection under the saved run scope. When `SAAA_MEMORY_ENABLED=1`, it also prepares a source-backed World frame. Both are untrusted evidence; only the saved current user message is the current instruction. The source projection and World dependencies are rechecked before accepting Ornith's result. The LARM `contextWindow` claim and the local provider budget bound every role request immediately before dispatch. Offered memory tools use the existing agent-tool dispatcher; public Web tools use the existing web-fetch host.
 
-Trace: runId -> input message -> role root/step -> provider session -> context generation -> accepted message -> speech delivery. A terminal UI event alone proves none of the preceding I/O.
+The old `.s11tnext/conversation-respond.txt` SystemContext belongs to the removed generic conversation executor. One conversation job now runs Ornith's reasoning, tool decisions, and final answer under one SystemContext. Tool results stay in evidence messages so they cannot become the current user instruction. Startup migrates unfinished legacy jobs into the conversation lane without starting the old model lanes.
+
+Design direction: [five-provider concept](../../../spec/docs/saaa-jarvis-five-provider-concept.md) and [runtime contract](../../../spec/docs/saaa-jarvis-five-provider-runtime-contract.md). These are target contracts, not claims that every behavior is implemented.

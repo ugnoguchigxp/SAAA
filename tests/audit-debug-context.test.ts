@@ -21,7 +21,7 @@ const failureEvent: AuditEvent = {
 };
 
 describe("audit debug context", () => {
-  test("formats bounded failure metadata for an LLM without inventing content", () => {
+  test("formats a persisted failure event without inventing content", () => {
     const context = buildAuditDebugContext(failureEvent);
 
     expect(context).toContain("saaa.audit-failure-debug.v1");
@@ -29,6 +29,6 @@ describe("audit debug context", () => {
     expect(context).toContain('"runtimeRunId": "run-1"');
     expect(context).toContain('"fallbackUsed": false');
     expect(context).toContain("Treat missing fields as unknown");
-    expect(context).toContain("message content, audio, and credentials are not included");
+    expect(context).toContain("Conversation audit events may include bounded text chunks");
   });
 });

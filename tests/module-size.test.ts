@@ -87,18 +87,14 @@ describe("module-size ratchet", () => {
     expect(walk(directory)).toEqual([source]);
   });
 
-  test("rejects non-frozen include!(….d/…) module splits", () => {
+  test("rejects include!(….d/…) module splits", () => {
     const path = "src-tauri/src/example_split.rs";
     const content = 'include!("example_split.d/01.rs");\n';
-    expect(isForbiddenIncludeDSplit(path, content, new Set())).toBe(true);
-    expect(isForbiddenIncludeDSplit(path, content, new Set([path]))).toBe(false);
-    expect(
-      isForbiddenIncludeDSplit(path, content, new Set(["src-tauri/src/example_split.d/01.rs"])),
-    ).toBe(false);
-    expect(isForbiddenIncludeDSplit("src-tauri/src/example_split.d/01.rs", content, new Set())).toBe(
+    expect(isForbiddenIncludeDSplit(path, content)).toBe(true);
+    expect(isForbiddenIncludeDSplit("src-tauri/src/example_split.d/01.rs", content)).toBe(
       false,
     );
-    expect(isForbiddenIncludeDSplit(path, "mod child;\n", new Set())).toBe(false);
+    expect(isForbiddenIncludeDSplit(path, "mod child;\n")).toBe(false);
     const baseline: BaselineFile = { generatedAt: "test", files: {} };
     expect(
       evaluate([{ path: "src-tauri/src/ok.rs", total: 1, production: 1 }], baseline, false).every(

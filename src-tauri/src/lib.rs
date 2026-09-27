@@ -1,7 +1,5 @@
 mod app_state;
 use app_state::{AppState, ProviderProbeStatus, RunCancellation};
-#[path = "providers/larm_voice/mod.rs"]
-mod larm_voice;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -43,9 +41,13 @@ pub mod runtime;
 mod schedule;
 mod situation;
 mod steward;
-#[cfg(test)]
+mod task_queue;
+mod tts_dictionary;
+#[cfg(feature = "conversation-queue-e2e")]
+pub mod conversation_queue_e2e;
+#[cfg(any(test, feature = "conversation-queue-e2e"))]
 mod test_state;
-#[cfg(test)]
+#[cfg(any(test, feature = "conversation-queue-e2e"))]
 mod test_support;
 pub mod tool_selection;
 mod util;
@@ -76,9 +78,9 @@ pub(crate) use runtime::turn_types::*;
 pub(crate) use runtime::turns::{execute_turn, send_runtime_terminal_event};
 pub(crate) use situation::spawn_situation_monitor;
 pub(crate) use util::{database_error, new_id, now_iso, validate_identifier};
-use voice::streaming_asr::{
-    append_voice_asr_audio, commit_voice_asr_utterance, start_voice_asr_session,
-    stop_voice_asr_session, AsrSessionManager,
+use voice::audio_backend::commands::{
+    audio_backend_status, interrupt_native_voice_playback, start_native_voice_capture,
+    stop_native_voice_capture,
 };
 use voice_behavior::{
     get_conversation_voice_policy, reset_conversation_voice_policy,
@@ -100,11 +102,14 @@ pub(crate) use window_shutdown_grace::{
     PRIMARY_CONVERSATION_ID, PRIMARY_CONVERSATION_TITLE,
 };
 
+pub fn run_vpio_probe() -> i32 {
+    voice::audio_backend::run_probe()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Snapshot the opt-in configuration once; failures are reported on use.
     let _ = providers::reasoning_mcp::configured("voice");
-    let _ = larm_voice::enabled();
     // WF-01: debug-only worker presentation. Release builds ignore the env
     // switch entirely; the plugin config validation rejects visible workers
     // outside `cfg(debug_assertions)`.
@@ -339,11 +344,10 @@ pub fn run() {
                 interaction_policy: Mutex::new(()),
                 shutdown_started: AtomicBool::new(false),
                 audio_uploads: voice::audio_upload::AudioUploadStore::default(),
-                streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
+                streaming_tts: voice::unavailable_speech::UnavailableSpeechRuntime,
                 voice_behavior: voice_behavior::VoiceBehaviorRuntime::default(),
                 situation,
                 voice_profile,
-                voice_asr: AsrSessionManager::default(),
                 generated_capabilities,
                 generation,
                 generated_tools,
@@ -351,6 +355,7 @@ pub fn run() {
                 mcp_server: Mutex::new(mcp_server),
                 schedule: Arc::new(schedule::Handle::default()),
                 steward_wake: steward::pump::Wake::default(),
+                conversation_queue_wake: std::sync::Arc::new(tokio::sync::Notify::new()),
                 artifact_preview,
                 reachability: std::sync::Arc::new(providers::reachability::ReachabilityState::default()),
                 reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -358,6 +363,9 @@ pub fn run() {
                 context_segments_enabled: app_state::context_segments_from_env(),
                 wire_prefixes: Mutex::new(std::collections::VecDeque::new()),
             });
+            // Startup diagnosis reads local state and the LARM catalog without
+            // allocating a Connection or blocking the window setup.
+            diagnosis::runner::spawn_startup(app.handle().clone());
             let recovery_now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_millis() as i64)
@@ -369,8 +377,13 @@ pub fn run() {
                         .map(|_| ())
                 })
                 .map_err(|error| format!("role-routing startup recovery: {error}"))?;
+            app.state::<AppState>().sqlite_writer.write(|connection| {
+                runtime::conversation_check::queue_runtime::migrate_legacy_jobs(connection)?;
+                task_queue::recover(connection,&["conversation"],&["speech"])
+            })
+                .map_err(|error| format!("conversation queue recovery: {error}"))?;
+            runtime::conversation_check::spawn_queue_workers(app.handle().clone());
             providers::reachability_watcher::spawn(&app.state::<AppState>());
-            diagnosis::runner::spawn_startup(app.handle().clone());
             adaptive_improvement::start_worker(
                 app.state::<AppState>().sqlite_writer.clone(),
                 app.state::<AppState>().data_directory.clone(),
@@ -423,7 +436,6 @@ pub fn run() {
         .run(|_, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 tauri::async_runtime::block_on(memory::personal_state::product_binding::shutdown());
-                tauri::async_runtime::block_on(larm_voice::shutdown());
             }
         });
 }

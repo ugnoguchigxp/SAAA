@@ -14,7 +14,7 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
             json!({
                 "harness": {
                     "address": format!("http://{}:9810", DEFAULT_DYNAMIC_LAN_HOST),
-                    "larmProfile": saaa_larm_session::DEFAULT_PROFILE
+                    "larmProfile": saaa_larm_session::DEFAULT_SELECTOR
                 },
                 "providers": [{
                     "kind": "dynamic-lan",
@@ -94,7 +94,11 @@ pub(crate) fn default_settings_documents() -> Vec<(&'static str, &'static str, i
                 "vadSensitivity": "medium",
                 "silenceTimeoutMs": 1500,
                 "allowedLanguages": [crate::voice::language::DEFAULT_LANGUAGE_CODE],
-                "autoSpeak": true
+                "autoSpeak": true,
+                "aecEnabled": true,
+                "otherAudioDucking": "min",
+                "vpioOnBluetooth": false,
+                "bargeInEnabled": true
             }),
         ),
         (

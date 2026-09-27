@@ -8,7 +8,7 @@ WebSocketの実装、専用状態管理、UI、依存ライブラリ、旧alloca
 
 ### 1. P1：LARMモードではASR・TTSの設定変更が実際の接続先に反映されない
 
-`SAAA_CONVERSATION_REASONING_MODE=larm` のとき、ASRは設定から選んだProviderをLARMセッションで上書きする。TTSも音声会話では選択済みProvider・タイムアウトを使わず、LARM・15秒へ固定する。接続先は設定画面のHarness addressとは別に、環境変数 `SAAA_LARM_CONTROL_URL` または `http://gnosis.local:9810` から取得される。モードはOnceLockに記憶される。
+`SAAA_CONVERSATION_REASONING_MODE=larm` のとき、ASRは設定から選んだProviderをLARMセッションで上書きする。TTSも音声会話では選択済みProvider・タイムアウトを使わず、LARM・15秒へ固定する。接続先は設定画面のHarness addressとは別に、環境変数 `SAAA_LARM_CONTROL_URL` または `http://192.168.0.130:9810` から取得される。モードはOnceLockに記憶される。
 
 この状態で設定画面からクラウドASRや別TTSに変更しても、LARMを使い続ける。接続障害を設定変更で回避できず、画面上の設定と実効経路が一致しない。
 
@@ -18,7 +18,7 @@ WebSocketの実装、専用状態管理、UI、依存ライブラリ、旧alloca
 
 ### 2. P1：四つのProviderが必須で、単一機能の障害を切り離せない
 
-LARMセッションの既定profileは `saaa-conversation-gemma4` で、`tts`、`asr`、`embedding`、`llm`をclaimする。allowFallbackはfalse、TTLは600秒に固定される。Chat Completions Providerはclaimの`contextWindow`、Embedding Providerは`embeddingSpace`とcapacityを検証する。個別用途では、claimに含まれた単一Providerだけでも有効な契約として扱える。
+LARMセッションの既定は selector `SAAA` で、`llm`、`backchannel`、`asr`、`tts`、`embedding` をclaimする。`SAAA-w-Image` と `SAAA-w-music` は保存値で指定したときだけ使い、旧 Profile ID は `SAAA` として読む。allowFallbackはfalse、TTLは600秒に固定される。Chat Completions Providerはclaimの`contextWindow`、Embedding Providerは`embeddingSpace`とcapacityを検証する。個別用途では、claimに含まれた単一Providerだけでも有効な契約として扱える。
 
 根拠：固定Provider集合と必須検証（`/Users/y.noguchi/Code/SAAA/crates/larm-session/src/contract.rs:6`）、固定profileと作成条件（`/Users/y.noguchi/Code/SAAA/crates/larm-session/src/lib.rs:104`）。
 
@@ -187,7 +187,7 @@ SAAAでの自動試験は模擬HTTPサーバーを使う。実LARM・クラウ�
 
 SAAAを開発しているMacから、保存済みHarness address `http://192.168.0.130:9810`へ通常Bearer認証でHTTP要求した。Profile・claim・Allocation headerは使用していない。認証情報は既存のLARM設定から読み取り、記録には含めていない。送信したのは検証用の短文と合成音声だけで、会話履歴や実マイク入力は使用していない。
 
-稼働releaseは`be5e86272165f4e13e69f4da204b1425486c6070`、検証時のLARM repository HEADは`631c15ad84eacb757770c92b21d647743cfeae6c`。異なるため、受領したsourceベースの報告と配備済み挙動を同一視できない。`gnosis.local`の名前解決は5秒でタイムアウトしたが、保存済みIPへの接続は成功した。配備・再起動・設定変更は実施していない。
+稼働releaseは`be5e86272165f4e13e69f4da204b1425486c6070`、検証時のLARM repository HEADは`631c15ad84eacb757770c92b21d647743cfeae6c`。異なるため、受領したsourceベースの報告と配備済み挙動を同一視できない。配備・再起動・設定変更は実施していない。
 
 | 検証 | 実測結果 |
 | --- | --- |

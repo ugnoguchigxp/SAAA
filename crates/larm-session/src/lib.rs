@@ -1,11 +1,16 @@
-//! One lease for the entire voice conversation. Read guards pin all four tokens;
+//! One lease for the entire voice conversation. Read guards pin all claimed tokens;
 //! renew/reclaim and release take the writer lock and cannot overtake inference.
+pub mod catalog;
 mod contract;
 mod error;
 mod http;
 pub mod http_api;
+use catalog::CatalogProfile;
 use contract::Snapshot;
-pub use contract::{local_url, Capacity, ContextWindow, EmbeddingSpace, Provider, DEFAULT_PROFILE};
+pub use contract::{
+    local_url, required_providers, Capacity, ContextWindow, EmbeddingSpace, Provider, BACKCHANNEL,
+    BASE_PROVIDERS, DEFAULT_SELECTOR, LEGACY_PROFILE_IDS,
+};
 pub use error::ConnectError;
 use serde_json::json;
 use std::{
@@ -17,14 +22,89 @@ use std::{
 };
 use tokio::sync::{watch, OwnedRwLockReadGuard, RwLock};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfilePreference {
+    Variant(ProfileVariant),
+    Explicit(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileVariant {
+    Conversation,
+    Image,
+    Music,
+}
+
+impl ProfileVariant {
+    pub const ALL: [Self; 3] = [Self::Conversation, Self::Image, Self::Music];
+    pub fn selector(self) -> &'static str {
+        match self {
+            Self::Conversation => DEFAULT_SELECTOR,
+            Self::Image => "SAAA-w-Image",
+            Self::Music => "SAAA-w-music",
+        }
+    }
+    pub fn from_selector(selector: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|variant| variant.selector() == selector)
+    }
+    fn services(self) -> &'static [&'static str] {
+        match self {
+            Self::Conversation => &[],
+            Self::Image => &["image"],
+            Self::Music => &["music"],
+        }
+    }
+}
+
+/// Credential-free view of a claimed provider for diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderSummary {
+    pub name: String,
+    pub model: String,
+    pub endpoint: String,
+    pub context_window: Option<ContextWindow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionPhase {
+    ModelPreparing,
+    CapacityWaiting,
+    SemanticProbing,
+    Ready,
+    IdleReleased,
+    Reconnecting,
+    TerminalFailure,
+}
+impl ConnectionPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ModelPreparing => "model_preparing",
+            Self::CapacityWaiting => "capacity_waiting",
+            Self::SemanticProbing => "semantic_probing",
+            Self::Ready => "ready",
+            Self::IdleReleased => "idle_released",
+            Self::Reconnecting => "reconnecting",
+            Self::TerminalFailure => "terminal_failure",
+        }
+    }
+}
+
 pub struct Session {
     client: reqwest::Client,
     control_token: zeroize::Zeroizing<String>,
     connection: url::Url,
     id: String,
+    profile: String,
+    catalog: Option<CatalogProfile>,
+    required: Vec<&'static str>,
+    created_models: std::collections::HashMap<String, String>,
     snapshot: Arc<RwLock<Option<Snapshot>>>,
     closed: AtomicBool,
     released: AtomicBool,
+    terminal_reason: std::sync::Mutex<Option<String>>,
+    phase: Option<watch::Sender<ConnectionPhase>>,
     stop: watch::Sender<bool>,
 }
 pub struct Use {
@@ -69,11 +149,28 @@ impl Use {
     }
 }
 impl Session {
+    /// Credential-free identifier for correlating connection lifecycle events.
+    pub fn connection_id(&self) -> &str {
+        &self.id
+    }
+
     pub async fn connect(
         base: &str,
         cancellation: watch::Receiver<bool>,
     ) -> Result<Arc<Self>, ConnectError> {
-        Self::connect_with_profile(base, DEFAULT_PROFILE, cancellation).await
+        #[cfg(not(test))]
+        let token = std::env::var("LARM_API_TOKEN")
+            .map_err(|_| ConnectError::from("credential_missing"))?;
+        #[cfg(test)]
+        let token = "test-control-token".to_string();
+        Self::connect_with_profile_credential_and_key(
+            base,
+            ProfilePreference::Variant(ProfileVariant::Conversation),
+            token,
+            format!("saaa-session-{}", uuid::Uuid::new_v4()),
+            cancellation,
+        )
+        .await
     }
     pub async fn connect_with_profile(
         base: &str,
@@ -95,7 +192,13 @@ impl Session {
     ) -> Result<Arc<Self>, ConnectError> {
         Self::connect_with_profile_credential_and_key(
             base,
-            profile,
+            if let Some(variant) = ProfileVariant::from_selector(profile) {
+                ProfilePreference::Variant(variant)
+            } else if LEGACY_PROFILE_IDS.contains(&profile) {
+                ProfilePreference::Variant(ProfileVariant::Conversation)
+            } else {
+                ProfilePreference::Explicit(profile.to_string())
+            },
             token,
             format!("saaa-session-{}", uuid::Uuid::new_v4()),
             cancellation,
@@ -104,10 +207,49 @@ impl Session {
     }
     pub async fn connect_with_profile_credential_and_key(
         base: &str,
-        profile: &str,
+        preference: ProfilePreference,
         token: String,
         idempotency_key: String,
         cancellation: watch::Receiver<bool>,
+    ) -> Result<Arc<Self>, ConnectError> {
+        Self::connect_with_profile_credential_key_and_phase(
+            base,
+            preference,
+            token,
+            idempotency_key,
+            cancellation,
+            None,
+        )
+        .await
+    }
+    pub async fn connect_with_profile_credential_key_and_phase(
+        base: &str,
+        preference: ProfilePreference,
+        token: String,
+        idempotency_key: String,
+        cancellation: watch::Receiver<bool>,
+        phase: Option<watch::Sender<ConnectionPhase>>,
+    ) -> Result<Arc<Self>, ConnectError> {
+        Self::connect_with_profile_credential_key_phase_and_providers(
+            base,
+            preference,
+            token,
+            idempotency_key,
+            cancellation,
+            phase,
+            None,
+        )
+        .await
+    }
+
+    pub async fn connect_with_profile_credential_key_phase_and_providers(
+        base: &str,
+        preference: ProfilePreference,
+        token: String,
+        idempotency_key: String,
+        cancellation: watch::Receiver<bool>,
+        phase: Option<watch::Sender<ConnectionPhase>>,
+        providers: Option<Vec<&'static str>>,
     ) -> Result<Arc<Self>, ConnectError> {
         if token.is_empty()
             || token.trim().is_empty()
@@ -116,7 +258,12 @@ impl Session {
         {
             return Err("credential_invalid".into());
         }
-        let profile = contract::profile_selector(profile)?;
+        if let ProfilePreference::Explicit(profile) = &preference {
+            validate_profile(profile)?;
+            if ProfileVariant::from_selector(profile).is_none() {
+                return Err("larm_unknown_selector".into());
+            }
+        }
         if idempotency_key.is_empty()
             || idempotency_key.len() > 160
             || !idempotency_key
@@ -125,18 +272,19 @@ impl Session {
         {
             return Err("larm_invalid_idempotency_key".into());
         }
-        let profile = profile.to_string();
         let base = base.to_string();
         let (alive, abandoned) = watch::channel(false);
         let (send, receive) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let result = Self::connect_inner(
                 &base,
-                &profile,
+                preference,
                 token,
                 idempotency_key,
                 cancellation,
                 abandoned,
+                phase,
+                providers,
             )
             .await;
             if let Err(result) = send.send(result) {
@@ -157,12 +305,17 @@ impl Session {
     }
     async fn connect_inner(
         base: &str,
-        profile: &str,
+        preference: ProfilePreference,
         token: String,
         idempotency_key: String,
         mut cancellation: watch::Receiver<bool>,
         mut abandoned: watch::Receiver<bool>,
+        phase: Option<watch::Sender<ConnectionPhase>>,
+        providers: Option<Vec<&'static str>>,
     ) -> Result<Arc<Self>, ConnectError> {
+        if let Some(phase) = &phase {
+            phase.send_replace(ConnectionPhase::ModelPreparing);
+        }
         let started = Instant::now();
         if *cancellation.borrow() {
             return Err("larm_cancelled".into());
@@ -171,7 +324,6 @@ impl Session {
         if !local_url(&base) || base.path() != "/" {
             return Err("larm_invalid_control_url".into());
         }
-        base.set_path("/v1/agent-connections");
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -179,21 +331,88 @@ impl Session {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|_| "larm_client_failed")?;
+        let required = match providers.as_ref() {
+            Some(names)
+                if !names.is_empty()
+                    && names
+                        .iter()
+                        .all(|name| contract::accepted_provider(name).is_some())
+                    && names.iter().collect::<std::collections::HashSet<_>>().len()
+                        == names.len() =>
+            {
+                names.clone()
+            }
+            Some(_) => return Err("larm_invalid_provider_subset".into()),
+            None => contract::required_providers(),
+        };
+        let (profile, catalog) = match &preference {
+            ProfilePreference::Explicit(profile) => (profile.clone(), None),
+            ProfilePreference::Variant(variant) => {
+                let profile = tokio::select! { biased;
+                    _ = cancelled(&mut cancellation) => return Err("larm_cancelled".into()),
+                    _ = cancelled(&mut abandoned) => return Err("larm_cancelled".into()),
+                    result = catalog::fetch(&client, &base, &token, variant.selector()) => result?,
+                };
+                let expected = variant.services();
+                if !required.iter().all(|name| profile.provider(name).is_some())
+                    || profile.services.len() != expected.len()
+                    || !expected
+                        .iter()
+                        .all(|name| profile.services.iter().any(|service| service.name == *name))
+                {
+                    return Err("larm_profile_unavailable".into());
+                }
+                (variant.selector().to_string(), Some(profile))
+            }
+        };
+        validate_profile(&profile)?;
+        base.set_path("/v1/agent-connections");
         // Do not race creation against cancellation: receive the id, then release it.
-        let created = http::json(
-            authorize(
-                client
-                    .post(base.clone())
-                    .header("Idempotency-Key", &idempotency_key)
-                    .json(&json!({"profile":profile,
-                "audience":"saaa-desktop","client":"saaa-coding-agent","ttlSeconds":600,
-                "allowFallback":false,"deploymentPolicy":"existing-only"})),
-                &token,
-            )?,
-            &[201, 202],
-        )
-        .await?;
-        let id = contract::string(&created, "id")?.to_string();
+        let mut body = json!({"profile":profile,
+            "audience":"saaa-desktop","client":"saaa-desktop","ttlSeconds":900,
+            "allowFallback":false,"deploymentPolicy":"existing-only"});
+        if providers.is_some() {
+            body["providers"] = json!(required);
+        }
+        if let Some(catalog) = &catalog {
+            body["expectedCatalogRevision"] = json!(catalog.revision);
+        }
+        let create = client
+            .post(base.clone())
+            .timeout(Duration::from_secs(10))
+            .header("Idempotency-Key", &idempotency_key)
+            .header("Prefer", "wait=1")
+            .json(&body);
+        let create = authorize(create, &token)?;
+        let retry_create = create.try_clone().ok_or("larm_client_failed")?;
+        let (create_status, mut created, location, initial_retry_after) =
+            match http::json_response(create, &[201, 202]).await {
+                Err("larm_transport_failed") => {
+                    http::json_response(retry_create, &[201, 202]).await?
+                }
+                result => result?,
+            };
+        let location_id = location.as_deref().and_then(|location| {
+            let resource = base.join(location).ok()?;
+            if resource.origin() != base.origin()
+                || resource.query().is_some()
+                || resource.fragment().is_some()
+            {
+                return None;
+            }
+            let prefix = "/v1/agent-connections/";
+            resource
+                .path()
+                .strip_prefix(prefix)
+                .filter(|segment| !segment.contains('/'))
+                .map(str::to_string)
+        });
+        let id = created["id"]
+            .as_str()
+            .map(str::to_string)
+            .or(location_id)
+            .ok_or("larm_invalid_connection_id")?;
+        created["id"] = json!(&id);
         if id.len() > 160
             || !id
                 .bytes()
@@ -204,37 +423,109 @@ impl Session {
         base.path_segments_mut()
             .map_err(|_| "larm_invalid_control_url")?
             .push(&id);
+        let create_contract_invalid = (create_status == 201 && created["status"] != "ready")
+            || (create_status == 202
+                && !matches!(
+                    created["status"].as_str(),
+                    Some("pending" | "deploying" | "probing")
+                ))
+            || (create_status == 202
+                && location.as_deref().is_some_and(|location| {
+                    let mut root = base.clone();
+                    root.set_path("/");
+                    root.join(location).ok().as_ref() != Some(&base)
+                }));
         let (stop, _) = watch::channel(false);
+        let created_models = created["providers"]
+            .as_array()
+            .map(|providers| {
+                providers
+                    .iter()
+                    .filter_map(|provider| {
+                        Some((
+                            provider["name"].as_str()?.to_string(),
+                            provider["model"].as_str()?.to_string(),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let session = Arc::new(Self {
             client,
             control_token: zeroize::Zeroizing::new(token),
             connection: base,
             id: id.clone(),
+            profile: created["agentProfile"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            catalog,
+            required: required.clone(),
+            created_models,
             snapshot: Arc::new(RwLock::new(None)),
             closed: AtomicBool::new(false),
             released: AtomicBool::new(false),
+            terminal_reason: std::sync::Mutex::new(None),
+            phase,
             stop,
         });
         let startup = async {
             let mut state = created;
+            session.report_phase(&state);
+            let mut retry_after = initial_retry_after.unwrap_or(Duration::from_secs(1));
+            if create_contract_invalid {
+                return Err("larm_invalid_contract");
+            }
+            contract::validate_created(&state, &profile, &required, session.catalog.as_ref())?;
             loop {
                 match state["status"].as_str() {
-                    Some("ready") => break,
-                    Some("pending" | "probing") => {}
-                    _ => return Err("larm_startup_terminal"),
+                    Some("ready") => {
+                        contract::validate_created(
+                            &state,
+                            &profile,
+                            &required,
+                            session.catalog.as_ref(),
+                        )?;
+                        break;
+                    }
+                    Some("pending" | "deploying" | "probing") => {}
+                    _ => {
+                        *session
+                            .terminal_reason
+                            .lock()
+                            .expect("terminal reason lock") = safe_terminal_reason(&state);
+                        return Err("larm_startup_terminal");
+                    }
                 }
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                state = http::json(
+                tokio::time::sleep(retry_after).await;
+                let (_, next, _, next_retry_after) = http::json_response(
                     session.authorize(session.client.get(session.connection.clone()))?,
                     &[200],
                 )
                 .await?;
+                state = next;
+                session.report_phase(&state);
+                retry_after = next_retry_after.unwrap_or(Duration::from_secs(1));
                 if state["id"] != id {
                     return Err("larm_connection_mismatch");
                 }
+                if matches!(
+                    state["status"].as_str(),
+                    Some("failed" | "released" | "expired")
+                ) {
+                    *session
+                        .terminal_reason
+                        .lock()
+                        .expect("terminal reason lock") = safe_terminal_reason(&state);
+                    return Err("larm_startup_terminal");
+                }
+                contract::validate_created(&state, &profile, &required, session.catalog.as_ref())?;
             }
             let snapshot = session.claim().await?;
             *session.snapshot.write().await = Some(snapshot);
+            if let Some(phase) = &session.phase {
+                phase.send_replace(ConnectionPhase::Ready);
+            }
             Ok(())
         };
         let result = tokio::select! { biased;
@@ -243,10 +534,23 @@ impl Session {
             result = tokio::time::timeout(Duration::from_secs(300).saturating_sub(started.elapsed()), startup) => result.unwrap_or(Err("larm_startup_timeout")),
         };
         if let Err(error) = result {
+            if let Some(phase) = &session.phase {
+                phase.send_replace(ConnectionPhase::TerminalFailure);
+            }
+            let reason = session
+                .terminal_reason
+                .lock()
+                .expect("terminal reason lock")
+                .clone();
             return match session.close().await {
-                Ok(()) => Err(error.into()),
+                Ok(()) => Err(ConnectError {
+                    code: error,
+                    reason,
+                    cleanup: None,
+                }),
                 Err(_) => Err(ConnectError {
                     code: error,
+                    reason,
                     cleanup: Some(session),
                 }),
             };
@@ -275,6 +579,25 @@ impl Session {
         url.path_segments_mut().expect("validated base").push(name);
         url
     }
+    fn report_phase(&self, state: &serde_json::Value) {
+        let Some(phase) = &self.phase else { return };
+        let next = match state["status"].as_str() {
+            Some("ready") => ConnectionPhase::SemanticProbing,
+            Some("probing") => ConnectionPhase::SemanticProbing,
+            Some("released" | "expired") => ConnectionPhase::IdleReleased,
+            Some("failed") => ConnectionPhase::TerminalFailure,
+            _ if state["reason"]
+                .as_str()
+                .or_else(|| state["pendingReason"].as_str())
+                .or_else(|| state["error"]["code"].as_str())
+                .is_some_and(|value| value.contains("capacity")) =>
+            {
+                ConnectionPhase::CapacityWaiting
+            }
+            _ => ConnectionPhase::ModelPreparing,
+        };
+        phase.send_replace(next);
+    }
     fn authorize(
         &self,
         call: reqwest::RequestBuilder,
@@ -282,20 +605,167 @@ impl Session {
         authorize(call, self.control_token.as_str())
     }
     async fn claim(&self) -> Result<Snapshot, &'static str> {
+        let format = if self.required.len() == 1 && self.required[0] == "embedding" {
+            "larm-embedding-provider-v1"
+        } else {
+            "openai-provider-v1"
+        };
         let value = http::json(
             self.authorize(
                 self.client
                     .post(self.operation("claim"))
-                    .json(&json!({"format":"openai-provider-v1"})),
+                    .json(&json!({"format":format})),
             )?,
             &[200],
         )
         .await?;
-        let snapshot = contract::parse(value, &self.id)?;
-        for (name, _) in contract::PROVIDERS {
-            self.health(&snapshot.providers[name]).await?;
+        let snapshot = contract::parse(value, &self.id, &self.required)?;
+        if snapshot
+            .providers
+            .iter()
+            .any(|(name, provider)| self.created_models.get(name) != Some(&provider.model))
+        {
+            return Err("larm_create_claim_mismatch");
+        }
+        if let Some(catalog) = &self.catalog {
+            contract::verify_against_catalog(&snapshot, catalog)?;
+        }
+        for provider in snapshot.providers.values() {
+            self.health(provider).await?;
         }
         Ok(snapshot)
+    }
+    pub fn profile_id(&self) -> &str {
+        &self.profile
+    }
+    pub fn selector(&self) -> Option<&str> {
+        self.catalog
+            .as_ref()
+            .map(|catalog| catalog.selector.as_str())
+    }
+    pub fn catalog_revision(&self) -> Option<&str> {
+        self.catalog
+            .as_ref()
+            .map(|catalog| catalog.revision.as_str())
+    }
+    pub async fn provider_summary(&self) -> Vec<ProviderSummary> {
+        let endpoints = self
+            .catalog
+            .as_ref()
+            .map(|catalog| {
+                catalog
+                    .providers
+                    .iter()
+                    .map(|provider| (provider.name.clone(), provider.endpoint.clone()))
+                    .collect::<std::collections::HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        let mut summary = self
+            .snapshot
+            .read()
+            .await
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .providers
+                    .iter()
+                    .map(|(name, provider)| ProviderSummary {
+                        name: name.clone(),
+                        model: provider.model.clone(),
+                        endpoint: endpoints.get(name).cloned().unwrap_or_default(),
+                        context_window: provider.context_window,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        summary.sort_by(|left, right| left.name.cmp(&right.name));
+        summary
+    }
+    pub async fn provider_names(&self) -> Vec<String> {
+        self.snapshot
+            .read()
+            .await
+            .as_ref()
+            .map(|snapshot| snapshot.providers.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+    pub async fn has_provider(&self, name: &str) -> bool {
+        self.snapshot
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.providers.contains_key(name))
+    }
+
+    /// Check the control plane before a new foreground operation. A released
+    /// connection must lose all locally cached provider credentials at once.
+    pub async fn check_status(&self) -> Result<(), &'static str> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err("larm_session_closed");
+        }
+        let state = http::json(
+            self.authorize(self.client.get(self.connection.clone()))?,
+            &[200],
+        )
+        .await;
+        let state = match state {
+            Ok(state) => state,
+            Err("larm_connection_idle_released") => {
+                self.invalidate_idle_release().await;
+                return Err("larm_connection_idle_released");
+            }
+            Err(error) => return Err(error),
+        };
+        if state["id"] != self.id {
+            return Err("larm_connection_mismatch");
+        }
+        if state["status"] == "ready" {
+            let selector = state["profile"].as_str().ok_or("larm_invalid_contract")?;
+            if let Err(error) =
+                contract::validate_created(&state, selector, &self.required, self.catalog.as_ref())
+            {
+                self.closed.store(true, Ordering::Release);
+                *self.snapshot.write().await = None;
+                if let Some(phase) = &self.phase {
+                    phase.send_replace(ConnectionPhase::ModelPreparing);
+                }
+                return Err(error);
+            }
+            return Ok(());
+        }
+        let reason = state["reason"]
+            .as_str()
+            .or_else(|| state["error"]["code"].as_str());
+        let code = if reason == Some("foreground_idle_timeout") {
+            "larm_connection_idle_released"
+        } else {
+            match state["status"].as_str() {
+                Some("released") => "larm_connection_idle_released",
+                Some("expired") => "larm_expired",
+                Some("failed") => "larm_startup_terminal",
+                _ => "larm_session_unavailable",
+            }
+        };
+        if matches!(
+            state["status"].as_str(),
+            Some("released" | "expired" | "failed")
+        ) || reason == Some("foreground_idle_timeout")
+        {
+            if let Some(phase) = &self.phase {
+                phase.send_replace(ConnectionPhase::IdleReleased);
+            }
+            self.closed.store(true, Ordering::Release);
+            *self.snapshot.write().await = None;
+        }
+        Err(code)
+    }
+
+    pub async fn invalidate_idle_release(&self) {
+        if let Some(phase) = &self.phase {
+            phase.send_replace(ConnectionPhase::IdleReleased);
+        }
+        self.closed.store(true, Ordering::Release);
+        *self.snapshot.write().await = None;
     }
 
     pub async fn embed_query(
@@ -458,35 +928,6 @@ impl Session {
             _capacity_permit: permit,
         })
     }
-    /// Read the connection resource before reusing a long-lived desktop session.
-    /// A terminal status means LARM has released the provider bundle (for example,
-    /// after its foreground-idle deadline) and the owner must create a new session.
-    pub async fn ensure_active(&self) -> Result<bool, &'static str> {
-        if self.closed.load(Ordering::Acquire) {
-            return Ok(false);
-        }
-        let value = http::json(
-            self.authorize(
-                self.client
-                    .get(self.connection.clone())
-                    .timeout(Duration::from_secs(5)),
-            )?,
-            &[200],
-        )
-        .await?;
-        if value["id"] != self.id {
-            return Err("larm_connection_mismatch");
-        }
-        let active = matches!(
-            value["status"].as_str(),
-            Some("ready" | "pending" | "probing")
-        );
-        if !active {
-            self.closed.store(true, Ordering::Release);
-            self.stop.send_replace(true);
-        }
-        Ok(active)
-    }
     pub async fn renew_if_due(self: &Arc<Self>) -> Result<(), &'static str> {
         let due =
             self.snapshot.read().await.as_ref().is_some_and(|s| {
@@ -592,6 +1033,19 @@ impl Session {
         Ok(())
     }
 }
+fn safe_terminal_reason(state: &serde_json::Value) -> Option<String> {
+    state["reason"]
+        .as_str()
+        .or_else(|| state["error"]["code"].as_str())
+        .filter(|reason| {
+            !reason.is_empty()
+                && reason.len() <= 128
+                && reason
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+        .map(str::to_string)
+}
 async fn cancelled(receiver: &mut watch::Receiver<bool>) {
     while !*receiver.borrow_and_update() {
         if receiver.changed().await.is_err() {
@@ -599,7 +1053,18 @@ async fn cancelled(receiver: &mut watch::Receiver<bool>) {
         }
     }
 }
-fn authorize(
+fn validate_profile(profile: &str) -> Result<(), &'static str> {
+    if profile.is_empty()
+        || profile.len() > 160
+        || !profile
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    {
+        return Err("larm_invalid_profile");
+    }
+    Ok(())
+}
+pub(crate) fn authorize(
     call: reqwest::RequestBuilder,
     token: &str,
 ) -> Result<reqwest::RequestBuilder, &'static str> {

@@ -183,9 +183,11 @@ export function ProviderCard({
           >
             {t("settings.providers.testConnection")}
           </button>
-          {removable && <button className="text-button danger" type="button" onClick={onRemove}>
-            {t("settings.providers.removeProvider")}
-          </button>}
+          {removable && (
+            <button className="text-button danger" type="button" onClick={onRemove}>
+              {t("settings.providers.removeProvider")}
+            </button>
+          )}
         </div>
       </div>
     </section>
@@ -364,6 +366,20 @@ function AsrFields({
   return (
     <div className="settings-form-grid">
       <CommonCloudFields provider={provider} onChange={onChange} />
+      <Field label={t("settings.providers.asrTransport")}>
+        <select
+          value={provider.transport ?? "http"}
+          onChange={(event) =>
+            onChange({ ...provider, transport: event.target.value as "http" | "qwen-realtime" })
+          }
+        >
+          <option value="http">{t("settings.providers.asrHttp")}</option>
+          <option value="qwen-realtime">{t("settings.providers.asrQwenRealtime")}</option>
+        </select>
+      </Field>
+      {provider.transport === "qwen-realtime" && (
+        <p className="settings-help">{t("settings.providers.asrQwenHelp")}</p>
+      )}
       <Field label={t("settings.providers.language")}>
         <select value={provider.language} disabled>
           <option value="auto">{t("settings.providers.autoDetect")}</option>
@@ -393,10 +409,7 @@ function TtsFields({
           />
         </Field>
       )}
-      <TtsVoiceControls
-        provider={provider}
-        onChange={(next) => onChange(next)}
-      />
+      <TtsVoiceControls provider={provider} onChange={(next) => onChange(next)} />
       <Field label={t("settings.providers.audioFormat")}>
         <select
           value={provider.responseFormat ?? "wav"}

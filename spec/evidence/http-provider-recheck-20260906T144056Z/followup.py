@@ -1,9 +1,10 @@
+import os
 from pathlib import Path
 source = Path(__file__).with_name("diagnose.py").read_text()
 exec(source.split('health = request("health-before"')[0])
 OUT = Path(__file__).with_name("followup.json")
 remote = "python3 -c " + shlex.quote("import pathlib,shlex; lines=pathlib.Path('/etc/larm/larm.env').read_text().splitlines(); print(next(shlex.split(l.split('=',1)[1])[0] for l in lines if l.startswith('LARM_API_TOKEN=')))")
-token = subprocess.check_output(["ssh", "-o", "BatchMode=yes", "gnosis", remote], timeout=10).decode().strip()
+token = subprocess.check_output(["ssh", "-o", "BatchMode=yes", "-i", os.path.expanduser("~/.ssh/ai395.pem"), "ugnoguchi@192.168.0.130", remote], timeout=10).decode().strip()
 request("health-before-followup", "/health")
 chat = {"model":"coding-default","messages":[{"role":"user","content":"Reply with OK."}],"max_tokens":64,"stream":False}
 request("json-reproduction-once", "/v1/chat/completions", json.dumps(chat).encode(), token)

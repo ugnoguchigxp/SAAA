@@ -42,7 +42,7 @@ pub(crate) fn app_state_with_capabilities(
         interaction_policy: Mutex::new(()),
         shutdown_started: AtomicBool::new(false),
         audio_uploads: voice::audio_upload::AudioUploadStore::default(),
-        streaming_tts: voice::streaming_tts::runtime::StreamingSpeechRuntime::default(),
+        streaming_tts: voice::unavailable_speech::UnavailableSpeechRuntime,
         voice_behavior: crate::voice_behavior::VoiceBehaviorRuntime::default(),
         situation: Arc::new(
             situation::SituationRuntime::new(settings, None)
@@ -51,7 +51,6 @@ pub(crate) fn app_state_with_capabilities(
         voice_profile: Arc::new(voice::profile::VoiceProfileRuntime::unavailable_for_tests(
             PathBuf::new(),
         )),
-        voice_asr: voice::streaming_asr::AsrSessionManager::default(),
         generated_capabilities,
         generation: None,
         generated_tools: GeneratedToolsConfig::disabled(),
@@ -59,6 +58,7 @@ pub(crate) fn app_state_with_capabilities(
         mcp_server: std::sync::Mutex::new(None),
         schedule: Arc::new(crate::schedule::Handle::default()),
         steward_wake: crate::steward::pump::Wake::default(),
+        conversation_queue_wake: std::sync::Arc::new(tokio::sync::Notify::new()),
         artifact_preview: crate::artifact_preview::PreviewRuntime::default(),
         reachability: std::sync::Arc::new(
             crate::providers::reachability::ReachabilityState::default(),

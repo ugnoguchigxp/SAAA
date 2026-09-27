@@ -58,6 +58,46 @@ pub(super) fn write_document(
     )?;
     Ok(())
 }
+
+#[cfg(test)]
+mod single_llm_migration_tests {
+    use super::*;
+
+    #[test]
+    fn only_shipped_frontdesk_configuration_is_converted() {
+        let original = json!({"roles":{"frontend":"larm-frontdesk","reasoner":"larm-reasoner"},
+            "actors":[{"id":"larm-frontdesk","providerId":DYNAMIC_LAN_PROVIDER_ID,"larmProvider":"backchannel","transport":"provider","model":null,"aliases":[],"location":"local","maxInputBytes":16000,"label":"LARM 受付（backchannel）","resourceGroup":"larm-backchannel","capabilities":["social_reply"]},
+                      {"id":"larm-reasoner","providerId":DYNAMIC_LAN_PROVIDER_ID,"larmProvider":"llm","transport":"provider","model":null,"aliases":[],"location":"local","maxInputBytes":65536,"label":"LARM 思考（llm）","resourceGroup":"larm-llm","capabilities":["reason","tools"]}],
+            "recipes":[{"id":"00-butler-respond","roles":["frontend","reasoner"],"action":"respond","enabled":true}],
+            "limits":{"maxToolCalls":12}});
+        let mut shipped = original.clone();
+        migrate_shipped_ornith_frontdesk(&mut shipped);
+        assert!(shipped["roles"]["frontend"].is_null());
+        assert_eq!(shipped["actors"].as_array().unwrap().len(), 1);
+        assert_eq!(shipped["recipes"][0]["roles"], json!(["reasoner"]));
+        assert_eq!(shipped["limits"], original["limits"]);
+
+        let mut extended = original.clone();
+        extended["actors"].as_array_mut().unwrap().push(json!({"id":"custom"}));
+        extended["recipes"].as_array_mut().unwrap().push(json!({"id":"custom","roles":["reasoner"]}));
+        migrate_shipped_ornith_frontdesk(&mut extended);
+        assert!(extended["roles"]["frontend"].is_null());
+        assert_eq!(extended["actors"].as_array().unwrap().len(), 2);
+        assert_eq!(extended["recipes"][1]["roles"], json!(["reasoner"]));
+
+        let mut customized = original.clone();
+        customized["recipes"][0]["roles"] = json!(["reasoner"]);
+        let before = customized.clone();
+        migrate_shipped_ornith_frontdesk(&mut customized);
+        assert_eq!(customized, before);
+
+        let mut referenced = original.clone();
+        referenced["recipes"].as_array_mut().unwrap().push(json!({"id":"custom","roles":["frontend"]}));
+        let before = referenced.clone();
+        migrate_shipped_ornith_frontdesk(&mut referenced);
+        assert_eq!(referenced, before);
+    }
+}
 pub(super) fn dynamic_lan_host(providers: &[Value]) -> &str {
     providers
         .iter()
@@ -244,7 +284,11 @@ pub(crate) fn migrated_voice_document(value: &Value, require_fresh_consent: bool
         "vadSensitivity": value.get("vadSensitivity").and_then(Value::as_str).unwrap_or("medium"),
         "silenceTimeoutMs": value.get("silenceTimeoutMs").and_then(Value::as_u64).unwrap_or(1500),
         "allowedLanguages": value.get("allowedLanguages").cloned().unwrap_or_else(|| json!([crate::voice::language::DEFAULT_LANGUAGE_CODE])),
-        "autoSpeak": value.get("autoSpeak").and_then(Value::as_bool).unwrap_or(true)
+        "autoSpeak": value.get("autoSpeak").and_then(Value::as_bool).unwrap_or(true),
+        "aecEnabled": value.get("aecEnabled").and_then(Value::as_bool).unwrap_or(true),
+        "otherAudioDucking": value.get("otherAudioDucking").and_then(Value::as_str).unwrap_or("min"),
+        "vpioOnBluetooth": value.get("vpioOnBluetooth").and_then(Value::as_bool).unwrap_or(false),
+        "bargeInEnabled": value.get("bargeInEnabled").and_then(Value::as_bool).unwrap_or(true)
     })
 }
 pub(crate) fn migrate_security_document(value: &mut Value) {
@@ -300,6 +344,57 @@ pub(super) fn retarget_direct_qwen_actors(roles: &mut Value) {
     for actor in actors {
         if actor.get("providerId").and_then(Value::as_str) == Some(crate::QWEN_DIRECT_PROVIDER_ID) {
             actor["providerId"] = json!(DYNAMIC_LAN_PROVIDER_ID);
+        }
+    }
+}
+
+/// Convert the shipped conversation binding while preserving unrelated custom actors and recipes.
+pub(super) fn migrate_shipped_ornith_frontdesk(roles: &mut Value) {
+    if roles["roles"]["frontend"] != "larm-frontdesk"
+        || roles["roles"]["reasoner"] != "larm-reasoner"
+    {
+        return;
+    }
+    let Some(actors) = roles["actors"].as_array() else { return };
+    let Some(recipes) = roles["recipes"].as_array() else { return };
+    if !actors.iter().any(|actor| actor["id"] == "larm-frontdesk"
+            && actor["larmProvider"] == "backchannel"
+            && actor["providerId"] == DYNAMIC_LAN_PROVIDER_ID
+            && actor["transport"] == "provider"
+            && actor["model"].is_null()
+            && actor["aliases"] == json!([])
+            && actor["location"] == "local"
+            && actor["maxInputBytes"] == 16_000
+            && actor["label"] == "LARM 受付（backchannel）"
+            && actor["resourceGroup"] == "larm-backchannel"
+            && actor["capabilities"] == json!(["social_reply"]))
+        || !actors.iter().any(|actor| actor["id"] == "larm-reasoner"
+            && actor["larmProvider"] == "llm"
+            && actor["providerId"] == DYNAMIC_LAN_PROVIDER_ID
+            && actor["transport"] == "provider"
+            && actor["model"].is_null()
+            && actor["aliases"] == json!([])
+            && actor["location"] == "local"
+            && actor["maxInputBytes"] == 65_536
+            && actor["label"] == "LARM 思考（llm）"
+            && actor["resourceGroup"] == "larm-llm"
+            && actor["capabilities"] == json!(["reason", "tools"]))
+        || !recipes.iter().any(|recipe| recipe["id"] == "00-butler-respond"
+            && recipe["roles"] == json!(["frontend", "reasoner"])
+            && recipe["action"] == "respond"
+            && recipe["enabled"] == true)
+        || recipes.iter().any(|recipe| recipe["id"] != "00-butler-respond"
+            && recipe["roles"].as_array().is_some_and(|roles| roles.iter().any(|role| role == "frontend")))
+        || ["advanced", "reviewer", "premium", "toolSpecialist"]
+            .iter().any(|role| roles["roles"][role] == "larm-frontdesk")
+    {
+        return;
+    }
+    roles["actors"].as_array_mut().unwrap().retain(|actor| actor["id"] != "larm-frontdesk");
+    roles["roles"]["frontend"] = Value::Null;
+    for recipe in roles["recipes"].as_array_mut().unwrap() {
+        if recipe["id"] == "00-butler-respond" {
+            recipe["roles"] = json!(["reasoner"]);
         }
     }
 }
@@ -378,6 +473,7 @@ pub(crate) fn migrate_settings_to_current(connection: &Connection) -> rusqlite::
     if let Some(mut roles) = read_document(connection, "routing.roles", "default")? {
         let before = roles.value.clone();
         retarget_direct_qwen_actors(&mut roles.value);
+        migrate_shipped_ornith_frontdesk(&mut roles.value);
         if roles.value != before {
             write_document(connection, "routing.roles", "default", &roles.value)?;
         }

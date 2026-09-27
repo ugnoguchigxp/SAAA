@@ -83,7 +83,10 @@ impl ProviderInputBudget {
             let removable = base
                 .messages
                 .iter()
-                .position(|message| message.role == "assistant")
+                .position(|message| {
+                    message.role == "assistant"
+                        || message.role == crate::memory::context_window::EVIDENCE_ROLE
+                })
                 .or_else(|| {
                     base.messages
                         .iter()
@@ -285,11 +288,10 @@ fn reserve_required_budget(
     }
     while base.health.projected_bytes.saturating_add(required_bytes) > base.health.hard_limit_bytes
     {
-        let Some(index) = base
-            .messages
-            .iter()
-            .position(|message| message.role == "assistant")
-        else {
+        let Some(index) = base.messages.iter().position(|message| {
+            message.role == "assistant"
+                || message.role == crate::memory::context_window::EVIDENCE_ROLE
+        }) else {
             return Err("required_context_overflow: required context cannot fit with current input and policy".into());
         };
         let removed = base.messages.remove(index);

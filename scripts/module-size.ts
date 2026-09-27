@@ -165,46 +165,22 @@ function hardLimit(record: SizeRecord): number | undefined {
   return undefined;
 }
 
-function frozenSourcePaths(): Set<string> {
-  const freezePath = join(ROOT, "critical-path-freeze.json");
-  if (!existsSync(freezePath)) return new Set();
-  const freeze = JSON.parse(readFileSync(freezePath, "utf8")) as {
-    domains?: Record<string, { files?: Record<string, unknown> }>;
-  };
-  const paths = new Set<string>();
-  for (const domain of Object.values(freeze.domains ?? {})) {
-    for (const path of Object.keys(domain.files ?? {})) paths.add(path);
-  }
-  return paths;
-}
-
 const INCLUDE_D_PATTERN = /include!\s*\(\s*"[^"]*\.d\//;
 
-export function isForbiddenIncludeDSplit(path: string, content: string, frozen: Set<string>): boolean {
-  if (!path.endsWith(".rs") || frozen.has(path) || path.includes(".d/")) return false;
-  const directory = path.slice(0, path.lastIndexOf("/"));
-  for (const match of content.matchAll(/include!\s*\(\s*"([^"]*\.d\/[^"]+)"\s*\)/g)) {
-    const included = `${directory}/${match[1]}`;
-    if (!frozen.has(included)) return true;
-  }
-  return false;
+export function isForbiddenIncludeDSplit(path: string, content: string): boolean {
+  return path.endsWith(".rs") && !path.includes(".d/") && INCLUDE_D_PATTERN.test(content);
 }
 
-/** Non-frozen Rust sources must not keep include!("….d/…") module splits. */
-export function findForbiddenIncludeDSplits(
-  records: SizeRecord[] = collectSizes(),
-  frozen: Set<string> = frozenSourcePaths(),
-): string[] {
+/** Rust sources must use real submodules instead of include!("….d/…") splits. */
+export function findForbiddenIncludeDSplits(records: SizeRecord[] = collectSizes()): string[] {
   const failures: string[] = [];
   for (const record of records) {
     if (!record.path.endsWith(".rs")) continue;
     const absolute = join(ROOT, record.path);
     if (!existsSync(absolute)) continue;
     const content = readFileSync(absolute, "utf8");
-    if (isForbiddenIncludeDSplit(record.path, content, frozen)) {
-      failures.push(
-        `${record.path}: forbidden include!("….d/…") split; convert to a real submodule (frozen paths exempt)`,
-      );
+    if (isForbiddenIncludeDSplit(record.path, content)) {
+      failures.push(`${record.path}: forbidden include!("….d/…") split; convert to a real submodule`);
     }
   }
   return failures;

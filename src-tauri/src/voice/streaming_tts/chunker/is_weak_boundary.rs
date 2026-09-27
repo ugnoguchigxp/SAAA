@@ -136,10 +136,15 @@ mod tests {
 
     #[test]
     fn forced_split_never_cuts_ascii_words() {
-        let input = format!("{}。", "longword".repeat(40));
+        let input = format!("{}。", ["longword"; 40].join(" "));
         let mut accumulator = completed(&input);
-        let chunk = accumulator.next_chunk(SelectReason::Completion).unwrap();
-        assert_eq!(chunk.spoken, input);
+        let mut raw = String::new();
+        while let Some(chunk) = accumulator.next_chunk(SelectReason::Completion) {
+            assert!(chunk.raw.ends_with(' ') || chunk.raw.ends_with('。'));
+            assert!(chunk.spoken.graphemes(true).count() <= HARD_MAX);
+            raw.push_str(&chunk.raw);
+        }
+        assert_eq!(raw, input);
     }
 
     #[test]

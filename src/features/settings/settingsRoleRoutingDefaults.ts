@@ -3,17 +3,38 @@ import type { RoleRoutingSettings } from "../../lib/roleRoutingTypes";
 export function defaultRoleRoutingSettings(): RoleRoutingSettings {
   return {
     schemaVersion: 1,
-    enabled: false,
-    actors: [],
+    enabled: true,
+    actors: [
+      {
+        id: "larm-reasoner",
+        label: "LARM 思考（llm）",
+        aliases: [],
+        transport: "provider",
+        providerId: "lan-llm-dynamic",
+        model: null,
+        location: "local",
+        resourceGroup: "larm-llm",
+        maxInputBytes: 65536,
+        larmProvider: "llm",
+        capabilities: ["reason", "tools"],
+      },
+    ],
     roles: {
       frontend: null,
-      reasoner: null,
+      reasoner: "larm-reasoner",
       advanced: null,
       reviewer: null,
       premium: null,
       toolSpecialist: null,
     },
-    recipes: [],
+    recipes: [
+      {
+        id: "00-butler-respond",
+        action: "respond",
+        roles: ["reasoner"],
+        enabled: true,
+      },
+    ],
     limits: {
       maxReasoningSteps: 4,
       maxToolCalls: 32,

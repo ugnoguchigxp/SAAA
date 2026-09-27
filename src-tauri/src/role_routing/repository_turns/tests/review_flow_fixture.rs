@@ -180,6 +180,7 @@ pub(super) fn rr_26_unresolved_review_proposes_and_consumes_premium_once() {
         location: "cloud".into(),
         resource_group: "cloud".into(),
         max_input_bytes: 4096,
+        larm_provider: None,
         capabilities: vec!["reason".into()],
     });
     policy.roles.premium = Some("astra".into());
@@ -297,6 +298,7 @@ pub(super) fn rr_39_host_receipt_p95_is_under_fifty_milliseconds() {
         location: "local".into(),
         resource_group: "gpu".into(),
         max_input_bytes: 4096,
+        larm_provider: None,
         capabilities: vec!["reason".into()],
     });
     policy.roles.reasoner = Some("local".into());
@@ -444,6 +446,7 @@ pub(super) fn rr_04_receipt_rows_rollback_with_the_runtime_transaction() {
         location: "local".into(),
         resource_group: "gpu".into(),
         max_input_bytes: 1024,
+        larm_provider: None,
         capabilities: vec!["reason".into()],
     });
     policy.roles.reasoner = Some("qwen".into());

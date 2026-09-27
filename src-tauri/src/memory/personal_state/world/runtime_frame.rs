@@ -203,7 +203,6 @@ impl PreparedWorldFrame {
         &self.frame
     }
 
-    #[cfg(test)]
     pub(crate) fn stamp(&self) -> &FrameStamp {
         &self.stamp
     }

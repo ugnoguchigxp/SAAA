@@ -4,12 +4,22 @@ use super::urls::{url_is_local, url_is_loopback};
 use super::{
     contract_error, valid_provider_auth, AgentProfileCatalog, ConnectionClaim, ConnectionIdentity,
     ConnectionState, DynamicLanError, ErrorKind, ProviderCapacity, ProviderDescriptor,
-    SelectedLlmProfile, AGENT_PROFILE, AUDIENCE, CLOCK_SKEW_TOLERANCE_SECONDS,
-    CONNECTION_TTL_SECONDS, CONTROL_PORT, PROFILE_SELECTOR,
+    SelectedLlmProfile, AUDIENCE, CLOCK_SKEW_TOLERANCE_SECONDS, CONNECTION_TTL_SECONDS,
+    CONTROL_PORT,
 };
 
 fn valid_llm_protocol(value: &str) -> bool {
     value == "openai.chat-completions.v1"
+}
+
+fn provider_contract(name: &str) -> Option<(&'static str, &'static str)> {
+    match name {
+        "llm" | "backchannel" => Some(("openai.chat-completions.v1", "/v1/chat/completions")),
+        "asr" => Some(("openai.audio-transcriptions.v1", "/v1/audio/transcriptions")),
+        "tts" => Some(("openai.audio-speech.v1", "/v1/audio/speech")),
+        "embedding" => Some(("larm.embedding.v1", "/v1/embed")),
+        _ => None,
+    }
 }
 
 pub(crate) fn validate_config_revision(revision: Option<&str>) -> Result<(), DynamicLanError> {
@@ -31,6 +41,14 @@ pub(crate) fn validate_initial_state(
     expected_profile: &SelectedLlmProfile,
 ) -> Result<ConnectionIdentity, DynamicLanError> {
     validate_state_shape(state, expected_audience, expected_profile)?;
+    let mut profile = expected_profile.clone();
+    if !profile.compare_catalog {
+        let provider = sole_llm(&state.providers)?;
+        profile.id = state.agent_profile.clone();
+        profile.capability = provider.capability.clone();
+        profile.protocol = provider.protocol.clone();
+        profile.model = provider.model.clone();
+    }
     let created_at =
         chrono::DateTime::parse_from_rfc3339(&state.created_at).map_err(contract_error)?;
     let expires_at =
@@ -50,7 +68,7 @@ pub(crate) fn validate_initial_state(
         catalog_revision: state.catalog_revision.clone(),
         profile_revision: state.profile_revision.clone(),
         audience_revision: state.audience_revision.clone(),
-        profile: expected_profile.clone(),
+        profile,
         created_at,
         expires_at,
     })
@@ -139,79 +157,87 @@ pub(crate) fn validate_state_shape(
     validate_connection_id(&state.id)?;
     if !valid_bounded_identifier(&state.allocation_id, 192)
         || !valid_bounded_identifier(&state.boot_epoch, 192)
-        || state.profile != PROFILE_SELECTOR
-        || state.agent_profile != expected_profile.id
+        || state.profile != expected_profile.selector
+        || state.agent_profile.is_empty()
+        || (expected_profile.compare_catalog && state.agent_profile != expected_profile.id)
         || state.audience != expected_audience
-        || state.providers.is_empty()
     {
         return Err(contract_error(()));
     }
     validate_revision(&state.catalog_revision)?;
     validate_revision(&state.profile_revision)?;
     validate_revision(&state.audience_revision)?;
-    let mut names = std::collections::HashSet::new();
-    if state.providers.iter().any(|provider| {
-        !names.insert(provider.name.as_str())
-            || !valid_bounded_identifier(&provider.name, 160)
-            || !valid_bounded_identifier(&provider.capability, 160)
-            || provider.supported_capabilities.is_empty()
-            || !provider
-                .supported_capabilities
-                .iter()
-                .any(|capability| capability == &provider.capability)
-            || provider
-                .supported_capabilities
-                .iter()
-                .any(|capability| !valid_bounded_identifier(capability, 160))
-            || !valid_bounded_identifier(&provider.model, 160)
-            || !matches!(
-                (provider.protocol.as_str(), provider.endpoint.as_str()),
-                ("openai.chat-completions.v1", "/v1/chat/completions")
-                    | ("openai.audio-transcriptions.v1", "/v1/audio/transcriptions")
-                    | ("openai.audio-speech.v1", "/v1/audio/speech")
-                    | ("larm.embedding.v1", "/v1/embed")
-            )
-            || !matches!(
-                provider.readiness.as_str(),
-                "pending"
-                    | "waiting"
-                    | "deploying"
-                    | "probing"
-                    | "ready"
-                    | "failed"
-                    | "released"
-                    | "expired"
-            )
-            || (state.status == "ready" && (!provider.claimable || provider.readiness != "ready"))
-            || (state.status != "ready" && provider.claimable)
-    }) {
+    let provider = sole_llm(&state.providers)?;
+    let expected_service = match expected_profile.selector.as_str() {
+        "SAAA-w-Image" => Some((
+            "image",
+            "media.image.generate",
+            "larm.image-generation.v1",
+            "/v1/images/generations",
+        )),
+        "SAAA-w-music" => Some((
+            "music",
+            "media.music.generate",
+            "larm.music-generation.v1",
+            "/v1/music/generations",
+        )),
+        _ => None,
+    };
+    if state.services.len() != usize::from(expected_service.is_some()) {
         return Err(contract_error(()));
     }
-    let mut llm = state
-        .providers
-        .iter()
-        .filter(|provider| provider.name == "llm");
-    let provider = llm.next().ok_or_else(|| contract_error(()))?;
+    if let Some((name, capability, protocol, endpoint)) = expected_service {
+        let service = &state.services[0];
+        if service["name"] != name
+            || service["capability"] != capability
+            || service["protocol"] != protocol
+            || service["endpoint"] != endpoint
+            || service["model"].as_str().is_none_or(str::is_empty)
+        {
+            return Err(contract_error(()));
+        }
+    }
+    if state.providers.len() != 5 {
+        return Err(contract_error(()));
+    }
+    let mut names = std::collections::HashSet::new();
+    for entry in &state.providers {
+        let expected = provider_contract(&entry.name).ok_or_else(|| contract_error(()))?;
+        if !names.insert(entry.name.as_str())
+            || entry.protocol != expected.0
+            || entry.endpoint != expected.1
+            || entry.model.is_empty()
+            || expected_profile
+                .catalog_models
+                .as_ref()
+                .is_some_and(|models| models.get(&entry.name) != Some(&entry.model))
+            || (state.status == "ready" && (!entry.claimable || entry.readiness != "ready"))
+        {
+            return Err(contract_error(()));
+        }
+    }
     let terminal = matches!(state.status.as_str(), "failed" | "released" | "expired");
-    if llm.next().is_some()
-        || provider.capability != expected_profile.capability
+    let catalog_match = !expected_profile.compare_catalog
+        || (provider.capability == expected_profile.capability
+            && provider.protocol == expected_profile.protocol
+            && provider.model == expected_profile.model);
+    if provider.name != "llm"
+        || !catalog_match
         || !valid_llm_protocol(&provider.protocol)
-        || provider.endpoint != "/v1/chat/completions"
-        || provider.model != expected_profile.model
+        || provider
+            .route
+            .as_deref()
+            .is_some_and(|route| !valid_bounded_identifier(route, 160))
         || !matches!(
             provider.readiness.as_str(),
-            "pending"
-                | "waiting"
-                | "deploying"
-                | "probing"
-                | "ready"
-                | "failed"
-                | "released"
-                | "expired"
+            "pending" | "deploying" | "probing" | "ready" | "failed" | "released" | "expired"
         )
+        || (state.status == "ready" && (!provider.claimable || provider.readiness != "ready"))
+        || (state.status != "ready" && provider.claimable)
         || (state.status == "failed" && state.error.is_none())
         || (!terminal
             && state.status != "pending"
+            && state.status != "deploying"
             && state.status != "probing"
             && state.status != "ready")
     {
@@ -247,100 +273,79 @@ pub(crate) fn validate_create_location(
     }
 }
 
-pub(crate) fn select_default_llm_profile(
-    profiles: &AgentProfileCatalog,
+pub(crate) fn selected_llm_from_catalog(
+    catalog: &saaa_larm_session::catalog::CatalogProfile,
 ) -> Result<SelectedLlmProfile, DynamicLanError> {
-    if !matches!(
-        profiles.contract_version.as_str(),
-        "agent-connection.v1" | "agent-connection.v3"
-    ) {
-        return Err(DynamicLanError::with_code(
-            ErrorKind::Contract,
-            "Unsupported profile catalog version.",
-            "harness-catalog-version-unsupported",
-        ));
-    }
-    if profiles.contract_version == "agent-connection.v3"
-        && (profiles.requested_profile.as_deref() != Some(PROFILE_SELECTOR)
-            || profiles.profiles.len() != 1)
-    {
+    if catalog.revision.is_empty() {
         return Err(contract_error(()));
     }
-    let profile_id = if profiles.contract_version == "agent-connection.v3" {
-        profiles
-            .profiles
-            .first()
-            .map(|profile| profile.id.as_str())
-            .ok_or_else(|| contract_error(()))?
-    } else {
-        profiles
-            .default_agent_profile
-            .as_deref()
-            .unwrap_or(AGENT_PROFILE)
-    };
-    if !valid_bounded_identifier(profile_id, 160) {
+    let mut catalog_models = std::collections::BTreeMap::new();
+    for entry in &catalog.providers {
+        let expected = provider_contract(&entry.name).ok_or_else(|| contract_error(()))?;
+        if entry.protocol != expected.0
+            || entry.endpoint != expected.1
+            || entry.model.is_empty()
+            || catalog_models
+                .insert(entry.name.clone(), entry.model.clone())
+                .is_some()
+        {
+            return Err(contract_error(()));
+        }
+    }
+    if catalog_models.len() != 5 {
         return Err(contract_error(()));
     }
-    let mut matching = profiles
-        .profiles
-        .iter()
-        .filter(|profile| profile.id == profile_id);
-    let profile = matching.next().ok_or_else(|| {
-        DynamicLanError::new(
-            ErrorKind::Contract,
-            "dynamic_lan does not advertise its selected provider profile.",
-        )
-    })?;
-    let mut llm_providers = profile
+    let mut matching = catalog
         .providers
         .iter()
         .filter(|provider| provider.name == "llm");
-    let provider = llm_providers.next().ok_or_else(|| contract_error(()))?;
-    let context_window = if profiles.contract_version == "agent-connection.v3" {
-        provider.context_window
-    } else {
-        profile
-            .legacy_profile_context_window
-            .or(provider.context_window)
+    let provider = matching.next().ok_or_else(|| contract_error(()))?;
+    if matching.next().is_some() {
+        return Err(contract_error(()));
     }
-    .ok_or_else(|| {
+    let context_window = provider.context_window.ok_or_else(|| {
         DynamicLanError::with_code(
             ErrorKind::Contract,
             "Selected LLM provider has no context window.",
             "harness-llm-context-window-missing",
         )
     })?;
-    if !valid_context_window(&context_window) {
-        return Err(DynamicLanError::with_code(
-            ErrorKind::Contract,
-            "Selected LLM provider has an invalid context window.",
-            "harness-llm-context-window-invalid",
-        ));
-    }
-    let supported_capabilities_are_valid = provider.supported_capabilities.is_empty()
-        || (provider
-            .supported_capabilities
-            .iter()
-            .all(|capability| valid_llm_capability(capability))
-            && provider
-                .supported_capabilities
-                .iter()
-                .any(|capability| capability == &provider.capability));
-    if matching.next().is_some()
-        || llm_providers.next().is_some()
+    let context_window = super::ProviderContextWindow {
+        max_tokens: u32::try_from(context_window.max_tokens).map_err(contract_error)?,
+        output_reserve_tokens: u32::try_from(context_window.output_reserve_tokens)
+            .map_err(contract_error)?,
+        safety_margin_tokens: u32::try_from(context_window.safety_margin_tokens)
+            .map_err(contract_error)?,
+    };
+    if !valid_context_window(&context_window)
         || !valid_llm_capability(&provider.capability)
-        || !supported_capabilities_are_valid
         || !valid_llm_protocol(&provider.protocol)
         || !valid_bounded_identifier(&provider.model, 160)
     {
         return Err(contract_error(()));
     }
     Ok(SelectedLlmProfile {
-        id: profile.id.clone(),
+        selector: catalog.selector.clone(),
+        catalog_revision: Some(catalog.revision.clone()),
+        catalog_models: Some(catalog_models),
+        id: catalog.id.clone(),
         capability: provider.capability.clone(),
         model: provider.model.clone(),
+        protocol: provider.protocol.clone(),
         context_window,
+        compare_catalog: true,
     })
+}
+
+fn sole_llm(
+    providers: &[super::ConnectionStateProvider],
+) -> Result<&super::ConnectionStateProvider, DynamicLanError> {
+    let mut matching = providers.iter().filter(|provider| provider.name == "llm");
+    let provider = matching.next().ok_or_else(|| contract_error(()))?;
+    if matching.next().is_some() {
+        return Err(contract_error(()));
+    }
+    Ok(provider)
 }
 
 fn valid_context_window(window: &super::ProviderContextWindow) -> bool {
@@ -426,13 +431,16 @@ pub(crate) fn validate_claim(
         || !url_is_local(&base_url)
         || (!control_is_loopback && url_is_loopback(&base_url))
         || descriptor.model != expected.profile.model
+        || descriptor.protocol != expected.profile.protocol
+        || (expected.profile.compare_catalog
+            && descriptor.context_window.as_ref() != Some(&expected.profile.context_window))
         || descriptor.health.url != expected_health_url.as_str()
         || descriptor.health.kind != "semantic-inference"
         || descriptor.health.max_age_ms == 0
         || descriptor.health.max_age_ms > 60_000
         || !valid_provider_auth(&descriptor, claim_expires_at)
         || descriptor.configuration.kind != "openai-provider-v1"
-        || descriptor.configuration.fields.base_url != descriptor.base_url
+        || descriptor.configuration.fields.base_url.as_deref() != Some(descriptor.base_url.as_str())
         || descriptor.configuration.fields.model != descriptor.model
     {
         let message = if !control_is_loopback && url_is_loopback(&base_url) {

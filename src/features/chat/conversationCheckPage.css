@@ -1,0 +1,192 @@
+.conversation-check {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 54px 18px 18px;
+  gap: 9px;
+  color: #d8e1eb;
+}
+.conversation-page-host:not([hidden]) {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.conversation-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  color: #9fb3c2;
+  font-size: 0.75rem;
+}
+.conversation-thinking .llm-thinking-indicator { margin: 0; }
+.conversation-check .voice-activity-indicator.detecting span {
+  animation: llm-thinking-pulse 700ms ease-in-out infinite;
+}
+.conversation-check .voice-activity-indicator.detecting span:nth-child(3n + 2) {
+  animation-delay: 120ms;
+}
+.conversation-check .voice-activity-indicator.detecting span:nth-child(3n) {
+  animation-delay: 240ms;
+}
+.conversation-check-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.conversation-check-header h1 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+.conversation-check-header button {
+  border: 1px solid #34404f;
+  border-radius: 8px;
+  background: #19232e;
+  color: #d8e1eb;
+  padding: 7px 11px;
+}
+.conversation-route {
+  flex: 0 0 auto;
+  padding: 5px 8px 2px;
+}
+.conversation-route-track {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.conversation-route-segment {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.conversation-route-link {
+  color: #66798a;
+  font-size: 0.78rem;
+}
+.conversation-route-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 25px;
+  padding: 3px 8px;
+  border: 1px solid #354353;
+  border-radius: 7px;
+  color: #a9bac9;
+  background: #1a2530;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.conversation-route-node.active {
+  border-color: #75d4c7;
+  color: #f1fffc;
+  background: #1c514d;
+  box-shadow: 0 0 0 1px #75d4c744, 0 0 22px #50c8b85c;
+}
+.conversation-route-lamp {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #586a79;
+}
+.conversation-route-node.active .conversation-route-lamp {
+  background: #a5fff1;
+  box-shadow: 0 0 12px #a5fff1;
+}
+.conversation-route-status {
+  margin: 3px 0 0;
+  color: #9fb3c2;
+  font-size: 0.64rem;
+  text-align: center;
+}
+.conversation-check-history {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-anchor: none;
+  border: 1px solid #283340;
+  border-radius: 12px;
+  padding: 18px;
+  background: #111820;
+}
+.conversation-check-history-content {
+  min-height: 100%;
+  display: flow-root;
+}
+.conversation-check-history-content > p {
+  margin: 0;
+  color: #9aabba;
+}
+.conversation-check-message {
+  max-width: 82%;
+  margin: 0 0 14px;
+  padding: 10px 13px;
+  border: 1px solid #34404f;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.conversation-check-message.user {
+  margin-left: auto;
+  background: #20313d;
+}
+.conversation-check-message.assistant {
+  background: #19232e;
+}
+.conversation-check-message strong {
+  font-size: 0.72rem;
+  color: #8fc9d0;
+}
+.conversation-check-message p {
+  margin: 5px 0 0;
+  line-height: 1.55;
+}
+.conversation-check-message .markdown-content {
+  margin-top: 5px;
+  white-space: normal;
+}
+.conversation-check-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 8px;
+  font-size: 0.8rem;
+}
+.conversation-check-sources a {
+  color: #8fc9d0;
+  text-decoration: underline;
+}
+.conversation-check-error {
+  margin: 0;
+  color: #f2aeb7;
+  font-size: 0.82rem;
+}
+.conversation-check .conversation-check-composer {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px;
+}
+.conversation-check-composer .composer-row {
+  align-items: flex-end;
+}
+.conversation-check-composer textarea {
+  min-height: 42px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.conversation-check-composer button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@media (max-width: 620px) {
+  .conversation-check { padding: 44px 10px 10px; }
+  .conversation-route { padding: 4px; }
+  .conversation-route-node { padding: 3px 5px; min-height: 24px; font-size: 0.63rem; }
+  .conversation-route-link { font-size: 0.7rem; }
+  .conversation-check-history { padding: 10px; }
+}

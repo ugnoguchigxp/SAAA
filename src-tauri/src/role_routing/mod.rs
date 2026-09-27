@@ -10,6 +10,7 @@ pub(crate) mod contracts;
 pub(crate) mod coordinator;
 pub(crate) mod driver;
 pub(crate) mod executor;
+pub(crate) mod frontend;
 pub(crate) mod ipc;
 pub(crate) mod learning;
 pub(crate) mod limits;
@@ -31,10 +32,6 @@ pub(crate) mod schema;
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod selection;
 pub(crate) mod signals;
-// The queue is an offline-gated contract until speech playback is wired to role roots.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) mod speech_queue;
-pub(crate) mod speech_repository;
 pub(crate) mod steps;
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod tool_ledger;

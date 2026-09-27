@@ -363,3 +363,45 @@ mod tests {
         }
     }
 }
+
+/// Opt-in diagnostic: production HTTP search and HTML retrieval, no user data.
+#[cfg(feature = "conversation-queue-e2e")]
+pub(crate) async fn live_retrieval() -> Result<Value, String> {
+    let search = search::RustSearchProvider::new().map_err(|e| e.code.to_string())?;
+    let outcome = search
+        .search(
+            SearchInput {
+                query: "Rust programming language official".into(),
+                limit: 5,
+            },
+            Duration::from_secs(30),
+            WebFetchCancel::never(),
+        )
+        .await
+        .map_err(|e| e.code.to_string())?;
+    let rendered: Value =
+        serde_json::from_str(&search::render_compact(&outcome)).map_err(|e| e.to_string())?;
+    let hits = rendered["hits"].as_array().ok_or("missing search hits")?;
+    let mut failures = Vec::new();
+    for hit in hits.iter().take(3) {
+        let url = hit["url"].as_str().ok_or("missing hit URL")?;
+        let request = FetchContentInput {
+            url: url.into(),
+            max_characters: 5000,
+            query: Some("Rust programming language".into()),
+        };
+        match static_content::fetch(&request, Duration::from_secs(15)).await {
+            Ok(Some(document)) if !document.text.is_empty() => {
+                return Ok(
+                    json!({"hits":hits.len(),"url":document.final_url,"textCharacters":document.text.chars().count(),"retrievalStatus":document.retrieval_status}),
+                )
+            }
+            Ok(_) => failures.push("empty".to_string()),
+            Err(error) => failures.push(error.code.to_string()),
+        }
+    }
+    Err(format!(
+        "search returned {} hits, fetch failures: {failures:?}",
+        hits.len()
+    ))
+}

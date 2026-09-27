@@ -6,23 +6,17 @@
 
 ## 0. 全タスク共通のルール（必ず守る）
 
-1. **凍結ファイルに触らない。** `critical-path-freeze.json` の `domains.*.files` に列挙されたファイルは、どのタスクでも編集・移動・削除しない。作業前に次で一覧を出し、対象から除外する。
+1. **1 PR = 1 タスクの 1 単位。** 下の各タスクの「作業単位」ごとにコミットを分ける。複数単位をまとめない。
+2. **振る舞いを変えない。** タスク1〜3はリファクタリングのみ。SQL、公開 API、IPC コマンド名、シリアライズ形式を変えない。
+3. **各コミット前に必ず通すコマンド:**
    ```sh
-   bun -e 'const f=require("./critical-path-freeze.json");for(const d of Object.values(f.domains))for(const p of Object.keys(d.files))console.log(p)'
-   ```
-   例: `src-tauri/src/voice/streaming_asr/session.d/01.rs` は凍結対象なので、タスク1で分割し直さない。
-2. **1 PR = 1 タスクの 1 単位。** 下の各タスクの「作業単位」ごとにコミットを分ける。複数単位をまとめない。
-3. **振る舞いを変えない。** タスク1〜3はリファクタリングのみ。SQL、公開 API、IPC コマンド名、シリアライズ形式を変えない。
-4. **各コミット前に必ず通すコマンド:**
-   ```sh
-   bun run freeze:check
    cargo fmt --check --manifest-path src-tauri/Cargo.toml
    cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
    cargo test --manifest-path src-tauri/Cargo.toml
    bun run size:check
    ```
    フロントエンドを触った場合は追加で `bun run typecheck && bun run lint && bun run test:frontend`。
-5. 保存済みのユーザー設定・DB を消さない。DB を使う確認は一時ディレクトリのコピーで行う。
+4. 保存済みのユーザー設定・DB を消さない。DB を使う確認は一時ディレクトリのコピーで行う。
 6. 迷ったら実装を止め、判断が必要な点を PR 説明に書く。推測で仕様を変えない。
 
 ---
@@ -36,7 +30,7 @@
 - rust-analyzer のジャンプや診断が不安定になる。
 
 ### ゴール
-凍結対象以外のすべての `*.d/` を、意味のある名前のサブモジュール（`mod foo;`）に置き換え、`include!("*.d/` を 0 件にする（凍結ファイル分を除く）。
+すべての `*.d/` を、意味のある名前のサブモジュール（`mod foo;`）に置き換え、`include!("*.d/` を 0 件にする。
 
 ### 手順（1 ディレクトリずつ）
 1. 対象を列挙する（大きい順）:
@@ -64,10 +58,10 @@
 3. 最後に `lib.d`（アプリ起動処理のため最も慎重に。`run()` 本体は `lib.rs` に残し、プラグイン登録・コマンド登録・状態初期化を `app_setup/{plugins.rs, commands.rs, state.rs}` に分ける）
 
 ### 再発防止
-`scripts/module-size.ts` の `check` に、`include!(` で `.d/` を参照する行を検出したらエラーにする処理を追加する。凍結ファイルは `critical-path-freeze.json` を読んで除外する。テストを `tests/module-size.test.ts`（なければ新規）に追加する。
+`scripts/module-size.ts` の `check` に、`include!(` で `.d/` を参照する行を検出したらエラーにする処理を追加する。テストを `tests/module-size.test.ts`（なければ新規）に追加する。
 
 ### 完了条件
-- `rg 'include!\("[^"]*\.d/' src-tauri/src` の結果が凍結ファイル関連のみ
+- `rg 'include!\("[^"]*\.d/' src-tauri/src` の結果が 0 件
 - 共通コマンドがすべて成功
 
 ---
@@ -107,7 +101,7 @@ unwrap_used = "deny"
 テストモジュール側には `#![allow(clippy::unwrap_used)]` を付ける（`src-tauri/src/tests.rs` など、テストのルートごと）。`clippy.toml` に `allow-unwrap-in-tests = true` を置けば個別の allow は不要なので、そちらを優先する。
 
 ### 完了条件
-- `bun run unwrap:audit` の unwrap 列がすべて 0（凍結ファイルは除外し、PR 説明に件数を記載）
+- `bun run unwrap:audit` の unwrap 列がすべて 0
 - clippy の `unwrap_used = "deny"` を有効にして共通コマンドが成功
 
 ---
@@ -156,7 +150,7 @@ unwrap_used = "deny"
 ## タスク5: カバレッジの低い重要モジュールへのテスト追加
 
 ### 前提
-タスク4の `summary.md` を見て、次の優先順位で対象を決める。凍結ファイルは対象外。
+タスク4の `summary.md` を見て、次の優先順位で対象を決める。
 1. `persistence/`（マイグレーション・設定。壊れるとユーザーデータに影響）
 2. `runtime/context/`（Context 構成・Scope 検査）
 3. `records/`（`write.rs`, `forget.rs`, `read.rs`, `capture.rs`）
@@ -207,7 +201,7 @@ unwrap_used = "deny"
 2. プロバイダは `scripts/adaptive-improvement/mock-tool-selection.json` と同様のモックを使い、外部 API を呼ばない。モックの仕組みがなければ、Rust 側の既存テスト用プロバイダ（`test_support.rs` を確認）を使う Rust の統合テストとして書く。
 3. 検証項目: ストリーミングで 2 回以上の部分応答を受け取る / DB の会話テーブルに依頼と応答が保存される / 再起動後の recall 結果に依頼文が含まれる。
 4. `package.json` に `"acceptance:core": "..."` を追加する。
-5. 初回応答の経路（凍結ドメイン `initial-response`）のファイルは読むだけで編集しない。テストのために変更が必要なら実装を止めて報告する。
+5. 初回応答の経路を変更する場合は、該当する回帰試験を行う。
 
 ### 完了条件
 - `bun run acceptance:core` がモックだけで成功し、所要時間が 2 分以内

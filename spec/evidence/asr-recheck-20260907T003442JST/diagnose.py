@@ -2,6 +2,7 @@
 import io
 import json
 import math
+import os
 import pathlib
 import shlex
 import struct
@@ -89,7 +90,7 @@ chat = {"model": "coding-default", "messages": [{"role": "user", "content": "Rep
 if "--dynamic-only" not in sys.argv:
     # Use the configured API credential only, through an encrypted SSH pipe and in memory.
     remote = "python3 -c " + shlex.quote("import pathlib,shlex; lines=pathlib.Path('/etc/larm/larm.env').read_text().splitlines(); print(next(shlex.split(l.split('=',1)[1])[0] for l in lines if l.startswith('LARM_API_TOKEN=')))")
-    token = subprocess.check_output(["ssh", "-o", "BatchMode=yes", "gnosis", remote], timeout=10).decode().strip()
+    token = subprocess.check_output(["ssh", "-o", "BatchMode=yes", "-i", os.path.expanduser("~/.ssh/ai395.pem"), "ugnoguchi@192.168.0.130", remote], timeout=10).decode().strip()
     request("authenticated-model-catalog", "/v1/models", token=token)
     request("authenticated-activity", "/v1/activity", token=token)
     request("ordinary-chat-json", "/v1/chat/completions", json.dumps(chat).encode(), token)

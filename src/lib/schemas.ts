@@ -190,6 +190,10 @@ export const voiceSettingsSchema = z
         "ASR languages must be unique",
       ),
     autoSpeak: z.boolean(),
+    aecEnabled: z.boolean().default(true),
+    otherAudioDucking: z.enum(["default", "min", "mid", "max"]).default("min"),
+    vpioOnBluetooth: z.boolean().default(false),
+    bargeInEnabled: z.boolean().default(true),
   })
   .strict();
 
@@ -239,6 +243,7 @@ export const roleRoutingSettingsSchema = z
             location: z.enum(["local", "cloud"]),
             resourceGroup: z.string(),
             maxInputBytes: z.number(),
+            larmProvider: z.enum(["llm", "backchannel"]).optional(),
             capabilities: z.array(z.string()),
           })
           .strict(),

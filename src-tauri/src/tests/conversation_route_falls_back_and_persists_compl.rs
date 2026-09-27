@@ -40,6 +40,12 @@ pub(super) async fn conversation_route_falls_back_and_persists_completed_message
     route.value_json["conversationRespond"]["fallbackProviderIds"] = json!(["fallback"]);
     route.value_json["voiceSpeak"]["source"] = json!("harness");
     route.value_json["voiceSpeak"]["providerId"] = Value::Null;
+    if let Some(roles) = documents
+        .iter_mut()
+        .find(|document| document.namespace == "routing.roles")
+    {
+        roles.value_json["enabled"] = json!(false);
+    }
     save_settings_documents_to_connection(
         &mut state.sqlite_writer.lock().expect("database lock"),
         &documents,
@@ -186,6 +192,12 @@ pub(super) async fn partial_provider_stream_never_reaches_the_fallback_provider(
     route.value_json["conversationRespond"]["fallbackProviderIds"] = json!(["forbidden-fallback"]);
     route.value_json["voiceSpeak"]["source"] = json!("harness");
     route.value_json["voiceSpeak"]["providerId"] = Value::Null;
+    if let Some(roles) = documents
+        .iter_mut()
+        .find(|document| document.namespace == "routing.roles")
+    {
+        roles.value_json["enabled"] = json!(false);
+    }
     save_settings_documents_to_connection(
         &mut state.sqlite_writer.lock().expect("database lock"),
         &documents,

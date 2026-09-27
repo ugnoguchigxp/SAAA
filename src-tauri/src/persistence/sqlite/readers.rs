@@ -1,4 +1,4 @@
-#[cfg(any(test, feature = "quality-eval-harness"))]
+#[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
 use super::SqliteWriter;
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
@@ -24,7 +24,7 @@ pub(crate) struct SqliteReaders {
 #[derive(Clone)]
 enum ReaderSource {
     Persistent(Arc<PersistentReaders>),
-    #[cfg(any(test, feature = "quality-eval-harness"))]
+    #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
     Serialized(Arc<SqliteWriter>),
 }
 
@@ -52,7 +52,7 @@ impl SqliteReaders {
         })
     }
 
-    #[cfg(any(test, feature = "quality-eval-harness"))]
+    #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
     pub(crate) fn serialized(writer: Arc<SqliteWriter>) -> Self {
         Self {
             source: ReaderSource::Serialized(writer),
@@ -87,7 +87,7 @@ impl SqliteReaders {
                 transaction.commit().map_err(crate::database_error)?;
                 Ok(result)
             }
-            #[cfg(any(test, feature = "quality-eval-harness"))]
+            #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
             ReaderSource::Serialized(writer) => writer.read_serialized(operation),
         }
     }
@@ -134,7 +134,7 @@ impl SqliteReaders {
                 });
                 Ok(documents)
             }
-            #[cfg(any(test, feature = "quality-eval-harness"))]
+            #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
             ReaderSource::Serialized(_) => {
                 crate::persistence::settings::list_settings_documents(connection)
             }
@@ -145,7 +145,7 @@ impl SqliteReaders {
     pub(crate) fn lane_count(&self) -> usize {
         match self.source {
             ReaderSource::Persistent(_) => READER_LANES,
-            #[cfg(any(test, feature = "quality-eval-harness"))]
+            #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
             ReaderSource::Serialized(_) => 1,
         }
     }

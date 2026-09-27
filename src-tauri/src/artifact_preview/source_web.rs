@@ -13,6 +13,7 @@ pub(super) fn mount(
     y: f64,
     width: f64,
     height: f64,
+    on_load: tauri::ipc::Channel<super::source_loading::SourceLoadEvent>,
 ) -> Result<String, String> {
     super::host::validate_bounds(x, y, width, height).map_err(str::to_string)?;
     let url = authorized_url(state, conversation_id, source_url)?;
@@ -24,16 +25,22 @@ pub(super) fn mount(
         .incognito(true)
         .focused(false)
         .disable_drag_drop_handler()
+        .on_page_load(super::source_loading::handler(on_load))
         .on_navigation(move |candidate| allow_source_navigation(&allowed_origin, candidate))
         .on_download(|_, _| false)
         .on_new_window(|_, _| NewWindowResponse::Deny);
-    window
+    let webview = window
         .add_child(
             builder,
-            LogicalPosition::new(x, y),
+            // Keep the native surface away from the DOM loading dialog until hidden.
+            LogicalPosition::new(-16_384.0, -16_384.0),
             LogicalSize::new(width, height),
         )
         .map_err(|_| "source-window-unavailable".to_string())?;
+    if webview.hide().is_err() {
+        let _ = webview.close();
+        return Err("source-window-unavailable".into());
+    }
     Ok(label)
 }
 

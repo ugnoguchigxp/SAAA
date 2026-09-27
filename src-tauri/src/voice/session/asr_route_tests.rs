@@ -48,6 +48,7 @@ fn selected(base: &str) -> SelectedAsr {
             model: "fixture".into(),
             language: "auto".into(),
             authentication: "none".into(),
+            transport: "http".into(),
         })
     };
     SelectedAsr {

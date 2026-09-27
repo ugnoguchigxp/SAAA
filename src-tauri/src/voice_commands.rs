@@ -71,5 +71,6 @@ pub(crate) fn read_voice_enrollment_sample(
 
 #[tauri::command]
 pub(crate) fn stop_tts(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), String> {
-    voice::session::stop_tts(&state, run_id)
+    state.streaming_tts.cancel(&run_id);
+    Err("回答音声ランタイムは再構築中です。".into())
 }

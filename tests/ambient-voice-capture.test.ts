@@ -49,6 +49,10 @@ const settings: VoiceSettings = {
   silenceTimeoutMs: 1_200,
   allowedLanguages: ["ja"],
   autoSpeak: true,
+  aecEnabled: true,
+  otherAudioDucking: "min",
+  vpioOnBluetooth: false,
+  bargeInEnabled: true,
 };
 
 function ref<T>(value: T): MutableRefObject<T> {

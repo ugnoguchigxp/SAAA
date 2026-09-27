@@ -6,6 +6,7 @@ mod policy;
 mod protocol;
 mod service;
 mod source;
+mod source_loading;
 mod source_web;
 mod tokens;
 pub(crate) mod webview_catalog;

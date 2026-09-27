@@ -169,6 +169,7 @@ mod tests {
             location: location.into(),
             resource_group: "gpu".into(),
             max_input_bytes: 1024,
+            larm_provider: None,
             capabilities: capabilities
                 .iter()
                 .map(|capability| (*capability).into())

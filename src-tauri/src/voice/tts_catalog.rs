@@ -270,14 +270,15 @@ async fn load_harness_catalog(state: &crate::AppState) -> Result<TtsVoiceCatalog
     let credential =
         crate::providers::dynamic_lan::credential::load().map_err(|error| error.code())?;
     let (_alive, cancellation) = tokio::sync::watch::channel(false);
-    let session = saaa_larm_session::Session::connect_with_profile_and_credential(
+    let preference = crate::providers::larm_resources::profile::preference(harness.larm_profile.as_deref());
+    let session = saaa_larm_session::Session::connect_with_profile_credential_key_phase_and_providers(
         &harness.address,
-        harness
-            .larm_profile
-            .as_deref()
-            .unwrap_or(saaa_larm_session::DEFAULT_PROFILE),
+        preference,
         credential.token().to_string(),
+        format!("saaa-session-{}", uuid::Uuid::new_v4()),
         cancellation,
+        None,
+        Some(vec!["tts"]),
     )
     .await
     .map_err(|_| "larm-catalog-connect-failed".to_string())?;
@@ -301,7 +302,7 @@ async fn load_harness_catalog(state: &crate::AppState) -> Result<TtsVoiceCatalog
     result
 }
 
-async fn fetch_catalog(
+pub(crate) async fn fetch_catalog(
     endpoint: &str,
     token: Option<&str>,
     bypass_proxy: bool,

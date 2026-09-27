@@ -48,6 +48,10 @@ pub(super) enum ProtectedTail {
     },
 }
 impl SentenceAccumulator {
+    pub(crate) fn finish_current(&mut self) {
+        self.input_closed = true;
+    }
+
     pub(crate) fn append(&mut self, delta: &str) -> Result<(), AccumulatorError> {
         if self.input_closed || delta.is_empty() {
             return Ok(());
@@ -169,6 +173,11 @@ impl SentenceAccumulator {
                 (minimum..=HARD_MAX).contains(&length)
             }) {
                 return Some(self.consumed_byte + boundary);
+            }
+            if self.protected_tail.is_none() {
+                if let Some((start, grapheme)) = raw.grapheme_indices(true).nth(HARD_MAX - 1) {
+                    return Some(self.consumed_byte + start + grapheme.len());
+                }
             }
         }
 

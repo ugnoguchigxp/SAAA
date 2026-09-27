@@ -25,7 +25,15 @@ fn normalize(raw: &str) -> String {
 }
 
 fn element_text(element: ElementRef<'_>) -> String {
-    normalize(&element.text().collect::<Vec<_>>().join(" "))
+    let visible = element
+        .descendants()
+        .filter_map(|node| {
+            let text = node.value().as_text()?;
+            let parent = node.parent().and_then(ElementRef::wrap)?;
+            (!excluded(parent)).then(|| text.to_string())
+        })
+        .collect::<Vec<_>>();
+    normalize(&visible.join(" "))
 }
 
 fn excluded(element: ElementRef<'_>) -> bool {
@@ -509,11 +517,15 @@ fn choose(title: &str, blocks: &[Block], query: Option<&str>, limit: usize) -> P
     let terms = query.map(query_terms).unwrap_or_default();
     let value_needed = query.is_some_and(needs_value);
     let title_lower = title.to_lowercase();
+    // When the page exposes a content landmark, exclude navigation and sidebar
+    // blocks before ranking. Legacy pages without landmarks retain the body fallback.
+    let has_main_blocks = blocks.iter().any(|block| block.in_main);
     let mut ranked = blocks
         .iter()
         .enumerate()
         .filter(|(_, block)| {
-            !conflicting_accounting_basis(&block.text, &terms)
+            (!has_main_blocks || block.in_main)
+                && !conflicting_accounting_basis(&block.text, &terms)
                 && !conflicting_period(&block.text.to_lowercase(), &terms)
         })
         .map(|(index, block)| {
@@ -558,7 +570,7 @@ fn choose(title: &str, blocks: &[Block], query: Option<&str>, limit: usize) -> P
     // Select answer-bearing candidates first. The character budget limits expansion.
     let mut selected = Vec::new();
     if terms.is_empty() {
-        selected.extend(0..blocks.len().min(MAX_OUTPUT_CANDIDATES));
+        selected.extend(ranked.iter().take(MAX_OUTPUT_CANDIDATES).map(|(index, ..)| *index));
     } else if let Some((best_index, _, _, _, _, _)) = best {
         selected.push(best_index);
     }
@@ -633,6 +645,25 @@ pub(super) fn plain(text: &str, query: Option<&str>, limit: usize) -> Projection
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_landmark_excludes_matching_sidebar_text() {
+        let page = "<html><head><title>Weather</title></head><body><div><p>Kamakura weather: stale forecast</p></div><main><p>Kamakura weather: current forecast</p></main></body></html>";
+        let result = html(page, Some("Kamakura weather"), 500);
+        assert!(result.text.contains("current forecast"));
+        assert!(!result.text.contains("stale forecast"));
+    }
+
+    #[test]
+    fn nested_script_and_style_text_never_reach_projection() {
+        let page = "<main><p>Visible forecast<script>secretJavascript()</script><style>.secret{color:red}</style><span>24℃</span></p></main>";
+        let result = html(page, None, 500);
+        assert!(result.text.contains("Visible forecast"));
+        assert!(result.text.contains("24℃"));
+        assert!(!result.text.contains("secretJavascript"));
+        assert!(!result.text.contains("color:red"));
+        assert!(!result.text.contains('<'));
+    }
 
     #[test]
     fn financial_table_keeps_period_and_metric_with_value() {

@@ -19,6 +19,15 @@ const ready = {
   overall: "warn",
   items: [
     {
+      id: "diagnosis.mode.operational",
+      group: "settings",
+      label: "Diagnosis mode",
+      status: "skipped",
+      severity: "info",
+      message: "",
+      latencyMs: null,
+    },
+    {
       id: "sqlite",
       group: "storage",
       label: "SQLite",
@@ -52,6 +61,15 @@ const ready = {
       status: "skipped",
       severity: "info",
       message: "llm is not advertised",
+      latencyMs: null,
+    },
+    {
+      id: "harness.backchannel",
+      group: "harness",
+      label: "LARM backchannel",
+      status: "ok",
+      severity: "degraded",
+      message: "qwen3.5-2b-fast-response is ready",
       latencyMs: null,
     },
     {
@@ -116,6 +134,7 @@ async function renderPage(report: typeof ready | null) {
   resetTauriCoreMock();
   invokeImpl.handler = async (command) => {
     if (command === "run_diagnosis") return report;
+    if (command === "get_diagnosis_report") return { ...ready, revision: 0 };
     return null;
   };
   restore = installJsdom().restore;
@@ -131,29 +150,30 @@ async function renderPage(report: typeof ready | null) {
 
 test("diagnosis page shows stages, item list, and blocks rerun while running", async () => {
   await renderPage(ready);
-  expect(document.body.textContent).toContain("診断開始");
-  expect(document.body.textContent).not.toContain("データベース");
+  expect(document.body.textContent).toContain("実動作診断");
   const start = [...document.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("診断開始"),
+    button.textContent?.includes("実動作診断"),
   );
   await act(async () => {
     start?.click();
     await Promise.resolve();
   });
+  expect(document.body.textContent).toContain("実動作診断の結果");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   const services = document.querySelector(".diagnosis-services")?.textContent ?? "";
   const response = [...document.querySelectorAll(".diagnosis-services article")].find(
     (card) => card.querySelector("strong")?.textContent === "応答",
   );
-  expect(response?.textContent).toContain("正常");
-  expect(response?.textContent).not.toContain("対象外");
+  expect(response?.textContent).toContain("対象外");
+  expect(response?.textContent).not.toContain("正常");
   expect(services).toContain("応答");
+  expect(services).not.toContain("補助応答");
   expect(services).not.toContain("音声認識");
   const speech = [...document.querySelectorAll(".diagnosis-services article")].find(
     (card) => card.querySelector("strong")?.textContent === "音声合成",
   );
-  expect(speech?.textContent).toContain("正常");
-  expect(speech?.textContent).not.toContain("失敗");
+  expect(speech?.textContent).toContain("失敗");
+  expect(speech?.textContent).not.toContain("正常");
   expect(services).toContain("音声合成");
   const embedding = [...document.querySelectorAll(".diagnosis-services article")].find(
     (card) => card.querySelector("strong")?.textContent === "埋め込み",
@@ -177,7 +197,7 @@ test("diagnosis page shows stages, item list, and blocks rerun while running", a
   expect(document.body.textContent).toContain("データベース");
   expect(document.body.textContent).toContain("モデルプロバイダ設定");
   const rerun = [...document.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("再診断"),
+    button.textContent?.includes("実動作診断"),
   );
   expect(rerun?.hasAttribute("disabled")).toBe(false);
 
@@ -190,14 +210,14 @@ test("diagnosis page shows stages, item list, and blocks rerun while running", a
   root = createRoot(document.getElementById("root")!);
   await act(async () => root!.render(createElement(DiagnosisPage)));
   const pendingStart = [...document.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("診断開始"),
+    button.textContent?.includes("実動作診断"),
   );
   await act(async () => {
     pendingStart?.click();
     await Promise.resolve();
   });
   const busy = [...document.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("診断中"),
+    button.textContent?.includes("実動作診断"),
   );
   expect(busy?.hasAttribute("disabled")).toBe(true);
 });

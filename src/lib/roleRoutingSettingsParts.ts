@@ -8,6 +8,7 @@ export type RoleRoutingActor = {
   location: "local" | "cloud";
   resourceGroup: string;
   maxInputBytes: number;
+  larmProvider?: "llm" | "backchannel";
   capabilities: string[];
 };
 

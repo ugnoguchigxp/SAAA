@@ -28,12 +28,19 @@ describe("macOS microphone bundle configuration", () => {
     );
     const settings = [
       readFileSync(join(import.meta.dir, "../src/features/settings/SettingsPage.tsx"), "utf8"),
-      readFileSync(
-        join(import.meta.dir, "../src/features/settings/VoiceSettingsSection.tsx"),
-        "utf8",
-      ),
+    readFileSync(
+      join(import.meta.dir, "../src/features/settings/VoiceSettingsSection.tsx"),
+      "utf8",
+    ),
+    readFileSync(
+      join(import.meta.dir, "../src/features/settings/VoiceProcessingSettings.tsx"),
+      "utf8",
+    ),
     ].join("\n");
     expect(containsSource(app, "requestMicrophoneStream(audio)")).toBe(true);
+    expect(containsSource(app, "startNativeVoiceCapture")).toBe(true);
+    expect(containsSource(app, "skipGetUserMedia")).toBe(true);
+    expect(containsSource(app, "nativeCapturePreferred")).toBe(true);
     expect(
       containsSource(
         enrollment,
@@ -101,14 +108,14 @@ describe("macOS microphone bundle configuration", () => {
     expect(
       containsSource(
         app,
-        "const observation = context.activityDetector.current?.observe(event.data)",
+        "const observation = input.activityDetector.current?.observe(input.frame)",
       ),
     ).toBe(true);
     expect(
-      containsSource(app, "voiceSegmentCommitReason(observation, context.packetCount())"),
+      containsSource(app, "voiceSegmentCommitReason(observation, input.packetCount())"),
     ).toBe(true);
     expect(containsSource(app, "observation?.hasSpeech && observation.shouldFinalize")).toBe(true);
-    expect(containsSource(app, "context.packetFrame(event.data)")).toBe(true);
+    expect(containsSource(app, "input.packetFrame(input.frame)")).toBe(true);
     expect(containsSource(app, "VoiceAsrPacketizer")).toBe(true);
     expect(containsSource(app, "VoiceAsrPacketSender")).toBe(true);
     expect(containsSource(app, "voiceAsrPacketizerRef.current.append(frame)")).toBe(true);

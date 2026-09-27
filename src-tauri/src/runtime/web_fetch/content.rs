@@ -158,7 +158,9 @@ fn html_probe_budget(deadline: Duration) -> Duration {
     if deadline <= Duration::from_secs(5) {
         Duration::ZERO
     } else {
-        (deadline / 5).min(Duration::from_secs(2))
+        // Public pages often need several seconds for TLS and the HTML body.
+        // Leave the remaining time for the WebView fallback when HTML is a JS shell.
+        ((deadline / 5) * 2).min(Duration::from_secs(12))
     }
 }
 
@@ -244,6 +246,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn compact_result_limits_visible_page_text_to_three_thousand_characters() {
+        let mut result = FakeContentFetcher::ok(&"天".repeat(4_000)).result.unwrap();
+        result.truncated = false;
+        let rendered: serde_json::Value = serde_json::from_str(&render_compact(&result)).unwrap();
+        let text = rendered.pointer("/document/text").and_then(|value| value.as_str()).unwrap();
+        assert_eq!(text.chars().count(), 3_000);
+        assert_eq!(rendered.pointer("/document/truncated").and_then(|value| value.as_bool()), Some(true));
+    }
+
+    #[test]
     fn compact_projection_hides_plugin_internals() {
         let result = FetchContentResult {
             final_url: "https://final.example/".to_string(),
@@ -291,11 +303,11 @@ mod tests {
     fn html_probe_preserves_time_for_browser_fallback() {
         assert_eq!(
             html_probe_budget(Duration::from_secs(30)),
-            Duration::from_secs(2)
+            Duration::from_secs(12)
         );
         assert_eq!(
             html_probe_budget(Duration::from_secs(10)),
-            Duration::from_secs(2)
+            Duration::from_secs(4)
         );
         assert_eq!(html_probe_budget(Duration::from_secs(5)), Duration::ZERO);
     }

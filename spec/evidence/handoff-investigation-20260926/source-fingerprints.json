@@ -1,0 +1,11 @@
+{
+  "head": "cf031f8835a232459e560672c5635d887c16ad7d",
+  "sha256": {
+    "crates/larm-session/src/lib.rs": "47db7c27246bf627b62a0e2f02c12e55b5157448e113b739cb02063a62bfed85",
+    "src-tauri/src/providers/larm_voice/mod.rs": "70742189ccba8bef4ed0fd031041632934bd4d675490b422b7283bc7bc89e161",
+    "src-tauri/src/providers/stream/larm_voice.rs": "f2e545dfdc01c7a39941e4fcd1ab3bff778a4401631a54ea4e67de06caa87a43",
+    "src-tauri/src/runtime/conversation_provider_route.d/01.rs": "71b3ae71854ed3dc9a49845223f8fe971753436668c845793e396a90a81575b1",
+    "src-tauri/src/runtime/conversation_inputs_roles/role_dispatch.rs": "f9bf197cdbf5fcfcc5140eb5b5edb7070c6f3653f0a71fa4fb292eb4fbdf7d85",
+    "src-tauri/src/role_routing/frontend.rs": "0be0d3f3cbe62cf47b33b688d062fa2652d2448eef05947e11190897a738d63c"
+  }
+}

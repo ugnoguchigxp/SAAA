@@ -23,6 +23,11 @@ impl ToolSelectionService {
             return Err(ToolSelectionError::unauthorized());
         }
         let (tool, revision) = self.current_revision(&reference)?;
+        if tool.id == "artifact_webview"
+            && !crate::artifact_preview::webview_ops::is_offered_for(&context.conversation_id)
+        {
+            return Err(ToolSelectionError::unavailable());
+        }
         let (source_id, source_label) =
             super::super::mcp::service_support::source_display(&self.writer, &revision.tool_id);
         if section == "contract" {
@@ -119,7 +124,14 @@ impl ToolSelectionService {
             input_schema: revision.input_schema.clone(),
             created_at_ms: now_ms(),
         };
-        self.references.issue(entry, now_ms())
+        let execution_ref = self.references.issue(entry, now_ms())?;
+        if tool.id == "artifact_webview" {
+            crate::artifact_preview::webview_ops::stamp_offer(
+                &execution_ref,
+                &context.conversation_id,
+            );
+        }
+        Ok(execution_ref)
     }
 }
 impl ToolSelectionService {
@@ -257,6 +269,33 @@ impl ToolSelectionService {
             return Err(ToolSelectionError::stale());
         }
         validate_arguments(&revision.input_schema, arguments)?;
+        if tool.id == "artifact_webview" {
+            if reference.conversation_id != context.conversation_id {
+                return Err(ToolSelectionError::unavailable());
+            }
+            if let Some(reason) = crate::artifact_preview::webview_ops::reject_stale_offer(
+                execution_ref,
+                &context.conversation_id,
+            ) {
+                return Err(ToolSelectionError::new(
+                    ToolSelectionErrorCode::Unavailable,
+                    reason,
+                ));
+            }
+            if let Some(reason) = crate::artifact_preview::webview_ops::reject_without_backend(
+                &context.conversation_id,
+                arguments,
+            ) {
+                return Err(ToolSelectionError::new(
+                    if reason == "webview-not-operable" || reason == "webview-unavailable" {
+                        ToolSelectionErrorCode::Unavailable
+                    } else {
+                        ToolSelectionErrorCode::InvalidInput
+                    },
+                    reason,
+                ));
+            }
+        }
         let binding = revision.backend_binding.clone();
         let binding_kind = BackendRouter::kind(&binding);
         // For an external MCP binding the source must still be enabled, freshly synced and

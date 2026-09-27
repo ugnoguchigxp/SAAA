@@ -8,6 +8,7 @@ pub(crate) async fn play_with_situation(
     output: Arc<std::sync::atomic::AtomicBool>,
     on_started: impl FnOnce() + Send + 'static,
     situation: Option<Arc<crate::situation::SituationRuntime>>,
+    continuous: Option<&ContinuousPlayback>,
 ) -> Result<(), String> {
     if held(&situation) {
         return Ok(());
@@ -25,6 +26,7 @@ pub(crate) async fn play_with_situation(
         None,
         output,
         situation,
+        continuous,
     )
     .await
 }
@@ -32,6 +34,7 @@ pub(crate) async fn play_with_situation(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn play_larm_with_situation(
     session: &Arc<saaa_larm_session::Session>,
+    _conversation: &str,
     voice: Option<&str>,
     harness: Option<&crate::HarnessSettings>,
     expression: crate::voice::cloud_tts::speech_directive::SpeechExpression,
@@ -41,6 +44,7 @@ pub(crate) async fn play_larm_with_situation(
     cancellation: Arc<RunCancellation>,
     on_started: impl FnOnce() + Send + 'static,
     situation: Option<Arc<crate::situation::SituationRuntime>>,
+    continuous: Option<&ContinuousPlayback>,
 ) -> Result<(), String> {
     if held(&situation) {
         return Ok(());
@@ -51,7 +55,7 @@ pub(crate) async fn play_larm_with_situation(
         result = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), session.acquire("tts")) => result.map_err(|_| "TTS lease acquisition timed out")?.map_err(str::to_string)?,
     };
     let provider = crate::voice::cloud_tts::speech_directive::apply_expression(
-        &crate::larm_voice::audio::tts_settings(lease.provider(), voice, harness)?,
+        &crate::providers::larm_resources::audio::tts_settings(lease.provider(), voice, harness)?,
         expression,
     );
     let remaining = timeout_ms.saturating_sub(started.elapsed().as_millis() as u64);
@@ -74,7 +78,8 @@ pub(crate) async fn play_larm_with_situation(
         cancellation.clone(),
         Some(lease.provider().token()),
     )
-    .await?;
+    .await;
+    let response = response?;
     play_response(
         response,
         &provider.response_format,
@@ -87,6 +92,7 @@ pub(crate) async fn play_larm_with_situation(
         )),
         output,
         situation,
+        continuous,
     )
     .await
 }
@@ -142,6 +148,7 @@ mod tests {
             output.clone(),
             || panic!("held audio started"),
             Some(situation),
+            None,
         )
         .await;
         server.abort();

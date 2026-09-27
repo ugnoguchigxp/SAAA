@@ -152,6 +152,18 @@ fn default_agent_name() -> String {
     crate::DEFAULT_AGENT_NAME.to_string()
 }
 
+fn default_aec_enabled() -> bool {
+    true
+}
+
+fn default_other_audio_ducking() -> String {
+    "min".to_string()
+}
+
+fn default_barge_in_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -164,6 +176,14 @@ pub(crate) struct VoiceRuntimeSettings {
     #[serde(default = "crate::voice::language::default_allowed_languages")]
     pub(crate) allowed_languages: Vec<String>,
     pub(crate) auto_speak: bool,
+    #[serde(default = "default_aec_enabled")]
+    pub(crate) aec_enabled: bool,
+    #[serde(default = "default_other_audio_ducking")]
+    pub(crate) other_audio_ducking: String,
+    #[serde(default)]
+    pub(crate) vpio_on_bluetooth: bool,
+    #[serde(default = "default_barge_in_enabled")]
+    pub(crate) barge_in_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

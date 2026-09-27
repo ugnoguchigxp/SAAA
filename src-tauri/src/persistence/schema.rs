@@ -23,7 +23,8 @@ use rusqlite::{params, Connection};
 /// 39 adds generation_usage and the records store.
 /// 40 adds context segments and generation wire columns.
 /// 41 adds the butler conversation event, run-input, and work-state tables.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 41;
+/// 42 adds the durable task queue used by the Qwen/Ornith conversation path.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 42;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -39,6 +40,11 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
            value_json TEXT NOT NULL,
            updated_at TEXT NOT NULL,
            PRIMARY KEY(namespace, key)
+         );
+         CREATE TABLE IF NOT EXISTS tts_dictionary (
+           written TEXT PRIMARY KEY NOT NULL,
+           spoken TEXT NOT NULL,
+           updated_at TEXT NOT NULL
          );
          CREATE TABLE IF NOT EXISTS credential_secrets (
            service TEXT NOT NULL,
@@ -217,10 +223,11 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     crate::generative_ui::store::migrate(&transaction)?;
     crate::coding::repository::migrate(&transaction)?;
     crate::steward::schema::migrate(&transaction)?;
+    crate::task_queue::migrate(&transaction)?;
     crate::coding::recovery::reconcile(&transaction)
         .map_err(rusqlite::Error::InvalidParameterName)?;
     crate::runtime::context::schema::migrate(&transaction)?;
-    crate::runtime::butler_loop::ensure_schema(&transaction)?;
+    super::legacy_conversation_schema::ensure_schema(&transaction)?;
     crate::records::schema::migrate(&transaction)?;
     crate::runtime::context::segment::schema::migrate(&transaction)?;
     crate::generated_capabilities::schema::migrate(&transaction)?;
@@ -287,7 +294,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     super::remove_legacy_provider::migrate(&transaction)?;
     reconcile_interrupted_runs(&transaction)?;
     super::audit::initialize_schema(&transaction)?;
-    crate::larm_voice::frontdesk_repository::migrate(&transaction)?;
+    super::legacy_conversation_schema::ensure_lfm_history_schema(&transaction)?;
     transaction.execute(
         "INSERT INTO audit_events(id,occurred_at,component,event_name,phase,outcome,attributes_json)
          VALUES(?1,?2,'app','database-ready','terminal','success','{}')",

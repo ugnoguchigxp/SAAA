@@ -47,6 +47,8 @@ export const enCore = {
     work: "Work",
     records: "Records",
     audit: "Audit",
+    unitTest: "Unit tests",
+    ttsDictionary: "TTS dictionary",
     settings: "Settings",
   },
   memoryPage: {
@@ -162,12 +164,16 @@ export const enCore = {
     micPause: "Pause always-on listening",
     micRetry: "Retry always-on listening",
     voiceIndicatorPaused: "Always-on listening is paused",
+    voiceIndicatorPreparing: "Preparing speech recognition",
     voiceIndicatorIdle: "Waiting for speech",
     voiceIndicatorActive: "Detecting speech",
+    voicePreparingHint:
+      "Preparing the microphone and speech recognition. Speak when the microphone turns red.",
     listeningHint:
-      "Always-on listening is active. Your speech is sent automatically after {{seconds}} seconds of silence.",
+      "You can speak now. Your speech is sent automatically after {{seconds}} seconds of silence.",
     pausedHint: "Always-on listening is paused.",
-    speakingHint: "Listening is paused during speech playback and resumes automatically afterward.",
+    speakingHint:
+      "Listening continues during playback. Playback-time transcripts are withheld to prevent false input.",
     stopSpeech: "Stop speaking",
     retrySpeech: "Retry speaking",
     retryResponse: "Retry response",
@@ -198,7 +204,8 @@ export const enCore = {
     pacePatient: "Patient",
     activity: {
       generationCancelled: "Generation cancelled",
-      cancelledAfterSearch: "The response was cancelled after web search, before the answer. You can send the request again.",
+      cancelledAfterSearch:
+        "The response was cancelled after web search, before the answer. You can send the request again.",
       voiceQueryQueued: "Voice query queued until the active response completes",
       providerFailed: "A provider could not complete the request.",
       usingProvider: "Using {{provider}}",

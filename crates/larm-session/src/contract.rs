@@ -3,41 +3,163 @@ use std::{collections::HashMap, time::Duration};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
-pub const PROVIDERS: [(&str, &str); 4] = [
+pub const BASE_PROVIDERS: [(&str, &str); 4] = [
     ("tts", "openai.audio-speech.v1"),
     ("asr", "openai.audio-transcriptions.v1"),
     ("llm", "openai.chat-completions.v1"),
     ("embedding", "larm.embedding.v1"),
 ];
-pub const DEFAULT_PROFILE: &str = "SAAA";
+pub const BACKCHANNEL: (&str, &str) = ("backchannel", "openai.chat-completions.v1");
+pub const DEFAULT_SELECTOR: &str = "SAAA";
+/// Profile ids SAAA shipped as defaults before LARM offered selectors. Stored values resolve to `SAAA`.
+pub const LEGACY_PROFILE_IDS: [&str; 3] = [
+    "saaa-conversation-ornith15",
+    "saaa-conversation-gemma4",
+    "saaa-qwen38",
+];
 
-pub(crate) fn profile_selector(profile: &str) -> Result<&str, &'static str> {
-    match profile {
-        "SAAA" | "saaa-conversation-gemma4" | "saaa-conversation-ornith15" | "saaa-qwen38" => {
-            Ok("SAAA")
+pub fn required_providers() -> Vec<&'static str> {
+    BASE_PROVIDERS
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(std::iter::once(BACKCHANNEL.0))
+        .collect()
+}
+
+pub(crate) fn verify_against_catalog(
+    snapshot: &Snapshot,
+    catalog: &crate::catalog::CatalogProfile,
+) -> Result<(), &'static str> {
+    for (name, claimed) in &snapshot.providers {
+        let declared = catalog
+            .provider(name)
+            .ok_or("larm_catalog_claim_mismatch")?;
+        if declared.model != claimed.model || declared.protocol != claimed.protocol {
+            return Err("larm_catalog_claim_mismatch");
         }
-        "SAAA-w-Image" | "saaa-conversation-ornith15-image" => Ok("SAAA-w-Image"),
-        "SAAA-w-music" | "saaa-conversation-ornith15-music" => Ok("SAAA-w-music"),
-        _ => Err("larm_invalid_profile"),
+        if matches!(name.as_str(), "llm" | "backchannel")
+            && declared.context_window != claimed.context_window
+        {
+            return Err("larm_catalog_claim_mismatch");
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn accepted_provider(name: &str) -> Option<&'static str> {
+    BASE_PROVIDERS
+        .iter()
+        .chain(std::iter::once(&BACKCHANNEL))
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, protocol)| *protocol)
+}
+pub(crate) fn expected_endpoint(name: &str) -> Option<&'static str> {
+    match name {
+        "llm" | "backchannel" => Some("/v1/chat/completions"),
+        "asr" => Some("/v1/audio/transcriptions"),
+        "tts" => Some("/v1/audio/speech"),
+        "embedding" => Some("/v1/embed"),
+        _ => None,
     }
 }
 
-#[cfg(test)]
-mod profile_tests {
-    use super::profile_selector;
-
-    #[test]
-    fn maps_legacy_canonical_profiles_to_public_selectors() {
-        assert_eq!(profile_selector("saaa-conversation-gemma4"), Ok("SAAA"));
-        assert_eq!(
-            profile_selector("saaa-conversation-ornith15-image"),
-            Ok("SAAA-w-Image")
-        );
-        assert_eq!(
-            profile_selector("unknown-profile"),
-            Err("larm_invalid_profile")
-        );
+pub(crate) fn validate_created(
+    value: &Value,
+    selector: &str,
+    required: &[&str],
+    catalog: Option<&crate::catalog::CatalogProfile>,
+) -> Result<(), &'static str> {
+    if value["profile"] != selector || string(value, "agentProfile").is_err() {
+        return Err("larm_invalid_contract");
     }
+    let status = string(value, "status")?;
+    if !matches!(status, "ready" | "pending" | "deploying" | "probing") {
+        return Err("larm_startup_terminal");
+    }
+    let raw = value["providers"]
+        .as_array()
+        .ok_or("larm_invalid_contract")?;
+    if raw.len() != required.len() {
+        return Err("larm_missing_provider");
+    }
+    let mut seen = std::collections::HashSet::new();
+    for provider in raw {
+        let name = string(provider, "name")?;
+        if !required.contains(&name) || !seen.insert(name) {
+            return Err("larm_invalid_provider");
+        }
+        if provider["protocol"] != accepted_provider(name).ok_or("larm_invalid_provider")?
+            || provider["endpoint"] != expected_endpoint(name).ok_or("larm_invalid_provider")?
+            || string(provider, "model").is_err()
+        {
+            return Err("larm_invalid_provider");
+        }
+        if status == "ready" && provider["readiness"] != "ready" {
+            return Err("larm_provider_not_ready");
+        }
+        if status == "ready" && provider["claimable"] != true {
+            return Err("larm_provider_not_claimable");
+        }
+        if let Some(catalog) = catalog {
+            let declared = catalog
+                .provider(name)
+                .ok_or("larm_catalog_claim_mismatch")?;
+            if provider["model"] != declared.model
+                || provider["protocol"] != declared.protocol
+                || declared.endpoint != expected_endpoint(name).ok_or("larm_invalid_provider")?
+            {
+                return Err("larm_catalog_claim_mismatch");
+            }
+        }
+    }
+    if let Some(catalog) = catalog {
+        if value["agentProfile"] != catalog.id {
+            return Err("larm_catalog_claim_mismatch");
+        }
+    }
+    let expected_service = match selector {
+        "SAAA-w-Image" => Some((
+            "image",
+            "media.image.generate",
+            "larm.image-generation.v1",
+            "/v1/images/generations",
+        )),
+        "SAAA-w-music" => Some((
+            "music",
+            "media.music.generate",
+            "larm.music-generation.v1",
+            "/v1/music/generations",
+        )),
+        _ => None,
+    };
+    let services = value["services"]
+        .as_array()
+        .ok_or("larm_invalid_contract")?;
+    if services.len() != usize::from(expected_service.is_some()) {
+        return Err("larm_invalid_service");
+    }
+    if let Some((name, capability, protocol, endpoint)) = expected_service {
+        let service = &services[0];
+        if service["name"] != name
+            || service["capability"] != capability
+            || service["protocol"] != protocol
+            || service["endpoint"] != endpoint
+            || string(service, "model").is_err()
+        {
+            return Err("larm_invalid_service");
+        }
+        if let Some(catalog) = catalog {
+            let declared = catalog
+                .services
+                .iter()
+                .find(|entry| entry.name == name)
+                .ok_or("larm_invalid_service")?;
+            if service["model"] != declared.model {
+                return Err("larm_invalid_service");
+            }
+        }
+    }
+    Ok(())
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContextWindow {
@@ -130,7 +252,7 @@ fn endpoint(value: &str) -> Result<url::Url, &'static str> {
     }
     Ok(url)
 }
-fn context_window(raw: &Value) -> Result<ContextWindow, &'static str> {
+pub(crate) fn context_window(raw: &Value) -> Result<ContextWindow, &'static str> {
     let value = raw
         .get("contextWindow")
         .ok_or("larm_missing_context_window")?;
@@ -168,7 +290,7 @@ fn embedding_space(raw: &Value) -> Result<EmbeddingSpace, &'static str> {
         .ok_or("larm_invalid_embedding_space")?;
     Ok(EmbeddingSpace { dimension })
 }
-pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
+pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapshot, &'static str> {
     if value["id"] != id || value["status"] != "ready" {
         return Err("larm_invalid_claim");
     }
@@ -177,10 +299,13 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
     let mut providers = HashMap::new();
     for raw in value["providers"].as_array().ok_or("larm_invalid_claim")? {
         let name = string(raw, "name")?;
-        let Some((_, protocol)) = PROVIDERS.iter().find(|(n, _)| *n == name) else {
+        if !required.contains(&name) {
+            return Err("larm_invalid_provider");
+        }
+        let Some(protocol) = accepted_provider(name) else {
             continue;
         };
-        if providers.contains_key(name) || raw["protocol"] != *protocol {
+        if providers.contains_key(name) || raw["protocol"] != protocol {
             return Err("larm_invalid_provider");
         }
         let token = string(&raw["credential"], "token")?;
@@ -191,7 +316,7 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
             .as_u64()
             .filter(|v| *v > 0 && *v <= 600_000)
             .ok_or("larm_invalid_health")?;
-        let context_window = if name == "llm" {
+        let context_window = if name == "llm" || name == "backchannel" {
             Some(context_window(raw)?)
         } else {
             None
@@ -202,6 +327,14 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
             None
         };
         let fields = &raw["configuration"]["fields"];
+        let url_field = if name == "embedding" {
+            "daemonURL"
+        } else {
+            "baseURL"
+        };
+        if fields[url_field] != raw["baseUrl"] || fields["model"] != raw["model"] {
+            return Err("larm_invalid_provider_configuration");
+        }
         providers.insert(
             name.to_string(),
             Provider {
@@ -223,9 +356,8 @@ pub(crate) fn parse(value: Value, id: &str) -> Result<Snapshot, &'static str> {
             },
         );
     }
-    if PROVIDERS
-        .iter()
-        .any(|(name, _)| !providers.contains_key(*name))
+    if providers.len() != required.len()
+        || required.iter().any(|name| !providers.contains_key(*name))
     {
         return Err("larm_missing_provider");
     }

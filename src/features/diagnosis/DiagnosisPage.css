@@ -10,6 +10,8 @@
 }
 
 .diagnosis-page-header {
+  display: flex;
+  gap: 8px;
   position: absolute;
   z-index: 19;
   top: 8px;
@@ -187,6 +189,7 @@
   color: #b7c6d6;
   font-size: 13px;
   line-height: 1.45;
+  white-space: pre-line;
 }
 
 .diagnosis-stage-success {

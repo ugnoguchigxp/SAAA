@@ -1,0 +1,12 @@
+{
+  "observedAtUtc": "2026-09-26T10:42:53Z",
+  "profile": "SAAA",
+  "catalogHttp": 200,
+  "agentConnectionCreated": true,
+  "lastStatus": "probing",
+  "pollElapsedSeconds": 41.1,
+  "claimed": false,
+  "ornithGenerationAttempted": false,
+  "agentConnectionReleased": true,
+  "notes": "Agent Connection was created through the LARM control API. No direct provider request was sent because the connection did not become ready. Credentials and conversation content were not recorded."
+}

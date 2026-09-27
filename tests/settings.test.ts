@@ -76,6 +76,10 @@ function documents() {
         silenceTimeoutMs: 1500,
         allowedLanguages: ["ja"],
         autoSpeak: true,
+        aecEnabled: true,
+        otherAudioDucking: "min",
+        vpioOnBluetooth: false,
+        bargeInEnabled: true,
       },
     },
     {

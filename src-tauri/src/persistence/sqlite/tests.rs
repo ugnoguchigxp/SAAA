@@ -415,7 +415,10 @@ fn reopening_legacy_settings_restores_the_settings_snapshot() {
                 .execute(
                     r#"UPDATE settings_documents
                      SET value_json=json_set(value_json, '$.actors',
-                         json('[{"id":"legacy","label":"Legacy","aliases":[],"transport":"provider","providerId":"local","model":"old-model","location":"local","resourceGroup":"local","maxInputBytes":1024,"capabilities":[]}]'))
+                         json('[{"id":"legacy","label":"Legacy","aliases":[],"transport":"provider","providerId":"local","model":"old-model","location":"local","resourceGroup":"local","maxInputBytes":1024,"capabilities":[]}]'),
+                         '$.enabled', json('false'), '$.roles.frontend', json('null'),
+                         '$.roles.reasoner', 'legacy', '$.recipes',
+                         json('[{"id":"legacy-respond","action":"respond","roles":["reasoner"],"enabled":true}]'))
                      WHERE namespace='routing.roles' AND key='default'"#,
                     [],
                 )

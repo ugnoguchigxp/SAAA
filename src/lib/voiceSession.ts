@@ -61,6 +61,8 @@ export function voiceCaptureState(
       : "stopped";
   }
   if (state.capture === "recording" && !state.finalizing) return "listening";
+  // A paused microphone is not a new ASR start. "preparing" is only for a start still in progress.
+  if (state.capture === "suspended") return "listening";
   return "preparing";
 }
 

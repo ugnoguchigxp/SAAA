@@ -15,19 +15,6 @@ function posix(path: string): string {
   return relative(ROOT, path).split(sep).join("/");
 }
 
-function frozenSourcePaths(): Set<string> {
-  const freezePath = join(ROOT, "critical-path-freeze.json");
-  if (!existsSync(freezePath)) return new Set();
-  const freeze = JSON.parse(readFileSync(freezePath, "utf8")) as {
-    domains?: Record<string, { files?: Record<string, unknown> }>;
-  };
-  const paths = new Set<string>();
-  for (const domain of Object.values(freeze.domains ?? {})) {
-    for (const path of Object.keys(domain.files ?? {})) paths.add(path);
-  }
-  return paths;
-}
-
 function isExcludedPath(path: string): boolean {
   const lower = path.toLowerCase();
   if (lower.includes("test")) return true;
@@ -47,7 +34,6 @@ function countOccurrences(source: string, needle: string): number {
 }
 
 export function auditUnwraps(): AuditRow[] {
-  const frozen = frozenSourcePaths();
   const rows: AuditRow[] = [];
   const rustRoot = join(ROOT, "src-tauri/src");
   if (!existsSync(rustRoot)) return rows;
@@ -55,7 +41,7 @@ export function auditUnwraps(): AuditRow[] {
   for (const absolute of walk(rustRoot)) {
     if (!absolute.endsWith(".rs")) continue;
     const path = posix(absolute);
-    if (isExcludedPath(path) || frozen.has(path)) continue;
+    if (isExcludedPath(path)) continue;
     const content = readFileSync(absolute, "utf8");
     const source = productionSource(content, path);
     if (!source) continue;

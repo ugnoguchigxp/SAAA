@@ -20,6 +20,7 @@ pub(super) fn rr_04_queue_full_leaves_no_input_message() {
         location: "local".into(),
         resource_group: "gpu".into(),
         max_input_bytes: 1024,
+        larm_provider: None,
         capabilities: vec!["reason".into()],
     });
     policy.roles.reasoner = Some("qwen".into());
@@ -99,6 +100,7 @@ pub(super) fn ai_08_provider_terminal_result_is_recorded_for_the_dispatch_decisi
         location: "local".into(),
         resource_group: "gpu".into(),
         max_input_bytes: 1024,
+        larm_provider: None,
         capabilities: vec!["reason".into()],
     });
     policy.roles.reasoner = Some("qwen".into());

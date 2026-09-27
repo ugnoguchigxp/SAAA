@@ -143,6 +143,105 @@ fn voice_asr_channel_audits_metadata_without_transcript_text() {
     assert!(!encoded.contains("\"ja\""));
 }
 
+#[tokio::test]
+async fn voice_asr_channel_observes_final_without_delivering_work_or_text_to_audit() {
+    let connection = Arc::new(crate::persistence::SqliteWriter::from_connection(
+        Connection::open_in_memory().expect("database opens"),
+    ));
+    crate::initialize_database(&connection.lock().expect("database lock"))
+        .expect("database initializes");
+    let channel = Channel::new(|_| Ok(()));
+    let audited = VoiceAsrAuditChannel::new(
+        channel,
+        connection.clone(),
+        crate::PRIMARY_CONVERSATION_ID.to_string(),
+    );
+    audited
+        .send(VoiceAsrStreamEvent::Ready {
+            session_id: "shadow_session".into(),
+            current_utterance_id: "shadow_utterance".into(),
+            protocol: "batch-agreement",
+            scope: "all-speakers",
+        })
+        .expect("ready sends");
+    audited
+        .send(VoiceAsrStreamEvent::Final {
+            session_id: "shadow_session".into(),
+            utterance_id: "shadow_utterance".into(),
+            revision: 1,
+            start_ms: 0,
+            end_ms: 100,
+            text: "private spoken words".into(),
+            language: Some("en".into()),
+        })
+        .expect("final sends");
+    let mut observed = false;
+    for _ in 0..100 {
+        let encoded = {
+            let db = connection.lock().expect("database lock");
+            serde_json::to_string(&recent_events(&db, 20).expect("events load"))
+                .expect("events encode")
+        };
+        assert!(!encoded.contains("private spoken words"));
+        if encoded.contains("jarvis-observed-dispatch") {
+            observed = true;
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(observed, "shadow dispatch should be audited");
+}
+
+#[tokio::test]
+async fn voice_asr_commit_boundary_flushes_latest_partial_to_shadow_only() {
+    let connection = Arc::new(crate::persistence::SqliteWriter::from_connection(
+        Connection::open_in_memory().expect("database opens"),
+    ));
+    crate::initialize_database(&connection.lock().expect("database lock"))
+        .expect("database initializes");
+    let audited = VoiceAsrAuditChannel::new(
+        Channel::new(|_| Ok(())),
+        connection.clone(),
+        crate::PRIMARY_CONVERSATION_ID.to_string(),
+    );
+    audited
+        .send(VoiceAsrStreamEvent::Ready {
+            session_id: "boundary_session".into(),
+            current_utterance_id: "boundary_utterance".into(),
+            protocol: "batch-agreement",
+            scope: "all-speakers",
+        })
+        .expect("ready sends");
+    audited
+        .send(VoiceAsrStreamEvent::Partial {
+            session_id: "boundary_session".into(),
+            utterance_id: "boundary_utterance".into(),
+            revision: 1,
+            start_ms: 0,
+            end_ms: 100,
+            stable_text: "private".into(),
+            unstable_text: " words".into(),
+            language: None,
+        })
+        .expect("partial sends");
+    super::voice_frontend_observer::observe_boundary("boundary_session");
+    let mut observed = false;
+    for _ in 0..100 {
+        let encoded = {
+            let db = connection.lock().expect("database lock");
+            serde_json::to_string(&recent_events(&db, 20).expect("events load"))
+                .expect("events encode")
+        };
+        assert!(!encoded.contains("private words"));
+        if encoded.contains("jarvis-observed-dispatch") {
+            observed = true;
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(observed, "boundary should flush the latest partial");
+}
+
 #[test]
 fn turn_request_links_voice_utterance_to_runtime_run() {
     let connection = Connection::open_in_memory().expect("database opens");

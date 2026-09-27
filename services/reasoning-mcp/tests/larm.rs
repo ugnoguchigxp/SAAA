@@ -29,12 +29,13 @@ async fn larm(State(fake): State<Arc<Fake>>, request: Request) -> Response {
         if path.ends_with("/claim") {
             value["providers"]=json!([
                 ("llm","openai.chat-completions.v1"),("tts","openai.audio-speech.v1"),
-                ("embedding","larm.embedding.v1"),("asr","openai.audio-transcriptions.v1")
+                ("embedding","larm.embedding.v1"),("asr","openai.audio-transcriptions.v1"),
+                ("backchannel","openai.chat-completions.v1")
             ].iter().map(|(name,protocol)|json!({"name":name,"protocol":protocol,
                 "baseUrl":format!("{}/{name}/v1",fake.base),"model":format!("{name}-from-claim"),
                 "configuration":{"fields":{}},
                 "credential":{"token":format!("{name}-exclusive-token")},"health":{"url":format!("{}/{name}/health",fake.base),"maxAgeMs":10000},
-                "contextWindow":if *name=="llm" {json!({"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976})} else {Value::Null},
+                "contextWindow":if *name=="llm" || *name=="backchannel" {json!({"maxTokens":230400,"outputReserveTokens":4096,"safetyMarginTokens":1976})} else {Value::Null},
                 "embeddingSpace":if *name=="embedding" {json!({"dimension":384})} else {Value::Null}})).collect::<Vec<_>>());
             return Json(value).into_response();
         }
@@ -82,7 +83,7 @@ async fn mcp_uses_the_session_claim_and_does_not_invent_context_headers() {
     let (_stop, receiver) = tokio::sync::watch::channel(false);
     let session = saaa_larm_session::Session::connect_with_profile_and_credential(
         &fake.base,
-        saaa_larm_session::DEFAULT_PROFILE,
+        "saaa-conversation-ornith15",
         "test-control-token".into(),
         receiver,
     )

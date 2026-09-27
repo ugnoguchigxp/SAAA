@@ -23,10 +23,6 @@ pub(crate) use crate::runtime::codex_turn::{
 pub(crate) use crate::runtime::turns::finish_runtime_run;
 #[cfg(test)]
 pub(crate) use crate::runtime::turns::prepare_runtime_run;
-use crate::voice::streaming_asr::{
-    append_voice_asr_audio, commit_voice_asr_utterance, start_voice_asr_session,
-    stop_voice_asr_session, AsrSessionManager,
-};
 use crate::voice_behavior::{
     get_conversation_voice_policy, reset_conversation_voice_policy,
     update_conversation_voice_policy,
@@ -53,7 +49,7 @@ use tauri::Manager;
 pub(crate) const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 pub(crate) const DYNAMIC_LAN_PROVIDER_ID: &str = "lan-llm-dynamic";
 pub(crate) const QWEN_DIRECT_PROVIDER_ID: &str = "lan-qwen-direct";
-pub(crate) const DEFAULT_DYNAMIC_LAN_HOST: &str = "gnosis.local";
+pub(crate) const DEFAULT_DYNAMIC_LAN_HOST: &str = "192.168.0.130";
 pub(crate) const DEFAULT_AGENT_NAME: &str = "SAAA";
 pub(crate) const DEFAULT_USER_NAME: &str = "";
 pub(crate) const PRIMARY_CONVERSATION_ID: &str = "conversation_primary";
@@ -202,7 +198,7 @@ pub(super) async fn test_model_provider(
 pub(super) async fn resolve_service_harness(
     address: String,
 ) -> Result<crate::providers::service_harness::HarnessResolution, String> {
-    crate::providers::service_harness::resolve_with_legacy_llm(&address).await
+    crate::providers::service_harness::resolve_with_legacy_llm(&address, None).await
 }
 #[tauri::command]
 pub(super) fn set_provider_api_key(
@@ -351,7 +347,6 @@ pub(super) fn shutdown_app_state(state: &AppState) {
     }
     // Stop the published MCP listener; the D4 manager and result writer stay alive for their tasks.
     crate::tool_selection::mcp_server::shutdown_slot(&state.mcp_server);
-    state.voice_asr.shutdown();
     state.streaming_tts.shutdown();
     if let Ok(active_runs) = state.active_runs.lock() {
         for cancellation in active_runs.values() {

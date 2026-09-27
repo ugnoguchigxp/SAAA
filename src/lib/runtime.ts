@@ -1,5 +1,4 @@
-import { runtimeEventOrder } from "./ipcEventOrder";
-import { appSnapshotSchema, runtimeEventSchema, parseIpc, guardedReceiver } from "./ipcValidation";
+import { appSnapshotSchema, parseIpc } from "./ipcValidation";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { stageAudioUpload } from "./audioIpc";
 import type {
@@ -10,7 +9,6 @@ import type {
   ModelProviderSettings,
   LocalArtifactResult,
   ProviderTestResult,
-  RuntimeEvent,
   SettingsDocument,
   VoiceProfileSnapshot,
 } from "./contracts";
@@ -21,79 +19,6 @@ export {
   resolveServiceHarness,
   setProviderApiKey,
 } from "./providerRuntime";
-export {
-  appendVoiceAsrAudio,
-  commitVoiceAsrUtterance,
-  startVoiceAsrSession,
-  stopVoiceAsrSession,
-} from "./voiceAsrRuntime";
-
-export async function appendRunningInput(input: {
-  conversationId: string;
-  runId: string;
-  content: string;
-}): Promise<{ messageId: string; transferred: boolean }> {
-  return invoke("append_running_input", { input });
-}
-
-export async function acknowledgeConversationMessage(
-  conversationId: string,
-  runId: string,
-  messageId: string,
-): Promise<void> {
-  return invoke<void>("acknowledge_conversation_message", { conversationId, runId, messageId });
-}
-
-export async function firstUnconsumedConversationInput(
-  conversationId: string,
-): Promise<{ messageId: string; content: string; priorStatus: string } | null> {
-  return invoke("first_unconsumed_conversation_input", { conversationId });
-}
-
-export async function conversationEventHead(conversationId: string): Promise<number> {
-  return invoke<number>("conversation_event_head", { conversationId });
-}
-
-export async function startTurn(
-  input: {
-    runId: string;
-    conversationId: string;
-    content: string;
-    workspacePath: string | null;
-    retryInputMessageId?: string | null;
-    scopeRefs?: Array<{
-      kind: "user" | "project" | "task" | "resource" | "request";
-      id: string;
-      relation: "shared" | "parent" | "focus" | "current";
-    }>;
-    sourceId?: string | null;
-    inputOrigin: "text" | "voice";
-    presentationMode: "visual" | "visual-and-spoken";
-  },
-  onEvent: (event: RuntimeEvent) => void,
-): Promise<void> {
-  const channel = new Channel<unknown>();
-  channel.onmessage = guardedReceiver(
-    runtimeEventSchema,
-    "runtime",
-    onEvent,
-    runtimeEventOrder(input.runId),
-    () => {
-      void cancelRun(input.runId, "invalid-ipc-event").catch(() => undefined);
-    },
-  );
-  return invoke<void>("start_turn", { input, onEvent: channel });
-}
-
-export type CancelRunReason =
-  | "invalid-ipc-event"
-  | "conversation-unmounted"
-  | "replaced-by-new-prompt"
-  | "user-stop";
-
-export async function cancelRun(runId: string, reason: CancelRunReason): Promise<void> {
-  return invoke<void>("cancel_run", { runId, reason });
-}
 
 export type TtsVoiceCatalog = {
   defaultVoice?: string;
@@ -204,6 +129,85 @@ export async function listMessages(
       input: { conversationId, cursor },
     },
   );
+}
+
+export async function submitConversationText(
+  inputId: string,
+  text: string,
+  source: "configured" | "larm",
+  onStage: (stage: "ornith") => void,
+): Promise<{
+  content: string;
+  model: string;
+  providerLabel: string;
+}> {
+  const channel = new Channel<{ stage: "ornith" }>();
+  channel.onmessage = ({ stage }) => onStage(stage);
+  return invoke("submit_conversation_text", { input: { inputId, text, source }, onStage: channel });
+}
+
+export async function speakConversationAnswer(inputId: string): Promise<void> {
+  return invoke<void>("speak_conversation_answer", { inputId });
+}
+
+export type ConversationQueueJob = {
+  id: string;
+  kind: string;
+  key: string;
+  state: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  error: string | null;
+};
+
+export async function enqueueConversationText(
+  inputId: string,
+  text: string,
+): Promise<{ inputId: string; jobId: string }> {
+  return invoke("enqueue_conversation_text", { inputId, text });
+}
+
+export async function conversationQueueSnapshot(): Promise<{ jobs: ConversationQueueJob[]; speechPlaying: boolean }> {
+  return invoke("conversation_queue_snapshot");
+}
+
+export async function startConversationAudioIdle(): Promise<void> {
+  return invoke("start_conversation_audio_idle");
+}
+
+export async function stopConversationAudioIdle(): Promise<void> {
+  return invoke("stop_conversation_audio_idle");
+}
+
+export async function conversationAudioIdleStatus(): Promise<{
+  running: boolean;
+  speaking: boolean;
+  renderedSamples: number;
+  error: string | null;
+}> {
+  return invoke("conversation_audio_idle_status");
+}
+
+export async function cancelConversationInput(inputId: string): Promise<void> {
+  return invoke("cancel_conversation_input", { inputId });
+}
+
+export async function replayConversationSpeech(inputId: string): Promise<void> {
+  return invoke("replay_conversation_speech", { inputId });
+}
+
+export async function transcribeConversationAudio(
+  audioUploadId: string,
+  utteranceId: string,
+  kind: "partial" | "final",
+): Promise<{
+  text: string;
+  language: string | null;
+  providerLabel: string;
+}> {
+  return invoke("transcribe_conversation_audio", { input: { audioUploadId, utteranceId, kind } });
+}
+
+export async function releaseConversationAsrSession(): Promise<void> {
+  return invoke("release_conversation_asr_session");
 }
 
 export async function prepareComposerImage(png: Uint8Array): Promise<{

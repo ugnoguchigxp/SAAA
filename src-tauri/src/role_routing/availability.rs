@@ -43,6 +43,7 @@ mod tests {
             location: "local".into(),
             resource_group: "lan".into(),
             max_input_bytes: 1024,
+            larm_provider: None,
             capabilities: vec!["reason".into()],
         }
     }
@@ -63,6 +64,7 @@ mod tests {
                 location: "cloud".into(),
                 resource_group: "cloud".into(),
                 max_input_bytes: 1024,
+                larm_provider: None,
                 capabilities: vec!["reason".into()],
             },
         ];

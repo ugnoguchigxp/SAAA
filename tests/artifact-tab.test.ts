@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { UiInstance } from "../src/lib/generated/generativeUi";
 import {
   artifactTabId,
+  nextWebsiteTabIndex,
+  planWebviewCommand,
   reduceArtifactSessions,
   reduceArtifactWorkspace,
   type ArtifactTab,
@@ -79,6 +81,22 @@ describe("artifact tab reducer", () => {
     expect(state.activeTabId).toBe("source:c1:https://example.com/0");
     state = reduceArtifactWorkspace(state, { type: "close-source-tabs", conversationId: "c1" });
     expect(state.tabs).toHaveLength(0);
+  });
+
+  test("a single website tab stays selected when moving next", () => {
+    expect(nextWebsiteTabIndex(0, 1, 1)).toBe(0);
+    expect(nextWebsiteTabIndex(0, 2, 1)).toBe(1);
+    expect(nextWebsiteTabIndex(0, 0, 1)).toBeNull();
+    expect(planWebviewCommand("next_tab", 0, 1)).toEqual({ outcome: "ack-now" });
+    expect(planWebviewCommand("next_tab", 0, 2)).toEqual({
+      outcome: "reduce-then-ack",
+      action: "select",
+    });
+    expect(planWebviewCommand("scroll", 0, 1)).toEqual({ outcome: "scroll-then-ack" });
+    expect(planWebviewCommand("close_all_tabs", 0, 2)).toEqual({
+      outcome: "reduce-then-ack",
+      action: "close-all",
+    });
   });
 
   test("keeps website tabs on the conversation that produced them", () => {

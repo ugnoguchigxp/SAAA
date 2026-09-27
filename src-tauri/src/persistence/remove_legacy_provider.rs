@@ -83,6 +83,9 @@ mod tests {
         routing["conversationRespond"]["primaryProviderId"] = json!("old-larm");
         routing["conversationRespond"]["fallbackProviderIds"] = json!(["cloud"]);
         write(&connection, "routing.tasks", &routing).unwrap();
+        let mut roles = read(&connection, "routing.roles").unwrap().unwrap();
+        roles["enabled"] = json!(false);
+        write(&connection, "routing.roles", &roles).unwrap();
         crate::initialize_database(&connection).unwrap();
         assert!(crate::persistence::load_model_providers(&connection)
             .unwrap()

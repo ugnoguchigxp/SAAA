@@ -6,6 +6,7 @@ pub(crate) mod completion;
 pub(crate) mod dynamic_lan;
 pub(crate) mod http;
 pub(crate) mod http_metrics;
+pub(crate) mod larm_resources;
 pub(crate) mod openai_compatible;
 pub(crate) mod probe;
 mod probe_state;

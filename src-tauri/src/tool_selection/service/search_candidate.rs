@@ -245,6 +245,12 @@ impl ToolSelectionService {
                 let eligible =
                     repository::eligible_revisions(connection, &principal, project.as_deref(), now)
                         .map_err(|error| error.to_string())?;
+                let (eligible, _, _) = crate::artifact_preview::webview_ops::restrict_candidates(
+                    &conversation,
+                    eligible,
+                    Vec::new(),
+                    Vec::new(),
+                );
                 // Count display names so a name published by two sources can be offered to the
                 // extractor as a source-qualified alternative instead of an ambiguous bare name.
                 let mut name_counts: std::collections::HashMap<String, usize> =
@@ -357,6 +363,13 @@ impl ToolSelectionService {
                     now,
                 )
                 .map_err(|error| error.to_string())?;
+                let (eligible, lexical, embeddings) =
+                    crate::artifact_preview::webview_ops::restrict_candidates(
+                        &conversation,
+                        eligible,
+                        lexical,
+                        embeddings,
+                    );
                 Ok(Snapshot {
                     epochs,
                     eligible,
