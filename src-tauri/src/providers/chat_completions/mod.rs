@@ -119,19 +119,44 @@ pub(crate) async fn run_with_proxy_policy(
             }
             serde_json::from_slice::<Value>(&bytes).map_err(|_| Failure::Protocol)
         }) => result.map_err(|_| ProviderAttemptError::failed(Failure::Timeout, false))?
-            .map_err(|kind| ProviderAttemptError::failed(kind, false))?,
+            .map_err(|kind| ProviderAttemptError::failed_with_detail(
+                kind, false, (kind == Failure::Protocol).then_some("invalid-chat-json"),
+            ))?,
     };
     let choice = response["choices"]
         .as_array()
         .and_then(|choices| (choices.len() == 1).then(|| &choices[0]))
-        .ok_or_else(|| ProviderAttemptError::failed(Failure::Protocol, false))?;
-    if choice["finish_reason"] != "stop" || !choice["message"]["tool_calls"].is_null() {
-        return Err(ProviderAttemptError::failed(Failure::Protocol, false));
+        .ok_or_else(|| {
+            ProviderAttemptError::failed_with_detail(
+                Failure::Protocol,
+                false,
+                Some("invalid-chat-choices"),
+            )
+        })?;
+    if choice["finish_reason"] != "stop" {
+        return Err(ProviderAttemptError::failed_with_detail(
+            Failure::Protocol,
+            false,
+            Some("chat-finish-reason-not-stop"),
+        ));
+    }
+    if !choice["message"]["tool_calls"].is_null() {
+        return Err(ProviderAttemptError::failed_with_detail(
+            Failure::Protocol,
+            false,
+            Some("unexpected-chat-tool-call"),
+        ));
     }
     let content = choice["message"]["content"]
         .as_str()
         .filter(|text| !text.trim().is_empty())
-        .ok_or_else(|| ProviderAttemptError::failed(Failure::Protocol, false))?
+        .ok_or_else(|| {
+            ProviderAttemptError::failed_with_detail(
+                Failure::Protocol,
+                false,
+                Some("missing-chat-content"),
+            )
+        })?
         .to_string();
     Ok(content)
 }

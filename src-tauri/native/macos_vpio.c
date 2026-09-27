@@ -14,6 +14,7 @@ struct SaaaVpio {
     AudioUnit unit;
     void *playback_ring;
     void *capture_ring;
+    void *reference_ring;
     SaaaRingWriteF32 write_capture;
     SaaaRingReadF32 read_playback;
     SaaaFlagFn on_route_change;
@@ -81,6 +82,9 @@ static OSStatus render_cb(void *inRefCon, AudioUnitRenderActionFlags *ioActionFl
         }
         if (inNumberFrames > n) {
             memset(dst + n, 0, (size_t)(inNumberFrames - n) * sizeof(float));
+        }
+        if (session->write_capture != NULL && session->reference_ring != NULL) {
+            session->write_capture(session->reference_ring, dst, inNumberFrames);
         }
     }
     for (UInt32 i = 1; i < ioData->mNumberBuffers; i++) {
@@ -222,6 +226,7 @@ int saaa_audio_default_output_transport(uint32_t *transport) {
 }
 
 SaaaVpio *saaa_vpio_create(const SaaaVpioConfig *config, void *playback_ring, void *capture_ring,
+    void *reference_ring,
     SaaaRingWriteF32 write_capture, SaaaRingReadF32 read_playback, SaaaFlagFn on_route_change,
     void *route_ctx, char *err, uint32_t err_len) {
     if (config == NULL || config->sample_rate == 0) {
@@ -249,6 +254,7 @@ SaaaVpio *saaa_vpio_create(const SaaaVpioConfig *config, void *playback_ring, vo
     }
     session->playback_ring = playback_ring;
     session->capture_ring = capture_ring;
+    session->reference_ring = reference_ring;
     session->write_capture = write_capture;
     session->read_playback = read_playback;
     session->on_route_change = on_route_change;

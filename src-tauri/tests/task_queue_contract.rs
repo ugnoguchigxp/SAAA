@@ -34,10 +34,18 @@ fn cancellation_uses_input_order_when_downstream_jobs_are_created_late() {
     assert!(queue_input_state::active_previous(&db, "c", "a")
         .unwrap()
         .is_none());
+    // A remains cancellable after reasoning completes, while its audio is queued.
+    task_queue::finish(&db, &research).unwrap();
+    task_queue::enqueue(&db, "c", "speech", "speech", "a", 0, "{}", None).unwrap();
+    let speech = task_queue::claim(&mut db, "speech").unwrap().unwrap();
+    assert_eq!(
+        queue_input_state::active_previous(&db, "c", "b").unwrap(),
+        Some(("a".into(), "調査して".into()))
+    );
     let tx = db.transaction().unwrap();
     queue_input_state::cancel(&tx, "c", "a", "finished").unwrap();
     tx.commit().unwrap();
-    assert!(task_queue::finish(&db, &research).is_err());
+    assert!(task_queue::finish(&db, &speech).is_err());
     assert!(queue_input_state::active_previous(&db, "c", "b")
         .unwrap()
         .is_none());

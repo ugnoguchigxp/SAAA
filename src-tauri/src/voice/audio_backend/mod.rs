@@ -2,6 +2,8 @@ pub mod commands;
 mod config;
 mod converter;
 #[cfg(target_os = "macos")]
+mod echo_reference;
+#[cfg(target_os = "macos")]
 mod macos;
 mod probe;
 mod ring;

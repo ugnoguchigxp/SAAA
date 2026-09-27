@@ -250,8 +250,8 @@
       "production": 124
     },
     "src-tauri/src/artifact_preview/commands.rs": {
-      "total": 91,
-      "production": 91
+      "total": 103,
+      "production": 103
     },
     "src-tauri/src/artifact_preview/contracts.rs": {
       "total": 97,
@@ -276,6 +276,10 @@
     "src-tauri/src/artifact_preview/service.rs": {
       "total": 87,
       "production": 87
+    },
+    "src-tauri/src/artifact_preview/source_loading.rs": {
+      "total": 77,
+      "production": 77
     },
     "src-tauri/src/artifact_preview/source_web.rs": {
       "total": 233,
@@ -3940,6 +3944,10 @@
     "src/features/chat/artifacts/useArtifactWebview.ts": {
       "total": 248,
       "production": 248
+    },
+    "src/features/chat/artifacts/useSourceWebsite.ts": {
+      "total": 200,
+      "production": 200
     },
     "src/features/chat/artifacts/webviewGeometry.ts": {
       "total": 45,

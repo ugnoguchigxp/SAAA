@@ -5,6 +5,7 @@ const audio = new Map<string, Float32Array>();
 let uploads = 0;
 let releases = 0;
 let holdNextRecognition = false;
+let failNextPartial = false;
 let releaseRecognition: (() => void) | null = null;
 let nativeAvailable = false;
 let nativeAecActive = true;
@@ -117,6 +118,10 @@ mock.module("../src/lib/qwenRealtimeAsr", () => ({
 mock.module("../src/lib/runtime", () => ({
   transcribeConversationAudio: async (id: string, utteranceId: string, kind: string) => {
     recognitions.push({ utteranceId, kind });
+    if (kind === "partial" && failNextPartial) {
+      failNextPartial = false;
+      throw new Error("larm_provider_not_claimable");
+    }
     if (holdNextRecognition) {
       holdNextRecognition = false;
       await new Promise<void>((resolve) => {
@@ -320,7 +325,7 @@ test("Qwen waits for a later segment final before delivering the full utterance"
   selectedTransport = "http";
 });
 
-test("Qwen playback gating waits for the configured silence instead of delivering immediately", async () => {
+test("Qwen playback changes never finalize the current user utterance", async () => {
   selectedTransport = "qwen-realtime";
   const before = capture.conversationAsrSnapshot().entries.length;
   await capture.startConversationAsr("default", true, "medium", 80);
@@ -337,6 +342,8 @@ test("Qwen playback gating waits for the configured silence instead of deliverin
   capture.setConversationAsrPlaybackActive(true);
   expect(capture.conversationAsrSnapshot().entries).toHaveLength(before);
   await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(capture.conversationAsrSnapshot().entries).toHaveLength(before);
+  feed(0, 1);
   expect(capture.conversationAsrSnapshot().entries[0]?.text).toBe("再生前の発話");
   capture.setConversationAsrPlaybackActive(false);
   await capture.stopConversationAsr();
@@ -371,15 +378,16 @@ test("an unexpected Qwen disconnect stops capture instead of silently dropping n
   selectedTransport = "http";
 });
 
-test("does not turn playback audio into a new utterance", async () => {
+test("HTTP ASR keeps the user utterance intact across playback start and end", async () => {
   const previousEntries = capture.conversationAsrSnapshot().entries.length;
   const previousUploads = uploads;
   await capture.startConversationAsr("default", true);
+  feed(0.1, 5);
   capture.setConversationAsrPlaybackActive(true);
   feed(0.1, 40);
   await tick();
   expect(capture.conversationAsrSnapshot().entries).toHaveLength(previousEntries);
-  expect(uploads).toBe(previousUploads);
+  expect(uploads).toBeGreaterThan(previousUploads);
   capture.setConversationAsrPlaybackActive(false);
   feed(0.1, 20);
   feed(0, 15);
@@ -433,13 +441,13 @@ test("uses native capture when VoiceProcessing is available", async () => {
   nativeAvailable = false;
 });
 
-test("accepts speech during playback only when native AEC is active", async () => {
+test("keeps ASR running across native AEC and playback status changes", async () => {
   nativeAvailable = true;
   nativeAecActive = true;
   await capture.startConversationAsr("default", true);
   const before = capture.conversationAsrSnapshot().entries.length;
   capture.setConversationAsrPlaybackActive(true);
-  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(true);
+  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(false);
   nativePlaybackActive = true;
   reportNativeStatus?.({ aecActive: true, playbackActive: true });
   expect(capture.conversationAsrSnapshot().playbackLimited).toBe(false);
@@ -450,9 +458,12 @@ test("accepts speech during playback only when native AEC is active", async () =
   feed(0.1, 4);
   nativePlaybackActive = false;
   reportNativeStatus?.({ aecActive: true, playbackActive: false });
-  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(true);
-  expect(capture.conversationAsrSnapshot().entries).toHaveLength(before + 2);
+  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(false);
+  expect(capture.conversationAsrSnapshot().entries).toHaveLength(before + 1);
   feed(0.1, 20);
+  expect(capture.conversationAsrSnapshot().entries).toHaveLength(before + 1);
+  feed(0, 15);
+  await tick();
   expect(capture.conversationAsrSnapshot().entries).toHaveLength(before + 2);
   capture.setConversationAsrPlaybackActive(false);
   await capture.stopConversationAsr();
@@ -461,11 +472,11 @@ test("accepts speech during playback only when native AEC is active", async () =
   await capture.startConversationAsr("default", true);
   const after = capture.conversationAsrSnapshot().entries.length;
   capture.setConversationAsrPlaybackActive(true);
-  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(true);
+  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(false);
   feed(0.1, 20);
   feed(0, 15);
   await tick();
-  expect(capture.conversationAsrSnapshot().entries).toHaveLength(after);
+  expect(capture.conversationAsrSnapshot().entries).toHaveLength(after + 1);
   capture.setConversationAsrPlaybackActive(false);
   await capture.stopConversationAsr();
   nativeAecActive = true;
@@ -481,7 +492,7 @@ test("macOS native failure falls back without WebView echo processing", async ()
   expect(capture.conversationAsrSnapshot().phase).toBe("recording");
   expect(browserEchoCancellation).toBe(false);
   capture.setConversationAsrPlaybackActive(true);
-  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(true);
+  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(false);
   capture.setConversationAsrPlaybackActive(false);
   await capture.stopConversationAsr();
   nativeStartFails = false;
@@ -515,3 +526,22 @@ for (const silenceMs of [800, 1_500, 3_000]) {
     }
   });
 }
+
+test("successful recognition clears an earlier partial connection failure without stopping ASR", async () => {
+  selectedTransport = "http";
+  await capture.startConversationAsr("default", true, "medium", 1500);
+  try {
+    failNextPartial = true;
+    feed(0.1, 20);
+    await tick();
+    expect(capture.conversationAsrSnapshot().error).toContain("larm_provider_not_claimable");
+    feed(0, 15);
+    await tick();
+    expect(capture.conversationAsrSnapshot().entries[0]?.status).toBe("completed");
+    expect(capture.conversationAsrSnapshot().error).toBeNull();
+    expect(capture.conversationAsrSnapshot().phase).toBe("recording");
+  } finally {
+    failNextPartial = false;
+    await capture.stopConversationAsr();
+  }
+});

@@ -39,6 +39,7 @@ typedef uint32_t (*SaaaRingReadF32)(void *ring, float *samples, uint32_t count);
 typedef void (*SaaaFlagFn)(void *ctx);
 
 SaaaVpio *saaa_vpio_create(const SaaaVpioConfig *config, void *playback_ring, void *capture_ring,
+    void *reference_ring,
     SaaaRingWriteF32 write_capture, SaaaRingReadF32 read_playback, SaaaFlagFn on_route_change,
     void *route_ctx, char *err, uint32_t err_len);
 int saaa_vpio_start(SaaaVpio *session, char *err, uint32_t err_len);

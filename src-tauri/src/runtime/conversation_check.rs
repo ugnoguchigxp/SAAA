@@ -3,7 +3,9 @@
 pub(crate) mod queue_runtime;
 #[path = "conversation_check/streaming_speech.rs"]
 mod streaming_speech;
-pub(crate) fn spawn_queue_workers<R: tauri::Runtime>(app: tauri::AppHandle<R>) { queue_runtime::spawn(app); }
+pub(crate) fn spawn_queue_workers<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    queue_runtime::spawn(app);
+}
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, OnceLock,
@@ -23,7 +25,16 @@ use crate::{
 static BUSY: AtomicBool = AtomicBool::new(false);
 static ASR_SESSION: OnceLock<tokio::sync::Mutex<Option<CachedAsrSession>>> = OnceLock::new();
 static SPEECH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-static ACTIVE_SPEECH_CANCEL: OnceLock<std::sync::Mutex<Option<(String, Arc<RunCancellation>)>>> = OnceLock::new();
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SpeechPlaybackKind {
+    Answer,
+    Progress,
+}
+static ACTIVE_SPEECH_CANCEL: OnceLock<
+    std::sync::Mutex<Option<(String, SpeechPlaybackKind, Arc<RunCancellation>)>>,
+> = OnceLock::new();
+const MAX_ANSWER_BYTES: usize = 64 * 1024;
+const SOURCE_LINKS_MARKER: &str = "\n\n<!-- saaa:source-links -->\n";
 static ACTIVE_SPEECH_PLAYBACK: OnceLock<std::sync::Mutex<Option<String>>> = OnceLock::new();
 
 fn speech_playing() -> bool {
@@ -77,7 +88,9 @@ struct ActiveSpeechGuard;
 impl Drop for ActiveSpeechGuard {
     fn drop(&mut self) {
         if let Some(slot) = ACTIVE_SPEECH_CANCEL.get() {
-            if let Ok(mut current) = slot.lock() { *current = None; }
+            if let Ok(mut current) = slot.lock() {
+                *current = None;
+            }
         }
     }
 }
@@ -85,8 +98,22 @@ impl Drop for ActiveSpeechGuard {
 fn cancel_active_speech(input_id: &str) {
     if let Some(slot) = ACTIVE_SPEECH_CANCEL.get() {
         if let Ok(current) = slot.lock() {
-            if let Some((id, cancellation)) = current.as_ref() {
-                if id == input_id { cancellation.cancel(); }
+            if let Some((id, _, cancellation)) = current.as_ref() {
+                if id == input_id {
+                    cancellation.cancel();
+                }
+            }
+        }
+    }
+}
+
+fn cancel_active_progress_speech(input_id: &str) {
+    if let Some(slot) = ACTIVE_SPEECH_CANCEL.get() {
+        if let Ok(current) = slot.lock() {
+            if let Some((id, kind, cancellation)) = current.as_ref() {
+                if id == input_id && *kind == SpeechPlaybackKind::Progress {
+                    cancellation.cancel();
+                }
             }
         }
     }
@@ -99,6 +126,13 @@ struct CachedAsrSession {
 
 fn asr_session() -> &'static tokio::sync::Mutex<Option<CachedAsrSession>> {
     ASR_SESSION.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
+#[cfg(feature = "conversation-queue-e2e")]
+pub(crate) async fn reset_fixture_asr_session() {
+    if let Some(cached) = asr_session().lock().await.take() {
+        let _ = cached.session.close().await;
+    }
 }
 
 struct BusyGuard;
@@ -207,6 +241,12 @@ impl ConversationAudit {
     }
 
     fn text(&self, component: &str, event_name: &str, value: &str) {
+        if std::env::var("SAAA_CONVERSATION_TEXT_AUDIT").as_deref() != Ok("1") {
+            use sha2::{Digest, Sha256};
+            self.event(component, event_name, "progress", None,
+                json!({"bytes":value.len(),"sha256":format!("{:x}",Sha256::digest(value.as_bytes())),"textRecorded":false}));
+            return;
+        }
         let mut parts = Vec::new();
         let mut start = 0;
         while start < value.len() {
@@ -292,6 +332,8 @@ pub(crate) fn record_conversation_capture_audit_event(
 struct QwenDecision {
     route: String,
     reply: Option<String>,
+    #[serde(default)]
+    web_query: Option<String>,
 }
 
 fn parse_qwen_decision(raw: &str) -> Result<QwenDecision, String> {
@@ -408,6 +450,38 @@ async fn transcribe_conversation_audio_inner(
     if samples.len() < 1_600 || samples.len() > 16_000 * 120 {
         return Err("録音は0.1秒以上、2分以内にしてください。".into());
     }
+    let mut gate = crate::voice::conversation_speaker::prepare(state)?;
+    audit.event(
+        "voice-asr",
+        "conversation-speaker-gate",
+        "decision",
+        None,
+        json!({"scope":gate.scope()}),
+    );
+    let samples = crate::voice::conversation_speaker::filter_samples(&mut gate, samples).await;
+    if !samples.iter().any(|sample| sample.abs() > 0.0001) {
+        return Err("ASR_NO_SPEECH: 本人の発話を検出できませんでした。".into());
+    }
+    // Record identity and signal level, not raw microphone audio, so repeated
+    // transcripts can be distinguished from duplicate uploads and silent input.
+    {
+        use sha2::{Digest, Sha256};
+        let mut digest = Sha256::new();
+        let mut energy = 0.0_f64;
+        for sample in &samples {
+            digest.update(sample.to_le_bytes());
+            energy += f64::from(*sample).powi(2);
+        }
+        audit.event(
+            "voice-asr",
+            "conversation-asr-audio",
+            "request",
+            None,
+            json!({"kind":input.kind,"samples":samples.len(),
+                "rms":(energy / samples.len() as f64).sqrt(),
+                "sha256":format!("{:x}",digest.finalize())}),
+        );
+    }
     let (providers, route) = state.sqlite_readers.read(|connection| {
         Ok((
             persistence::load_model_providers(connection)?,
@@ -511,15 +585,24 @@ async fn transcribe_conversation_audio_inner(
 }
 
 #[cfg(feature = "conversation-queue-e2e")]
-pub(crate) async fn transcribe_fixture_audio(state: &AppState, input_id: &str) -> Result<String, String> {
+pub(crate) async fn transcribe_fixture_audio(
+    state: &AppState,
+    input_id: &str,
+) -> Result<String, String> {
     let samples = vec![1_000_i16; 3_200];
     let audio_upload_id = state.audio_uploads.stage_pcm_for_e2e(&samples);
     let audit = ConversationAudit::new(state.sqlite_writer.clone(), input_id.into());
     transcribe_conversation_audio_inner(
         state,
-        TranscribeInput { audio_upload_id, utterance_id: input_id.into(), kind: "final".into() },
+        TranscribeInput {
+            audio_upload_id,
+            utterance_id: input_id.into(),
+            kind: "final".into(),
+        },
         &audit,
-    ).await.map(|result| result.text)
+    )
+    .await
+    .map(|result| result.text)
 }
 
 #[tauri::command]
@@ -588,6 +671,11 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
+    // Validate after acquiring the player: queued audio may have waited while its
+    // source was forgotten or changed. Replays must pass the same boundary.
+    if let Some(job) = speech_job {
+        queue_runtime::validate_speech_context(state, job)?;
+    }
     let _playback_state = PlaybackStateGuard::new(app, input_id);
     let answer_id = format!("reply_{input_id}");
     let (content, providers, route) = state.sqlite_readers.read(|connection| {
@@ -598,13 +686,21 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
         Ok((content, persistence::load_model_providers(connection)?,
             persistence::load_routing_settings(connection)?.voice_speak))
     })?;
-    if content.trim().is_empty() || content.len() > 8192 {
+    if content.trim().is_empty() || content.len() > MAX_ANSWER_BYTES {
         return Err("読み上げる回答がありません。".into());
     }
-    let spoken = crate::voice_text::text_for_speech(&content);
-    if spoken.is_empty() { return Err("読み上げ可能な回答本文がありません。".into()); }
-    #[cfg(feature = "conversation-queue-e2e")]
-    if crate::conversation_queue_e2e::capture_speech(&spoken) { return Ok(()); }
+    let spoken = speech_text_for_answer(&content);
+    if spoken.is_empty() {
+        return Err("読み上げ可能な回答本文がありません。".into());
+    }
+    audit.text("tts", "conversation-tts-text", &spoken);
+    audit.event(
+        "tts",
+        "conversation-tts-message",
+        "decision",
+        None,
+        json!({"messageId":answer_id,"textBytes":spoken.len()}),
+    );
     audit.event(
         "tts",
         "conversation-tts-route",
@@ -616,8 +712,11 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
         }),
     );
     let cancellation = Arc::new(RunCancellation::default());
-    *ACTIVE_SPEECH_CANCEL.get_or_init(|| std::sync::Mutex::new(None))
-        .lock().map_err(|_| "音声の取消し状態を取得できません。")? = Some((input_id.to_string(), cancellation.clone()));
+    *ACTIVE_SPEECH_CANCEL
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .map_err(|_| "音声の取消し状態を取得できません。")? =
+        Some((input_id.to_string(), SpeechPlaybackKind::Answer, cancellation.clone()));
     let _active_speech = ActiveSpeechGuard;
     if let Some(job) = speech_job {
         let current = state.sqlite_readers.read(|connection| {
@@ -630,6 +729,10 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
         if !current || cancellation.is_cancelled() {
             return Err("音声の仕事は中止されました。".into());
         }
+    }
+    #[cfg(feature = "conversation-queue-e2e")]
+    if crate::conversation_queue_e2e::capture_speech(&spoken) {
+        return Ok(());
     }
     let output = Arc::new(AtomicBool::new(false));
     if route.source == "harness" {
@@ -661,6 +764,7 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
                 set_speech_playback(&playback_app, &playback_id, true);
                 playback_audit.event("tts", "conversation-tts-playback", "start", None, json!({}));
             },
+            None,
             None,
         )
         .await;
@@ -702,6 +806,7 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
                     )
                 },
                 None,
+                None,
             )
             .await
         }
@@ -714,6 +819,22 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
                 json!({
                     "providerId": provider.id, "mode": "system",
                 }),
+            );
+            let playback_audit = audit.clone();
+            let playback_app = app.clone();
+            let playback_id = input_id.to_string();
+            let player = crate::voice::local_audio_output::ContinuousPlayback::start(
+                cancellation.clone(),
+                move || {
+                    set_speech_playback(&playback_app, &playback_id, true);
+                    playback_audit.event(
+                        "tts",
+                        "conversation-tts-playback",
+                        "start",
+                        None,
+                        json!({}),
+                    );
+                },
             );
             let directory =
                 tempfile::tempdir().map_err(|_| "TTS一時領域を作成できませんでした。")?;
@@ -731,30 +852,18 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
                 Some("success"),
                 json!({}),
             );
-            let playback_audit = audit.clone();
-            let playback_app = app.clone();
-            let playback_id = input_id.to_string();
-            tokio::task::spawn_blocking(move || {
-                let mut child = crate::voice::cloud_tts::spawn_audio_player(&path)?;
-                set_speech_playback(&playback_app, &playback_id, true);
-                playback_audit.event("tts", "conversation-tts-playback", "start", None, json!({}));
-                loop {
-                    if cancellation.is_cancelled() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err("Speech cancelled".into());
-                    }
-                    if let Some(status) = child.try_wait().map_err(|_| "TTS再生を確認できませんでした。")? {
-                        return if status.success() { Ok(()) } else { Err("TTS再生に失敗しました。".into()) };
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-            })
-            .await
-            .map_err(|_| "TTS再生が中断されました。".to_string())?
+            player.play_wav_file(&path, &cancellation).await?;
+            player.finish().await
         }
         _ => Err("設定済みの音声出力ルートはTTS Providerではありません。".into()),
     }
+}
+
+fn speech_text_for_answer(content: &str) -> String {
+    let answer = content
+        .split_once(SOURCE_LINKS_MARKER)
+        .map_or(content, |(answer, _)| answer);
+    crate::voice_text::text_for_speech(answer)
 }
 
 async fn cached_larm_asr(
@@ -995,6 +1104,7 @@ async fn submit_conversation_text_inner(
                         &provider.model,
                         &input.text,
                         route.timeout_ms,
+                        512,
                         provider.request_options.as_ref(),
                         false,
                         None,
@@ -1010,7 +1120,7 @@ async fn submit_conversation_text_inner(
             }
         };
     audit.text("conversation", "conversation-output-text", &content);
-    if content.trim().is_empty() || content.len() > 8192 {
+    if content.trim().is_empty() || content.len() > MAX_ANSWER_BYTES {
         return Err("Providerの回答が空か、上限を超えました。".into());
     }
     audit.event(
@@ -1159,7 +1269,7 @@ async fn complete_larm_jarvis(
                 audit.event("conversation", "conversation-qwen-decision", "decision", Some("degraded"), json!({
                     "route": "think", "reason": "invalid-qwen-output", "parseError": error,
                 }));
-                QwenDecision { route: "think".into(), reply: None }
+                QwenDecision { route: "think".into(), reply: None, web_query: None }
             }
         };
         if decision.route == "quick" {
@@ -1185,14 +1295,25 @@ fn fit_role_history(
     let mut fitted = recent.to_vec();
     loop {
         let mut messages = vec![json!({"role":"system","content":instruction})];
-        messages.extend(fitted.iter().map(|(role, content)| json!({"role":role,"content":content})));
+        messages.extend(
+            fitted
+                .iter()
+                .map(|(role, content)| json!({"role":role,"content":content})),
+        );
         messages.push(json!({"role":"user","content":text}));
-        let bytes = serde_json::to_vec(&messages).map_err(|error| error.to_string())?.len();
-        if bytes <= capacity { return Ok(fitted); }
-        let removable = fitted.iter().position(|(_, content)|
-            !content.starts_with("[ORNITH_RESULT") && !content.starts_with("[TOOL_RESULT"));
+        let bytes = serde_json::to_vec(&messages)
+            .map_err(|error| error.to_string())?
+            .len();
+        if bytes <= capacity {
+            return Ok(fitted);
+        }
+        let removable = fitted.iter().position(|(_, content)| {
+            !content.starts_with("[ORNITH_RESULT") && !content.starts_with("[TOOL_RESULT")
+        });
         let Some(index) = removable else {
-            return Err("Required context does not fit this provider. Narrow the task scope.".into());
+            return Err(
+                "Required context does not fit this provider. Narrow the task scope.".into(),
+            );
         };
         fitted.remove(index);
     }
@@ -1207,7 +1328,19 @@ async fn complete_larm_role(
     audit: &ConversationAudit,
     instruction: &str,
 ) -> Result<(String, String), String> {
-    complete_larm_role_with_events(session, role, recent, text, timeout_ms, audit, instruction, None, None).await
+    complete_larm_role_with_events(
+        session,
+        role,
+        recent,
+        text,
+        timeout_ms,
+        audit,
+        instruction,
+        None,
+        None,
+        false,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1221,6 +1354,7 @@ async fn complete_larm_role_with_events(
     instruction: &str,
     on_delta: Option<&dyn crate::runtime::event_hub::RuntimeEventSender>,
     cancellation: Option<Arc<RunCancellation>>,
+    finalize_after_tool: bool,
 ) -> Result<(String, String), String> {
     let started = Instant::now();
     audit.event(
@@ -1247,8 +1381,9 @@ async fn complete_larm_role_with_events(
         if provider.protocol != "openai.chat-completions.v1" {
             return Err(format!("{role}の会話プロトコルに対応していません。"));
         }
+        let request_timeout_ms = timeout_ms.min(if finalize_after_tool { 60_000 } else { 120_000 });
         let budget = lease
-            .request_budget(std::time::Duration::from_millis(timeout_ms.min(120_000)))
+            .request_budget(std::time::Duration::from_millis(request_timeout_ms))
             .map_err(str::to_string)?;
         let advertised = provider.context_window.ok_or("LARMのコンテキスト上限がありません。")?;
         // Bytes are a conservative upper bound for input tokens across the supported UTF-8
@@ -1256,11 +1391,14 @@ async fn complete_larm_role_with_events(
         let capacity = crate::runtime::context::broker::ProviderInputBudget::openai_compatible()
             .usable_context_bytes()
             .min((advertised.max_input_tokens() as usize).saturating_sub(2_048));
+        // The input budget already reserves this output space. Do not shrink it for
+        // Qwen or tool follow-ups: a concise-answer instruction is not a token limit.
+        let max_output_tokens = advertised.output_reserve_tokens.min(u32::MAX as u64) as u32;
         let fitted = fit_role_history(instruction, recent, text, capacity)?;
         let authorization = zeroize::Zeroizing::new(format!("Bearer {}", provider.token()));
         let options = saaa_larm_session::http_api::LlmOptions {
             tools: false,
-            thinking: if role == "backchannel" {
+            thinking: if role == "backchannel" || finalize_after_tool {
                 saaa_larm_session::http_api::Thinking::Disabled
             } else {
                 saaa_larm_session::http_api::Thinking::Auto
@@ -1274,7 +1412,8 @@ async fn complete_larm_role_with_events(
             None,
             json!({
                 "role": role, "model": provider.model, "budgetMs": budget.as_millis() as u64,
-                "thinking": if role == "backchannel" { "disabled" } else { "auto" },
+                "thinking": if role == "backchannel" || finalize_after_tool { "disabled" } else { "auto" },
+                "maxOutputTokens": max_output_tokens,
             }),
         );
         let content = complete_http_with_instruction(
@@ -1283,6 +1422,7 @@ async fn complete_larm_role_with_events(
             &provider.model,
             text,
             budget.as_millis() as u64,
+            max_output_tokens,
             Some(&options),
             true,
             Some(instruction),
@@ -1307,6 +1447,22 @@ async fn complete_larm_role_with_events(
         Ok((content, provider.model.clone()))
     }
     .await;
+    if result.as_ref().err().is_some_and(|error| {
+        error
+            == crate::providers::stream::ProviderFailureKind::Authentication
+                .public_message()
+                .as_str()
+    }) {
+        // Evict only this rejected session; an overlapping ASR reconnect may
+        // already have installed a new one. Existing leases finish normally.
+        let mut cache = asr_session().lock().await;
+        if cache
+            .as_ref()
+            .is_some_and(|cached| Arc::ptr_eq(&cached.session, session))
+        {
+            cache.take();
+        }
+    }
     match &result {
         Ok((content, model)) => audit.event(
             "provider",
@@ -1365,7 +1521,12 @@ async fn connect_larm(
             if let Some(cleanup) = &error.cleanup {
                 let _ = cleanup.close().await;
             }
-            return Err(format!("LARMへの接続に失敗しました: {error}"));
+            let detail = match error.code {
+                "larm_provider_not_claimable" => "LARMは接続準備完了を返しましたが、プロバイダーの認証情報を取得できない状態です。",
+                "larm_provider_not_ready" => "LARMは接続準備完了を返しましたが、準備が完了していないプロバイダーがあります。",
+                _ => "LARMへの接続に失敗しました。",
+            };
+            return Err(format!("{detail} ({error})"));
         }
     };
     Ok(session)
@@ -1386,6 +1547,7 @@ pub(crate) async fn complete_http(
         model,
         text,
         timeout_ms,
+        512,
         configured_options,
         no_proxy,
         None,
@@ -1404,6 +1566,7 @@ async fn complete_http_with_instruction(
     model: &str,
     text: &str,
     timeout_ms: u64,
+    max_output_tokens: u32,
     configured_options: Option<&saaa_larm_session::http_api::LlmOptions>,
     no_proxy: bool,
     instruction: Option<&str>,
@@ -1457,10 +1620,12 @@ async fn complete_http_with_instruction(
     let options = configured_options.cloned().unwrap_or_default();
     let make_context = || crate::providers::stream::ModelStreamContext {
         reasoning_effort: "provider-default",
-        max_output_tokens: if instruction.is_some() { 2_048 } else { 512 },
+        max_output_tokens,
         input: &input,
         on_event: on_delta.unwrap_or(&sink),
-        cancellation: cancellation.clone().unwrap_or_else(|| Arc::new(RunCancellation::default())),
+        cancellation: cancellation
+            .clone()
+            .unwrap_or_else(|| Arc::new(RunCancellation::default())),
         context_health: "green",
         context_sources: &[],
         context_omissions: &[],
@@ -1485,26 +1650,39 @@ async fn complete_http_with_instruction(
     .await;
     // Some configured Chat Completions servers reject SSE. Preserve the existing
     // complete-response path only if no streamed output has reached the speaker.
-    if on_delta.is_some() && matches!(result,
-        Err(crate::providers::stream::ProviderAttemptError::Failed {
-            kind: crate::providers::stream::ProviderFailureKind::Contract
-                | crate::providers::stream::ProviderFailureKind::Protocol,
-            output_started: false, ..
-        })
-    ) {
+    if on_delta.is_some()
+        && matches!(
+            result,
+            Err(crate::providers::stream::ProviderAttemptError::Failed {
+                kind: crate::providers::stream::ProviderFailureKind::Contract
+                    | crate::providers::stream::ProviderFailureKind::Protocol,
+                output_started: false,
+                ..
+            })
+        )
+    {
         result = crate::providers::chat_completions::run_with_proxy_policy(
-            endpoint, authorization, model, &history, timeout_ms.min(120_000),
-            make_context(), crate::providers::chat_completions::RequestMode::JsonProbe,
-            &options, no_proxy,
-        ).await;
+            endpoint,
+            authorization,
+            model,
+            &history,
+            timeout_ms.min(120_000),
+            make_context(),
+            crate::providers::chat_completions::RequestMode::JsonProbe,
+            &options,
+            no_proxy,
+        )
+        .await;
         if let (Ok(content), Some(on_delta)) = (&result, on_delta) {
-            on_delta.send(crate::ipc_contract::RuntimeEvent::Delta {
-                run_id: input.run_id.clone(), text: content.clone(),
-            }).map_err(|_| "音声用の回答を受け渡せませんでした。".to_string())?;
+            on_delta
+                .send(crate::ipc_contract::RuntimeEvent::Delta {
+                    run_id: input.run_id.clone(),
+                    text: content.clone(),
+                })
+                .map_err(|_| "音声用の回答を受け渡せませんでした。".to_string())?;
         }
     }
-    result
-    .map_err(|error| match error {
+    result.map_err(|error| match error {
         crate::providers::stream::ProviderAttemptError::Failed {
             kind,
             output_started,
@@ -1543,16 +1721,30 @@ async fn complete_http_with_instruction(
 
 #[cfg(test)]
 mod jarvis_tests {
-    use super::{fit_role_history, is_standalone_greeting, parse_qwen_decision};
+    use super::{
+        fit_role_history, is_standalone_greeting, parse_qwen_decision, speech_text_for_answer,
+    };
+
+    #[test]
+    fn replay_reads_answer_without_source_links() {
+        let saved = "今日は晴れです。\n\n<!-- saaa:source-links -->\n[出典1: example.com](https://example.com/weather)\n";
+        assert_eq!(speech_text_for_answer(saved), "今日は晴れです。");
+    }
 
     #[test]
     fn provider_window_discards_optional_history_but_keeps_current_input() {
-        let history = vec![("user".into(), "古い会話".repeat(100)), ("user".into(), "WorldModelの資料".into())];
+        let history = vec![
+            ("user".into(), "古い会話".repeat(100)),
+            ("user".into(), "WorldModelの資料".into()),
+        ];
         let fitted = fit_role_history("固定ポリシー", &history, "今の依頼", 150).unwrap();
         assert_eq!(fitted.len(), 1);
         assert!(fitted[0].1.contains("WorldModel"));
         assert!(fit_role_history("固定ポリシー", &[], &"大".repeat(200), 150).is_err());
-        let required = vec![("user".into(), "[ORNITH_RESULT]".to_string() + &"根拠".repeat(100))];
+        let required = vec![(
+            "user".into(),
+            "[ORNITH_RESULT]".to_string() + &"根拠".repeat(100),
+        )];
         assert!(fit_role_history("固定ポリシー", &required, "今の依頼", 150).is_err());
     }
 
@@ -1576,6 +1768,11 @@ mod jarvis_tests {
     #[test]
     fn thought_handoff_cannot_publish_qwen_body() {
         assert!(parse_qwen_decision(r#"{"route":"think","reply":null}"#).is_ok());
+        let search = parse_qwen_decision(
+            r#"{"route":"think","reply":null,"web_query":"東京 今日 天気"}"#,
+        )
+        .unwrap();
+        assert_eq!(search.web_query.as_deref(), Some("東京 今日 天気"));
         assert!(parse_qwen_decision(r#"{"route":"think","reply":"調査しました"}"#).is_err());
         assert!(parse_qwen_decision(r#"{"route":"quick","reply":"はい","extra":true}"#).is_err());
     }

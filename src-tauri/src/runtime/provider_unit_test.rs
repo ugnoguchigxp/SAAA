@@ -652,3 +652,8 @@ async fn run_fixture_provider_unit_test_mode(
     .await?;
     serde_json::to_value(result).map_err(|_| "テスト結果を変換できませんでした。".into())
 }
+
+#[cfg(feature = "provider-unit-test-harness")]
+pub async fn verify_conversation_speaker_gate_fixture() {
+    crate::voice::conversation_speaker::verify_gate_fixture().await;
+}

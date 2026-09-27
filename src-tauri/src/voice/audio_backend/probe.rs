@@ -11,6 +11,7 @@ pub fn run() -> i32 {
     let mut seconds = 3u64;
     let mut wav: Option<PathBuf> = None;
     let mut bluetooth = false;
+    let mut ducking = super::DuckingLevel::Min;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -22,8 +23,20 @@ pub fn run() -> i32 {
             }
             "--wav" => wav = args.next().map(PathBuf::from),
             "--bluetooth" => bluetooth = true,
+            "--ducking" => {
+                ducking = match args.next().as_deref() {
+                    Some("min") => super::DuckingLevel::Min,
+                    Some("mid") => super::DuckingLevel::Mid,
+                    Some("max") => super::DuckingLevel::Max,
+                    Some("default") => super::DuckingLevel::Default,
+                    _ => {
+                        eprintln!("--ducking requires min, mid, max, or default");
+                        return 2;
+                    }
+                };
+            }
             "--help" => {
-                eprintln!("vpio_probe [--seconds N] [--wav out.wav] [--bluetooth]");
+                eprintln!("vpio_probe [--seconds N] [--wav out.wav] [--bluetooth] [--ducking min|mid|max|default]");
                 return 0;
             }
             other => {
@@ -49,6 +62,7 @@ pub fn run() -> i32 {
     let frames = recorded.clone();
     let config = super::VoiceProcessingConfig {
         vpio_on_bluetooth: bluetooth,
+        ducking,
         ..Default::default()
     };
     match backend.start_capture(

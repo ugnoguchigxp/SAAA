@@ -173,6 +173,13 @@ pub(crate) fn finish(connection: &Connection, job: &Job) -> Result<(), String> {
 }
 
 pub(crate) fn fail(connection: &Connection, job: &Job, error: &str) -> Result<(), String> {
+    // Retrying the same credential or malformed contract cannot repair it.
+    if error == "Provider authentication failed. Check the configured credential."
+        || error.contains("larm_invalid_provider")
+        || error.contains("larm_invalid_credential")
+    {
+        return fail_terminal(connection, job, error);
+    }
     let error = error.chars().take(500).collect::<String>();
     let changed = connection
         .execute(
@@ -372,6 +379,32 @@ mod tests {
             [], |row| row.get(0)
         ).unwrap();
         assert_eq!(saved, "{\"provider\":\"saved\"}");
+    }
+
+    #[test]
+    fn authentication_failure_does_not_retry_the_same_credential() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+        enqueue(
+            &connection,
+            "c",
+            "ornith",
+            "ornith_task",
+            "u",
+            0,
+            "{}",
+            None,
+        )
+        .unwrap();
+        let job = claim(&mut connection, "ornith").unwrap().unwrap();
+        fail(
+            &connection,
+            &job,
+            "Provider authentication failed. Check the configured credential.",
+        )
+        .unwrap();
+        assert_eq!(snapshot(&connection, "c").unwrap()[0].state, "failed");
+        assert!(claim(&mut connection, "ornith").unwrap().is_none());
     }
 
     #[test]

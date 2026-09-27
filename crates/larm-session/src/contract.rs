@@ -91,10 +91,14 @@ pub(crate) fn validate_created(
         if provider["protocol"] != accepted_provider(name).ok_or("larm_invalid_provider")?
             || provider["endpoint"] != expected_endpoint(name).ok_or("larm_invalid_provider")?
             || string(provider, "model").is_err()
-            || (status == "ready"
-                && (provider["readiness"] != "ready" || provider["claimable"] != true))
         {
             return Err("larm_invalid_provider");
+        }
+        if status == "ready" && provider["readiness"] != "ready" {
+            return Err("larm_provider_not_ready");
+        }
+        if status == "ready" && provider["claimable"] != true {
+            return Err("larm_provider_not_claimable");
         }
         if let Some(catalog) = catalog {
             let declared = catalog

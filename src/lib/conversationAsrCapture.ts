@@ -61,12 +61,13 @@ let drainingPartials = false;
 let finalCompletion: Promise<void> = Promise.resolve();
 let partialCompletion: Promise<void> = Promise.resolve();
 let captureSessionId: string | null = null;
+let recognitionSequence = 0;
+let recognitionError: { sequence: number; message: string } | null = null;
 const auditCapture = createConversationCaptureAudit(() => captureSessionId);
 let activeTransport: "http" | "qwen-realtime" = "http";
 let packetizer: VoiceAsrPacketizer | null = null;
 let audioSendTail: Promise<void> = Promise.resolve();
 let pendingAudioPackets = 0;
-let playbackFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
 const earlyFinals = new Map<string, { text: string; language: string | null }>();
 const earlyFailures = new Map<string, string>();
 const partialAfterFinal = new Set<string>();
@@ -206,23 +207,9 @@ function newDetector() {
 }
 
 function updatePlaybackLimit() {
-  const limited = playbackActive && !(captureAecActive && nativePlaybackActive);
-  if (state.playbackLimited === limited) return;
-  if (limited) {
-    if (currentUtteranceId) {
-      if (activeTransport === "qwen-realtime") {
-        playbackFinalizeTimer = setTimeout(() => {
-          playbackFinalizeTimer = null;
-          if (state.playbackLimited && currentUtteranceId) finalizeUtterance();
-        }, silenceTimeoutMs);
-      } else finalizeUtterance();
-    }
-    clearPreroll();
-  } else if (playbackFinalizeTimer) {
-    clearTimeout(playbackFinalizeTimer);
-    playbackFinalizeTimer = null;
-  }
-  publish({ playbackLimited: limited });
+  // Playback is observational state. AEC runs in the native capture path;
+  // microphone frames must remain available for speech during TTS.
+  if (state.playbackLimited) publish({ playbackLimited: false });
 }
 
 function clearPreroll() {
@@ -303,6 +290,7 @@ async function drainPartials() {
 }
 
 async function processJob(job: RecognitionJob) {
+  const sequence = ++recognitionSequence;
   try {
     auditCapture("conversation-asr-upload", "start", job.id, {
       kind: job.kind,
@@ -318,6 +306,10 @@ async function processJob(job: RecognitionJob) {
     );
     job.samples.fill(0);
     const result = await transcribeConversationAudio(uploadId, job.id, job.kind);
+    if (recognitionError && sequence >= recognitionError.sequence) {
+      if (state.error === recognitionError.message) publish({ error: null });
+      recognitionError = null;
+    }
     auditCapture(
       "conversation-asr-ipc-result",
       "terminal",
@@ -358,6 +350,7 @@ async function processJob(job: RecognitionJob) {
       if (message.includes("ASR_NO_SPEECH"))
         auditCapture("conversation-asr-no-speech", "decision", job.id, {}, "degraded");
     } else if (!message.includes("ASR_NO_SPEECH") && currentUtteranceId === job.id) {
+      recognitionError = { sequence, message };
       publish({ error: message });
     }
   } finally {
@@ -468,15 +461,6 @@ function addFrame(frame: Float32Array) {
 export function setConversationAsrPlaybackActive(active: boolean, inputId?: string) {
   if (playbackActive === active) return;
   playbackActive = active;
-  if (active) {
-    if (activeTransport === "http") {
-      if (currentUtteranceId) finalizeUtterance();
-      clearUtterance();
-      pendingPartial?.samples.fill(0);
-      pendingPartial = null;
-    }
-    clearPreroll();
-  }
   updatePlaybackLimit();
   auditCapture("conversation-asr-playback-limit", "state", inputId ?? captureSessionId, {
     active,
@@ -506,6 +490,7 @@ export async function startConversationAsr(
   captureAecActive = false;
   nativePlaybackActive = false;
   detector = newDetector();
+  recognitionError = null;
   publish({ phase: "starting", error: null });
   try {
     activeTransport = await conversationAsrTransport();
@@ -627,10 +612,6 @@ export async function stopConversationAsr(reason?: string) {
     reason: reason ?? "user",
   });
   publish({ phase: "stopping" });
-  if (playbackFinalizeTimer) {
-    clearTimeout(playbackFinalizeTimer);
-    playbackFinalizeTimer = null;
-  }
   const current = capture;
   capture = null;
   captureAecActive = false;

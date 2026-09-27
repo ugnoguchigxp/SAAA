@@ -1,7 +1,13 @@
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import "./App.css";
-import { getAppSnapshot, reportFrontendReady } from "./lib/runtime";
+import {
+  conversationAsrSnapshot,
+  subscribeConversationAsr,
+  startConversationAsr,
+  stopConversationAsr,
+} from "./lib/conversationAsrCapture";
+import { getAppSnapshot, reportFrontendReady, setVoiceListeningEnabled } from "./lib/runtime";
 import { applySnapshotLanguage } from "./lib/appLanguage";
 import { toMessage } from "./lib/appHelpers";
 import { findSettingsDocument, type AppSnapshot } from "./lib/contracts";
@@ -13,6 +19,7 @@ import { RecordsPage } from "./features/records/RecordsPage";
 import { AuditLogPage } from "./features/audit/AuditLogPage";
 import { ArtifactWorkspaceProvider } from "./features/chat/artifacts/ArtifactDrawer";
 import { ConversationCheckPage } from "./features/chat/ConversationCheckPage";
+import { DEFAULT_AGENT_NAME } from "./features/settings/settingsDefaults";
 import { ProviderUnitTestPage } from "./features/providerUnitTest/ProviderUnitTestPage";
 import { DesignSystemProvider } from "./design-system";
 import "./design-system/styles.css";
@@ -24,6 +31,7 @@ function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [route, setRoute] = useState<AppRoute>("conversation");
   const [recordTargetId, setRecordTargetId] = useState<string | null>(null);
+  const audio = useSyncExternalStore(subscribeConversationAsr, conversationAsrSnapshot);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -61,32 +69,56 @@ function App() {
     "voice.runtime",
     "default",
   )?.valueJson;
+  const configuredAgentName = findSettingsDocument(
+    snapshot.settings,
+    "providers.agent",
+    "codex-sdk",
+  )?.valueJson.agentName;
+  const agentName =
+    typeof configuredAgentName === "string" && configuredAgentName.trim()
+      ? configuredAgentName.trim()
+      : DEFAULT_AGENT_NAME;
+  async function toggleListening(enabled: boolean) {
+    try {
+      if (!enabled) await stopConversationAsr();
+      const document = await setVoiceListeningEnabled(enabled);
+      setSnapshot(
+        (current) =>
+          current && {
+            ...current,
+            settings: current.settings.map((entry) =>
+              entry.namespace === document.namespace && entry.key === document.key
+                ? document
+                : entry,
+            ),
+          },
+      );
+      if (enabled)
+        await startConversationAsr(
+          typeof voiceSettings?.inputDeviceId === "string"
+            ? voiceSettings.inputDeviceId
+            : "default",
+          voiceSettings?.aecEnabled !== false,
+          voiceSettings?.vadSensitivity === "high" || voiceSettings?.vadSensitivity === "low"
+            ? voiceSettings.vadSensitivity
+            : "medium",
+          typeof voiceSettings?.silenceTimeoutMs === "number"
+            ? voiceSettings.silenceTimeoutMs
+            : 1500,
+        );
+    } catch (cause) {
+      setError(toMessage(cause));
+    }
+  }
   return (
     <main className="app-shell">
       <Suspense fallback={<main className="boot-screen">{t("app.booting")}</main>}>
         <ArtifactWorkspaceProvider>
           <AppShell route={route} onRouteChange={setRoute}>
-            {route === "settings" ? (
-              <SettingsPage
-                documents={snapshot.settings}
-                voiceProfile={snapshot.voiceProfile}
-                voiceEnrollmentBlocked={false}
-                voiceListeningEnabled={false}
-                voiceListeningBusy={false}
-                voiceAvailability="stopped"
-                voiceError={null}
-                onToggleVoiceListening={() => undefined}
-                onSaved={(settings) => {
-                  setSnapshot((current) => current && { ...current, settings });
-                  void refreshSnapshot();
-                }}
-                onVoiceProfileChanged={(voiceProfile) =>
-                  setSnapshot((current) => current && { ...current, voiceProfile })
-                }
-              />
-            ) : route === "conversation" ? (
+            <div className="conversation-page-host" hidden={route !== "conversation"}>
               <ConversationCheckPage
                 conversationId={primaryConversationId ?? ""}
+                agentName={agentName}
                 providerLabel={snapshot.effectiveRoute.label}
                 inputDeviceId={
                   typeof voiceSettings?.inputDeviceId === "string"
@@ -106,9 +138,29 @@ function App() {
                     ? voiceSettings.silenceTimeoutMs
                     : 1_500
                 }
+                onToggleListening={toggleListening}
                 onOpenSettings={() => setRoute("settings")}
               />
-            ) : route === "memory" ? (
+            </div>
+            {route === "settings" ? (
+              <SettingsPage
+                documents={snapshot.settings}
+                voiceProfile={snapshot.voiceProfile}
+                voiceEnrollmentBlocked={audio.phase !== "idle"}
+                voiceListeningEnabled={audio.phase === "recording" || audio.phase === "starting"}
+                voiceListeningBusy={audio.phase === "starting" || audio.phase === "stopping"}
+                voiceAvailability={audio.phase === "recording" ? "listening" : "stopped"}
+                voiceError={audio.error}
+                onToggleVoiceListening={(enabled) => void toggleListening(enabled)}
+                onSaved={(settings) => {
+                  setSnapshot((current) => current && { ...current, settings });
+                  void refreshSnapshot();
+                }}
+                onVoiceProfileChanged={(voiceProfile) =>
+                  setSnapshot((current) => current && { ...current, voiceProfile })
+                }
+              />
+            ) : route === "conversation" ? null : route === "memory" ? (
               <MemoryPage
                 onOpenRecord={(id) => {
                   setRecordTargetId(id);

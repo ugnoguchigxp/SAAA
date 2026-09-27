@@ -275,7 +275,7 @@ pub enum FrameValidity {
     Unavailable,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FrameStamp {
     pub ledger_revision: u64,
     pub input_epoch: u64,

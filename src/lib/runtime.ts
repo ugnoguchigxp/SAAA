@@ -169,6 +169,23 @@ export async function conversationQueueSnapshot(): Promise<{ jobs: ConversationQ
   return invoke("conversation_queue_snapshot");
 }
 
+export async function startConversationAudioIdle(): Promise<void> {
+  return invoke("start_conversation_audio_idle");
+}
+
+export async function stopConversationAudioIdle(): Promise<void> {
+  return invoke("stop_conversation_audio_idle");
+}
+
+export async function conversationAudioIdleStatus(): Promise<{
+  running: boolean;
+  speaking: boolean;
+  renderedSamples: number;
+  error: string | null;
+}> {
+  return invoke("conversation_audio_idle_status");
+}
+
 export async function cancelConversationInput(inputId: string): Promise<void> {
   return invoke("cancel_conversation_input", { inputId });
 }

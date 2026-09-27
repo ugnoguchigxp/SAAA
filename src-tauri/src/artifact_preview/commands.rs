@@ -16,8 +16,19 @@ pub(crate) fn mount_source_website(
     y: f64,
     width: f64,
     height: f64,
+    on_load: tauri::ipc::Channel<super::source_loading::SourceLoadEvent>,
 ) -> Result<String, String> {
-    super::source_web::mount(&app, &state, &conversation_id, &url, x, y, width, height)
+    super::source_web::mount(
+        &app,
+        &state,
+        &conversation_id,
+        &url,
+        x,
+        y,
+        width,
+        height,
+        on_load,
+    )
 }
 
 #[tauri::command]

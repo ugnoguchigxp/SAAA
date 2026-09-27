@@ -8,6 +8,7 @@ pub(crate) async fn play_with_situation(
     output: Arc<std::sync::atomic::AtomicBool>,
     on_started: impl FnOnce() + Send + 'static,
     situation: Option<Arc<crate::situation::SituationRuntime>>,
+    continuous: Option<&ContinuousPlayback>,
 ) -> Result<(), String> {
     if held(&situation) {
         return Ok(());
@@ -25,6 +26,7 @@ pub(crate) async fn play_with_situation(
         None,
         output,
         situation,
+        continuous,
     )
     .await
 }
@@ -42,6 +44,7 @@ pub(crate) async fn play_larm_with_situation(
     cancellation: Arc<RunCancellation>,
     on_started: impl FnOnce() + Send + 'static,
     situation: Option<Arc<crate::situation::SituationRuntime>>,
+    continuous: Option<&ContinuousPlayback>,
 ) -> Result<(), String> {
     if held(&situation) {
         return Ok(());
@@ -89,6 +92,7 @@ pub(crate) async fn play_larm_with_situation(
         )),
         output,
         situation,
+        continuous,
     )
     .await
 }
@@ -144,6 +148,7 @@ mod tests {
             output.clone(),
             || panic!("held audio started"),
             Some(situation),
+            None,
         )
         .await;
         server.abort();

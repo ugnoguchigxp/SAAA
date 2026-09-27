@@ -106,6 +106,7 @@ async fn run_flow() -> i32 {
             }
         }
     }
+    let follow_url = std::env::var("SAAA_WEBFETCH_TEST_URL").ok().or(follow_url);
     let Some(url) = follow_url else {
         eprintln!("webfetch_e2e: no fetchable search hits to follow");
         return 1;
@@ -116,7 +117,8 @@ async fn run_flow() -> i32 {
     let fetch_call = AgentToolCall {
         id: "e2e-fetch".to_string(),
         name: "fetch_content".to_string(),
-        arguments: serde_json::json!({"url": url, "maxCharacters": 2000}).to_string(),
+        arguments: serde_json::json!({"url": url, "maxCharacters": 3000,
+            "query": std::env::var("SAAA_WEBFETCH_TEST_QUERY").unwrap_or_else(|_| "rust programming language".into())}).to_string(),
     };
     let fetch_json = execute_with_cancel(
         &fetch_call,
@@ -147,15 +149,15 @@ async fn run_flow() -> i32 {
         eprintln!("webfetch_e2e: fetch result is not tainted");
         return 1;
     }
-    let text_len = fetch_value
+    let text = fetch_value
         .pointer("/document/text")
         .and_then(|v| v.as_str())
-        .map(|text| text.len())
-        .unwrap_or(0);
-    if text_len == 0 {
-        eprintln!("webfetch_e2e: fetched document text is empty");
+        .unwrap_or("");
+    let text_chars = text.chars().count();
+    if text_chars == 0 || text_chars > 3_000 || text.contains("<script") || text.contains("<style") {
+        eprintln!("webfetch_e2e: extracted text is empty, over budget, or contains markup");
         return 1;
     }
-    println!("webfetch_e2e: PASS (search hits + {text_len} chars fetched, all untrusted/tainted)");
+    println!("webfetch_e2e: PASS (search hits + {text_chars} text chars fetched, all untrusted/tainted)");
     0
 }

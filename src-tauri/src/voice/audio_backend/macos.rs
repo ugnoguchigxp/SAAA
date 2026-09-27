@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types)]
 use super::{
     converter::{i16_to_f32_mono, CaptureDownsampler, LinearResampler, VPIO_RATE},
+    echo_reference::EchoReference,
     ring::SpscF32,
     AudioBackendStatus, CaptureSink, DuckingLevel, VoiceProcessingConfig, AIRPLAY_TRANSPORT,
     BLUETOOTH_TRANSPORT,
@@ -51,6 +52,7 @@ extern "C" {
         config: *const SaaaVpioConfig,
         playback_ring: *mut c_void,
         capture_ring: *mut c_void,
+        reference_ring: *mut c_void,
         write_capture: RingWrite,
         read_playback: RingRead,
         on_route_change: Option<FlagFn>,
@@ -123,6 +125,7 @@ impl NativeUnit {
         config: VoiceProcessingConfig,
         playback: &Arc<SpscF32>,
         capture: &Arc<SpscF32>,
+        reference: &Arc<SpscF32>,
     ) -> Result<(Self, SaaaVpioStatus), String> {
         let ffi_config = SaaaVpioConfig {
             sample_rate: VPIO_RATE,
@@ -138,6 +141,7 @@ impl NativeUnit {
                 &ffi_config,
                 Arc::as_ptr(playback) as *mut SpscF32 as *mut c_void,
                 Arc::as_ptr(capture) as *mut SpscF32 as *mut c_void,
+                Arc::as_ptr(reference) as *mut SpscF32 as *mut c_void,
                 write_capture,
                 read_playback,
                 None,
@@ -189,6 +193,7 @@ impl Drop for NativeUnit {
 pub struct MacEngine {
     playback: Arc<SpscF32>,
     capture: Arc<SpscF32>,
+    reference: Arc<SpscF32>,
     unit: Mutex<Option<NativeUnit>>,
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
@@ -205,6 +210,7 @@ impl MacEngine {
         Self {
             playback: Arc::new(SpscF32::new()),
             capture: Arc::new(SpscF32::new()),
+            reference: Arc::new(SpscF32::new()),
             unit: Mutex::new(None),
             stop: Arc::new(AtomicBool::new(false)),
             worker: Mutex::new(None),
@@ -277,12 +283,13 @@ impl MacEngine {
         self.capture_active.store(true, Ordering::Release);
         self.stop.store(false, Ordering::Release);
         let capture = self.capture.clone();
+        let reference = self.reference.clone();
         let stop = self.stop.clone();
         let sink = self.sink.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let engine = Arc::clone(self);
         let handle = match thread::Builder::new()
             .name("saaa-vpio-capture".into())
-            .spawn(move || capture_worker(engine, capture, stop, sink))
+            .spawn(move || capture_worker(engine, capture, reference, stop, sink))
         {
             Ok(handle) => handle,
             Err(_) => {
@@ -297,7 +304,8 @@ impl MacEngine {
     }
 
     fn open_unit(&self, config: VoiceProcessingConfig) -> Result<(), String> {
-        let (unit, status) = NativeUnit::create(config, &self.playback, &self.capture)?;
+        let (unit, status) =
+            NativeUnit::create(config, &self.playback, &self.capture, &self.reference)?;
         if status.agc_enabled != 0 {
             drop(unit);
             return Err("VoiceProcessing AGC stayed enabled after initialize".into());
@@ -372,6 +380,7 @@ impl MacEngine {
         *self.sink.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.unit.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.capture.clear();
+        self.reference.clear();
         self.interrupt_playback();
     }
 
@@ -479,12 +488,15 @@ fn resampler_from(resampler: &LinearResampler) -> u32 {
 fn capture_worker(
     engine: Arc<MacEngine>,
     capture: Arc<SpscF32>,
+    reference: Arc<SpscF32>,
     stop: Arc<AtomicBool>,
     sink: Option<Arc<CaptureSink>>,
 ) {
     let mut downsampler = CaptureDownsampler::new();
+    let mut echo_reference = EchoReference::new();
     let mut pending = Vec::new();
     let mut scratch = vec![0.0; 2048];
+    let mut reference_scratch = vec![0.0; 4096];
     let Some(sink) = sink else { return };
     'capture: while !stop.load(Ordering::Acquire) {
         if engine.unit_capture_failed() {
@@ -494,13 +506,21 @@ fn capture_worker(
             break;
         }
         let n = capture.read(&mut scratch);
+        loop {
+            let read = reference.read(&mut reference_scratch);
+            if read == 0 {
+                break;
+            }
+            echo_reference.append_rendered(&reference_scratch[..read]);
+        }
         if n == 0 {
             thread::sleep(Duration::from_millis(2));
             continue;
         }
         downsampler.push(&scratch[..n], &mut pending);
         while pending.len() >= FRAME_SAMPLES {
-            let frame = pending.drain(..FRAME_SAMPLES).collect::<Vec<_>>();
+            let mut frame = pending.drain(..FRAME_SAMPLES).collect::<Vec<_>>();
+            echo_reference.remove_identified_echo(&mut frame);
             if !sink(frame) {
                 break 'capture;
             }

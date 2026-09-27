@@ -239,10 +239,7 @@ pub async fn fetch(
         .await
         .map_err(|_| WebFetchFailure::unavailable())?;
         // A title without body text may be a JS shell. Brief, complete pages are valid.
-        if !projection.has_body
-            || looks_like_challenge(&projection.text)
-            || (request.query.is_some() && !projection.relevant)
-        {
+        if !projection.has_body || looks_like_challenge(&projection.text) {
             return Ok(None);
         }
         let text = projection.text;
@@ -277,7 +274,7 @@ pub async fn fetch(
                 "allow"
             },
             warning_categories,
-            retrieval_status: if request.query.is_some() {
+            retrieval_status: if request.query.is_some() && projection.relevant {
                 "relevant"
             } else {
                 "partial"

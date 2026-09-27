@@ -7,6 +7,8 @@ import {
   type FormEvent,
 } from "react";
 import { AppIcon } from "../../components/AppIcon";
+import { useArtifactWorkspace } from "./artifacts/ArtifactDrawer";
+import { normalizeAnswerUrl } from "./artifacts/answerUrls";
 import { listen } from "@tauri-apps/api/event";
 import type { ConversationMessage } from "../../lib/contracts";
 import {
@@ -25,6 +27,8 @@ import {
   enqueueConversationText,
   listMessages,
   replayConversationSpeech,
+  startConversationAudioIdle,
+  stopConversationAudioIdle,
   type ConversationQueueJob,
 } from "../../lib/runtime";
 import "./conversationCheckPage.css";
@@ -37,16 +41,32 @@ const routeNodes = [
   { id: "tts", label: "TTS" },
 ] as const;
 
+const SOURCE_LINKS_MARKER = "\n\n<!-- saaa:source-links -->\n";
+
+function displayAnswer(content: string) {
+  const [answer, appendix] = content.split(SOURCE_LINKS_MARKER, 2);
+  const sources =
+    appendix?.split("\n").flatMap((line) => {
+      const match = /^\[([^\]\r\n]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(line);
+      const url = match && normalizeAnswerUrl(match[2]);
+      return match && url ? [{ label: match[1], url }] : [];
+    }) ?? [];
+  return { answer, sources };
+}
+
 export function ConversationCheckPage({
   conversationId,
+  agentName,
   inputDeviceId,
   echoCancellation,
   listeningEnabled,
   vadSensitivity,
   silenceTimeoutMs,
   onOpenSettings,
+  onToggleListening,
 }: {
   conversationId: string;
+  agentName: string;
   providerLabel: string;
   inputDeviceId: string;
   echoCancellation: boolean;
@@ -54,14 +74,24 @@ export function ConversationCheckPage({
   vadSensitivity: "low" | "medium" | "high";
   silenceTimeoutMs: number;
   onOpenSettings: () => void;
+  onToggleListening?: (enabled: boolean) => void;
 }) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const artifacts = useArtifactWorkspace();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [stage, setStage] = useState<RouteStage>(null);
   const [jobs, setJobs] = useState<ConversationQueueJob[]>([]);
   const [speechPlaying, setSpeechPlaying] = useState(false);
-  const lastReplySource = jobs.some((job) => job.kind === "speech") ? "Qwen 2B" : null;
+  const lastSpeech = jobs
+    .slice()
+    .reverse()
+    .find((job) => job.kind === "speech");
+  const lastReplySource = lastSpeech
+    ? jobs.some((job) => job.key === lastSpeech.key && job.kind === "ornith_result")
+      ? "Ornith 1.5"
+      : "Qwen 2B"
+    : null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const audio = useSyncExternalStore(subscribeConversationAsr, conversationAsrSnapshot);
@@ -70,6 +100,11 @@ export function ConversationCheckPage({
   const audioResponseQueue = useRef(Promise.resolve());
   const autoStartAttempted = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const latestJob = jobs
+    .slice()
+    .reverse()
+    .find((job) => job.kind !== "progress_speech");
+  const queueError = latestJob?.state === "failed" ? latestJob.error : null;
   const latestAsrError = audio.entries[0]?.status === "failed" ? audio.entries[0].error : null;
   const failedDelivery = audio.entries.find(
     (entry) =>
@@ -80,8 +115,8 @@ export function ConversationCheckPage({
       !entry.deliveryQueued,
   );
   const transcribing = audio.entries.some((entry) => entry.status === "transcribing");
-  const asrActive =
-    audio.phase === "starting" || (audio.phase === "recording" && !audio.playbackLimited);
+  const asrActive = audio.phase === "starting" || audio.phase === "recording";
+  const recognizing = asrActive && Boolean(audio.speechDetected || audio.interimText || transcribing);
   const displayedText = text || audio.interimText;
   const pendingJob = jobs
     .slice()
@@ -101,7 +136,7 @@ export function ConversationCheckPage({
           : pendingJob
             ? "回答を処理待ち"
             : asrActive
-              ? audio.speechDetected || audio.interimText || transcribing
+              ? recognizing
                 ? "音声を認識中"
                 : "音声を待っています"
               : audio.phase === "starting"
@@ -121,6 +156,18 @@ export function ConversationCheckPage({
       page.messages.filter((message) => message.role === "user" || message.role === "assistant"),
     );
   }, [conversationId]);
+
+  useEffect(() => {
+    let active = true;
+    const started = startConversationAudioIdle();
+    void started.catch((cause) => {
+      if (active) setError(String(cause));
+    });
+    return () => {
+      active = false;
+      void started.catch(() => {}).then(stopConversationAudioIdle);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -175,8 +222,6 @@ export function ConversationCheckPage({
             ? "qwen"
             : null,
     );
-    const latest = jobs[jobs.length - 1];
-    if (latest?.state === "failed" && latest.error) setError(latest.error);
   }, [jobs, speechPlaying]);
 
   useEffect(() => {
@@ -262,6 +307,10 @@ export function ConversationCheckPage({
   }
 
   const toggleRecording = () => {
+    if (onToggleListening) {
+      onToggleListening(audio.phase !== "recording");
+      return;
+    }
     void (audio.phase === "recording"
       ? stopConversationAsr()
       : startConversationAsr(inputDeviceId, echoCancellation, vadSensitivity, silenceTimeoutMs));
@@ -280,17 +329,55 @@ export function ConversationCheckPage({
         {!loading && messages.length === 0 && (
           <p>マイクを有効にするか、メッセージを入力してください。</p>
         )}
-        {messages.map((message) => (
-          <article key={message.id} className={`conversation-check-message ${message.role}`}>
-            <strong>{message.role === "user" ? "あなた" : "SAAA"}</strong>
-            <p>{message.content}</p>
-          </article>
-        ))}
+        {messages.map((message) => {
+          const displayed =
+            message.role === "assistant"
+              ? displayAnswer(message.content)
+              : { answer: message.content, sources: [] };
+          return (
+            <article key={message.id} className={`conversation-check-message ${message.role}`}>
+              <strong>{message.role === "user" ? "あなた" : agentName}</strong>
+              <p>{displayed.answer}</p>
+              {displayed.sources.length > 0 && (
+                <div className="conversation-check-sources" aria-label="出典">
+                  {displayed.sources.map((source) => (
+                    <a
+                      key={source.url}
+                      href={source.url}
+                      onClick={(event) => {
+                        if (!artifacts) return;
+                        event.preventDefault();
+                        artifacts.openSource({
+                          conversationId,
+                          url: source.url,
+                          title: source.label,
+                        });
+                      }}
+                    >
+                      {source.label}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </article>
+          );
+        })}
+        {(stage === "qwen" || stage === "ornith") && (
+          <div className="conversation-thinking" role="status" aria-label="思考中">
+            <div className="llm-thinking-indicator" aria-hidden="true"><span /><span /><span /></div>
+            <span>{status}</span>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
-      {(error || audio.error || latestAsrError) && (
+      {(error || queueError) && (
         <p role="alert" className="conversation-check-error">
-          {error || audio.error || latestAsrError}
+          会話処理: {error || queueError}
+        </p>
+      )}
+      {(audio.error || latestAsrError) && (
+        <p role="alert" className="conversation-check-error">
+          音声認識: {audio.error || latestAsrError}
         </p>
       )}
       {failedDelivery && (
@@ -360,6 +447,13 @@ export function ConversationCheckPage({
           >
             <AppIcon name={audio.phase === "recording" ? "stop" : "mic"} />
           </button>
+          <div
+            className={`voice-activity-indicator${asrActive ? " listening" : " paused"}${recognizing ? " detecting" : ""}`}
+            role="img"
+            aria-label={recognizing ? "音声を認識中" : asrActive ? "音声を待機中" : "マイク停止中"}
+          >
+            {Array.from({ length: 7 }, (_, index) => <span key={index} />)}
+          </div>
           <textarea
             rows={1}
             aria-label="プロンプト全文"

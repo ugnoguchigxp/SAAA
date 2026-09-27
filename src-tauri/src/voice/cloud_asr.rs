@@ -190,7 +190,7 @@ fn select_transcript(
     preserve_full_text: bool,
 ) -> Result<(String, Option<String>), String> {
     let language = result.detected_language();
-    if !preserve_full_text && response_is_no_speech(&result.segments) {
+    if response_is_no_speech(&result.segments) {
         return Err("ASR_NO_SPEECH: The ASR service classified the audio as non-speech".into());
     }
     let text = if preserve_full_text && result.text.trim().is_empty() {
@@ -319,17 +319,30 @@ mod tests {
     }
 
     #[test]
-    fn conversation_transcript_preserves_full_text_even_with_no_speech_metadata() {
+    fn conversation_transcript_preserves_full_speech_text() {
         let text = "聞き取った全文".repeat(6_000);
         let response: TranscriptionResponse = serde_json::from_value(serde_json::json!({
             "text": text,
             "language": "ja",
-            "segments": [{"no_speech_prob": 0.9}]
+            "segments": [{"no_speech_prob": 0.1}]
         }))
         .unwrap();
         let (actual, language) = select_transcript(response, true).unwrap();
         assert_eq!(actual, text);
         assert_eq!(language.as_deref(), Some("ja"));
+    }
+
+    #[test]
+    fn conversation_rejects_hallucinated_text_on_non_speech() {
+        for full in [false, true] {
+            let response = serde_json::from_str(
+                r#"{"text":"こんにちは。","segments":[{"no_speech_prob":0.95}]}"#,
+            )
+            .unwrap();
+            assert!(select_transcript(response, full)
+                .unwrap_err()
+                .starts_with("ASR_NO_SPEECH:"));
+        }
     }
 
     #[test]

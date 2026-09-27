@@ -134,6 +134,7 @@ pub(crate) async fn start_qwen_asr_session(
     if sessions().lock().await.contains_key(&input.session_id) {
         return Err("ASRセッションはすでに開始されています。".into());
     }
+    let gate = super::conversation_speaker::prepare(&state)?;
     let mut socket = connect_provider(&provider).await?;
     initialize_session(&mut socket, input.silence_timeout_ms).await?;
     let (sender, receiver) = mpsc::channel(16);
@@ -145,7 +146,13 @@ pub(crate) async fn start_qwen_asr_session(
     }
     active.insert(input.session_id.clone(), sender);
     drop(active);
-    tokio::spawn(run_session(input.session_id, socket, receiver, on_event));
+    tokio::spawn(run_session(
+        input.session_id,
+        socket,
+        receiver,
+        on_event,
+        gate,
+    ));
     Ok(())
 }
 
@@ -315,11 +322,13 @@ async fn run_session(
     socket: Socket,
     mut receiver: mpsc::Receiver<Command>,
     events: Channel<Event>,
+    mut gate: super::streaming_asr::speaker_gate_runtime::SpeakerGate,
 ) {
     let (mut writer, mut reader) = socket.split();
     let mut ranges: Vec<Range> = Vec::new();
     let mut item_ids: HashMap<String, String> = HashMap::new();
     let mut audio_ms = 0u64;
+    let mut pending_ids = std::collections::VecDeque::new();
     let mut stop_reply: Option<oneshot::Sender<Result<(), String>>> = None;
     let mut finish_at: Option<tokio::time::Instant> = None;
     let mut keepalive = tokio::time::interval(KEEPALIVE_INTERVAL);
@@ -327,7 +336,7 @@ async fn run_session(
     let _ = events.send(Event::Ready {
         session_id: session_id.clone(),
     });
-    let result: Result<(), String> = loop {
+    let result: Result<(), String> = 'session: loop {
         tokio::select! {
             _ = keepalive.tick() => {
                 if writer.send(Message::Ping(Vec::new().into())).await.is_err() {
@@ -339,6 +348,9 @@ async fn run_session(
             }
             command = receiver.recv() => match command {
                 Some(Command::Audio { utterance_id, audio }) => {
+                    pending_ids.push_back(utterance_id);
+                    for audio in gate.push(zeroize::Zeroizing::new(audio)).await {
+                    let utterance_id = pending_ids.pop_front().expect("one id per gated packet");
                     if let Some(last) = ranges.last_mut().filter(|range| range.utterance_id == utterance_id) {
                         last.end_ms += 100;
                     } else {
@@ -346,8 +358,9 @@ async fn run_session(
                         if ranges.len() > 64 { ranges.remove(0); }
                     }
                     audio_ms += 100;
-                    let payload = json!({"event_id":uuid::Uuid::new_v4().to_string(), "type":"input_audio_buffer.append", "audio":STANDARD.encode(audio)});
-                    if writer.send(Message::Text(payload.to_string().into())).await.is_err() { break Err::<(), String>("Qwen ASRへの音声送信に失敗しました。".into()); }
+                    let payload = json!({"event_id":uuid::Uuid::new_v4().to_string(), "type":"input_audio_buffer.append", "audio":STANDARD.encode(audio.as_slice())});
+                    if writer.send(Message::Text(payload.to_string().into())).await.is_err() { break 'session Err::<(), String>("Qwen ASRへの音声送信に失敗しました。".into()); }
+                    }
                 }
                 Some(Command::Stop { done }) => {
                     if stop_reply.is_some() {
@@ -356,6 +369,14 @@ async fn run_session(
                     }
                     stop_reply = Some(done);
                     finish_at = Some(tokio::time::Instant::now() + FINISH_TIMEOUT);
+                    for audio in gate.flush().await {
+                        let utterance_id = pending_ids.pop_front().expect("one id per gated packet");
+                        if let Some(last) = ranges.last_mut().filter(|r| r.utterance_id == utterance_id) { last.end_ms += 100; }
+                        else { ranges.push(Range { utterance_id, start_ms: audio_ms, end_ms: audio_ms + 100 }); }
+                        audio_ms += 100;
+                        let payload = json!({"event_id":uuid::Uuid::new_v4().to_string(), "type":"input_audio_buffer.append", "audio":STANDARD.encode(audio.as_slice())});
+                        if writer.send(Message::Text(payload.to_string().into())).await.is_err() { break 'session Err("Qwen ASRへの音声送信に失敗しました。".into()); }
+                    }
                     let payload = json!({"event_id":uuid::Uuid::new_v4().to_string(), "type":"session.finish"});
                     if writer.send(Message::Text(payload.to_string().into())).await.is_err() { break Err("Qwen ASRを終了できませんでした。".into()); }
                 }
@@ -507,7 +528,13 @@ mod tests {
             Ok(())
         });
         let (sender, receiver) = mpsc::channel(4);
-        let session = tokio::spawn(run_session("test-session".into(), socket, receiver, events));
+        let session = tokio::spawn(run_session(
+            "test-session".into(),
+            socket,
+            receiver,
+            events,
+            super::super::streaming_asr::speaker_gate_runtime::SpeakerGate::new(None, 0.008),
+        ));
         sender
             .send(Command::Audio {
                 utterance_id: "local-1".into(),

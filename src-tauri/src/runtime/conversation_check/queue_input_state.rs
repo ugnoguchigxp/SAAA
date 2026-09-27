@@ -17,7 +17,7 @@ pub(crate) fn active_previous(
                              WHERE scope=?1 AND kind='user_input' AND job_key=?2)
            AND EXISTS (SELECT 1 FROM task_queue_jobs active
                        WHERE active.scope=input.scope AND active.job_key=input.job_key
-                         AND active.lane IN ('qwen','ornith') AND active.state IN ('queued','running'))
+                         AND active.lane IN ('qwen','ornith','speech') AND active.state IN ('queued','running'))
          ORDER BY input.rowid DESC LIMIT 1",
         params![scope, current_key], |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional().map_err(database_error)

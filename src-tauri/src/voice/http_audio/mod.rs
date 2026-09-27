@@ -5,13 +5,13 @@ pub(crate) mod client;
 pub(crate) mod decode;
 #[cfg(all(test, not(coverage)))]
 mod live;
-mod playback;
-mod playback_started;
-mod playback_vpio;
+use crate::voice::local_audio_output as playback;
 mod timeout_tests;
 
 mod requests;
 pub(crate) use requests::{play_larm_with_situation, play_with_situation};
+
+use crate::voice::local_audio_output::ContinuousPlayback;
 
 #[allow(clippy::too_many_arguments)]
 async fn play_response(
@@ -23,6 +23,7 @@ async fn play_response(
     lease: Option<(saaa_larm_session::Use, std::time::Duration)>,
     output: Arc<std::sync::atomic::AtomicBool>,
     situation: Option<Arc<crate::situation::SituationRuntime>>,
+    continuous: Option<&ContinuousPlayback>,
 ) -> Result<(), String> {
     if situation
         .as_ref()
@@ -30,6 +31,17 @@ async fn play_response(
         || cancellation.is_cancelled()
     {
         return Ok(());
+    }
+    if let Some(continuous) = continuous {
+        let sender = continuous.sender();
+        if let Some((_, remaining)) = &lease {
+            receive_with_timeout(response, format, &cancellation, sender, *remaining, &output)
+                .await?;
+        } else {
+            receive(response, format, &cancellation, sender, &output).await?;
+        }
+        drop(lease);
+        return continuous.drain(&cancellation).await;
     }
     let player = playback::Playback::start_guarded(cancellation.clone(), situation, move || {
         crate::providers::http_metrics::record("ttsRequestToFirstMixerSample", started.elapsed());

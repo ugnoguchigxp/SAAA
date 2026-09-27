@@ -607,7 +607,7 @@ async fn ready_status_with_one_unready_provider_never_claims() {
     fake.partial_ready.store(true, Ordering::SeqCst);
     let (_stop, receiver) = watch::channel(false);
     let result = Session::connect(&fake.base, receiver).await;
-    assert_eq!(result.err().unwrap().code, "larm_invalid_provider");
+    assert_eq!(result.err().unwrap().code, "larm_provider_not_ready");
     assert_eq!(count(&fake, "/v1/agent-connections/session-1/claim"), 0);
     assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
     server.abort();
@@ -619,7 +619,7 @@ async fn later_partial_readiness_revokes_the_previous_generation() {
     let (_stop, receiver) = watch::channel(false);
     let session = Session::connect(&fake.base, receiver).await.unwrap();
     fake.partial_ready.store(true, Ordering::SeqCst);
-    assert_eq!(session.check_status().await, Err("larm_invalid_provider"));
+    assert_eq!(session.check_status().await, Err("larm_provider_not_ready"));
     assert!(session.acquire("llm").await.is_err());
     assert!(session.acquire("asr").await.is_err());
     session.close().await.unwrap();
@@ -1283,6 +1283,9 @@ async fn create_response_rejects_missing_duplicate_and_invalid_provider_fields()
     let mut duplicate = original.clone();
     duplicate["providers"][0] = duplicate["providers"][1].clone();
     assert!(contract::validate_created(&duplicate, "SAAA", &required, None).is_err());
+    let mut not_claimable = original.clone();
+    not_claimable["providers"][0]["claimable"] = json!(false);
+    assert_eq!(contract::validate_created(&not_claimable, "SAAA", &required, None), Err("larm_provider_not_claimable"));
     for (field, value) in [
         ("protocol", json!("invalid")),
         ("endpoint", json!("/invalid")),
