@@ -273,6 +273,10 @@ async fn asr_sends_wav_after_claim_and_releases_after_transcription() {
     assert_eq!(result["capability"], "asr");
     assert_eq!(result["model"], model("asr"));
     assert_eq!(result["output"], "音声のテスト結果\n\n検出言語: ja");
+    assert_eq!(
+        *fixture.scopes.lock().unwrap(),
+        vec![Some(vec!["asr".into()])]
+    );
     let calls = fixture.calls.lock().unwrap();
     let position = |call: &str| calls.iter().position(|value| value == call).unwrap();
     assert!(

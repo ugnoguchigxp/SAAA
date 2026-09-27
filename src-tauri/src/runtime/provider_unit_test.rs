@@ -223,6 +223,7 @@ async fn connect_session(
 
 fn provider_scope(capability: &str) -> Option<&'static str> {
     match capability {
+        "asr" => Some("asr"),
         "backchannel" => Some("backchannel"),
         "llm" => Some("llm"),
         "embedding" => Some("embedding"),
