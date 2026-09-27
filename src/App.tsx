@@ -13,6 +13,7 @@ import { RecordsPage } from "./features/records/RecordsPage";
 import { AuditLogPage } from "./features/audit/AuditLogPage";
 import { ArtifactWorkspaceProvider } from "./features/chat/artifacts/ArtifactDrawer";
 import { ConversationCheckPage } from "./features/chat/ConversationCheckPage";
+import { ProviderUnitTestPage } from "./features/providerUnitTest/ProviderUnitTestPage";
 import { DesignSystemProvider } from "./design-system";
 import "./design-system/styles.css";
 import { AppShell } from "./shell/AppShell";
@@ -55,7 +56,11 @@ function App() {
     return <main className="boot-screen">{error ?? t("app.booting")}</main>;
   }
   const primaryConversationId = snapshot.primaryConversationId || null;
-  const voiceSettings = findSettingsDocument(snapshot.settings, "voice.runtime", "default")?.valueJson;
+  const voiceSettings = findSettingsDocument(
+    snapshot.settings,
+    "voice.runtime",
+    "default",
+  )?.valueJson;
   return (
     <main className="app-shell">
       <Suspense fallback={<main className="boot-screen">{t("app.booting")}</main>}>
@@ -110,6 +115,16 @@ function App() {
               <AuditLogPage />
             ) : route === "diagnosis" ? (
               <DiagnosisPage />
+            ) : route === "unitTest" ? (
+              <ProviderUnitTestPage
+                inputDeviceId={
+                  typeof voiceSettings?.inputDeviceId === "string"
+                    ? voiceSettings.inputDeviceId
+                    : "default"
+                }
+                echoCancellation={voiceSettings?.aecEnabled !== false}
+                onOpenSettings={() => setRoute("settings")}
+              />
             ) : (
               <>
                 <RecordsPage

@@ -386,7 +386,7 @@ async fn connect_larm(
     Ok(session)
 }
 
-async fn complete_http(
+pub(crate) async fn complete_http(
     endpoint: &str,
     authorization: Option<&str>,
     model: &str,

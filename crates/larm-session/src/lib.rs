@@ -230,6 +230,27 @@ impl Session {
         cancellation: watch::Receiver<bool>,
         phase: Option<watch::Sender<ConnectionPhase>>,
     ) -> Result<Arc<Self>, ConnectError> {
+        Self::connect_with_profile_credential_key_phase_and_providers(
+            base,
+            preference,
+            token,
+            idempotency_key,
+            cancellation,
+            phase,
+            None,
+        )
+        .await
+    }
+
+    pub async fn connect_with_profile_credential_key_phase_and_providers(
+        base: &str,
+        preference: ProfilePreference,
+        token: String,
+        idempotency_key: String,
+        cancellation: watch::Receiver<bool>,
+        phase: Option<watch::Sender<ConnectionPhase>>,
+        providers: Option<Vec<&'static str>>,
+    ) -> Result<Arc<Self>, ConnectError> {
         if token.is_empty()
             || token.trim().is_empty()
             || token.len() > 4096
@@ -263,6 +284,7 @@ impl Session {
                 cancellation,
                 abandoned,
                 phase,
+                providers,
             )
             .await;
             if let Err(result) = send.send(result) {
@@ -289,6 +311,7 @@ impl Session {
         mut cancellation: watch::Receiver<bool>,
         mut abandoned: watch::Receiver<bool>,
         phase: Option<watch::Sender<ConnectionPhase>>,
+        providers: Option<Vec<&'static str>>,
     ) -> Result<Arc<Self>, ConnectError> {
         if let Some(phase) = &phase {
             phase.send_replace(ConnectionPhase::ModelPreparing);
@@ -308,7 +331,20 @@ impl Session {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|_| "larm_client_failed")?;
-        let required = contract::required_providers();
+        let required = match providers.as_ref() {
+            Some(names)
+                if !names.is_empty()
+                    && names
+                        .iter()
+                        .all(|name| contract::accepted_provider(name).is_some())
+                    && names.iter().collect::<std::collections::HashSet<_>>().len()
+                        == names.len() =>
+            {
+                names.clone()
+            }
+            Some(_) => return Err("larm_invalid_provider_subset".into()),
+            None => contract::required_providers(),
+        };
         let (profile, catalog) = match &preference {
             ProfilePreference::Explicit(profile) => (profile.clone(), None),
             ProfilePreference::Variant(variant) => {
@@ -335,6 +371,9 @@ impl Session {
         let mut body = json!({"profile":profile,
             "audience":"saaa-desktop","client":"saaa-desktop","ttlSeconds":900,
             "allowFallback":false,"deploymentPolicy":"existing-only"});
+        if providers.is_some() {
+            body["providers"] = json!(required);
+        }
         if let Some(catalog) = &catalog {
             body["expectedCatalogRevision"] = json!(catalog.revision);
         }
@@ -566,11 +605,16 @@ impl Session {
         authorize(call, self.control_token.as_str())
     }
     async fn claim(&self) -> Result<Snapshot, &'static str> {
+        let format = if self.required.len() == 1 && self.required[0] == "embedding" {
+            "larm-embedding-provider-v1"
+        } else {
+            "openai-provider-v1"
+        };
         let value = http::json(
             self.authorize(
                 self.client
                     .post(self.operation("claim"))
-                    .json(&json!({"format":"openai-provider-v1"})),
+                    .json(&json!({"format":format})),
             )?,
             &[200],
         )

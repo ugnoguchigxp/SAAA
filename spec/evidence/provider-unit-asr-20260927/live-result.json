@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-27",
+  "test": "saved_asr_route_transcribes_known_speech",
+  "input": "Known Japanese speech generated into a file with macOS say; 16000 Hz mono PCM16; 5.0920625 seconds. This did not exercise the physical microphone.",
+  "expected_text": "これは音声認識の接続テストです。今日は良い天気です。",
+  "settings": "Existing providers.model loaded from saaa.sqlite3 with SQLITE_OPEN_READ_ONLY; existing configured LARM endpoint/profile/credential used.",
+  "backend": "Same run_with_settings / run_claimed functions used by run_provider_unit_test. No ASR mock.",
+  "observed_stages": [
+    "model_preparing",
+    "semantic_probing",
+    "ready",
+    "provider_request",
+    "releasing"
+  ],
+  "result": {
+    "audioBase64": null,
+    "capability": "asr",
+    "latencyMs": 299210,
+    "model": "qwen3-asr-1.7b",
+    "output": "これは音声認識の接続テストです。今日は良い天気です。\n\n検出言語: Japanese"
+  },
+  "test_result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 299.23s",
+  "limits": {
+    "removed_unit_test_startup_timeout_seconds": 45,
+    "existing_larm_session_startup_timeout_seconds": 300,
+    "observed_larm_profile_idle_seconds": 300
+  },
+  "limitations": [
+    "Physical microphone and interaction in the packaged native screen have not been exercised in this test.",
+    "One successful real ASR trial does not establish repeated-run stability."
+  ]
+}

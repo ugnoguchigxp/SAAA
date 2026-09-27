@@ -14,6 +14,8 @@
     "build": "bun run build:frontend && bun run ipc:check",
     "typecheck": "tsc --noEmit",
     "test:frontend": "bun run s11tnext:check && bun test tests",
+    "test:provider-unit": "bun test tests/provider-unit-test-page.test.tsx tests/provider-unit-tts.test.tsx tests/provider-unit-asr.test.tsx",
+    "e2e:provider-unit": "cargo test --manifest-path src-tauri/Cargo.toml --features provider-unit-test-harness --test provider_unit_test_e2e",
     "test:frontend:portable": "bun run s11tnext:check && bun scripts/portable-frontend-tests.ts",
     "test:coverage": "bun scripts/test-coverage.ts",
     "test": "bun run test:frontend && cargo test --manifest-path src-tauri/Cargo.toml",

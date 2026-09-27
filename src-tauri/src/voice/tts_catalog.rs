@@ -300,7 +300,7 @@ async fn load_harness_catalog(state: &crate::AppState) -> Result<TtsVoiceCatalog
     result
 }
 
-async fn fetch_catalog(
+pub(crate) async fn fetch_catalog(
     endpoint: &str,
     token: Option<&str>,
     bypass_proxy: bool,

@@ -53,6 +53,7 @@ async fn resolves_the_advertised_default_profile_through_state_and_claim() {
     assert_eq!(requests.len(), 5);
     assert!(requests[0].contains("GET /v3/agent-profiles?profile=SAAA"));
     assert!(requests[1].contains("\"profile\":\"SAAA\""));
+    assert!(requests[1].contains("\"providers\":[\"llm\"]"));
     assert!(requests[2].starts_with("POST /v1/agent-connections/aconn_test/claim HTTP/1.1"));
     assert!(requests[4].starts_with("DELETE /v1/agent-connections/aconn_test HTTP/1.1"));
 

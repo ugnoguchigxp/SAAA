@@ -24,6 +24,7 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 quality-eval-harness = []
 provider-diagnostics = []
+provider-unit-test-harness = []
 
 [[bin]]
 name = "harness_llm_diagnostic"

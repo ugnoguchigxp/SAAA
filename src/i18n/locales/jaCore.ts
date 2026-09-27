@@ -47,6 +47,7 @@ export const jaCore = {
     work: "仕事",
     records: "記録",
     audit: "監査",
+    unitTest: "単体テスト",
     settings: "設定",
   },
   memoryPage: {

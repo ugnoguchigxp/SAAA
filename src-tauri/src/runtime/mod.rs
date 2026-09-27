@@ -15,6 +15,7 @@ pub(crate) mod conversation_check;
 pub(crate) mod event_hub;
 pub(crate) mod image_input;
 pub(crate) mod pi;
+pub mod provider_unit_test;
 pub(crate) mod qwen_control_stream;
 pub(crate) mod run_support;
 pub mod supervisor;

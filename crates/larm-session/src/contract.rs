@@ -295,6 +295,9 @@ pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapsho
     let mut providers = HashMap::new();
     for raw in value["providers"].as_array().ok_or("larm_invalid_claim")? {
         let name = string(raw, "name")?;
+        if !required.contains(&name) {
+            return Err("larm_invalid_provider");
+        }
         let Some(protocol) = accepted_provider(name) else {
             continue;
         };
@@ -349,7 +352,9 @@ pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapsho
             },
         );
     }
-    if required.iter().any(|name| !providers.contains_key(*name)) {
+    if providers.len() != required.len()
+        || required.iter().any(|name| !providers.contains_key(*name))
+    {
         return Err("larm_missing_provider");
     }
     Ok(Snapshot {

@@ -16,6 +16,8 @@ struct Fake {
     catalog_gets: AtomicUsize,
     leases: AtomicUsize,
     claim_names: Mutex<Option<Vec<String>>>,
+    requested_names: Mutex<Option<Vec<String>>>,
+    busy_provider: Mutex<Option<String>>,
     omit_backchannel_window: AtomicBool,
     llm_model: Mutex<Option<String>>,
     backchannel_max_tokens: Mutex<Option<u64>>,
@@ -34,6 +36,19 @@ struct Fake {
     location_only: AtomicBool,
 }
 impl Fake {
+    fn pending_for_requested(&self) -> bool {
+        if self.pending.load(Ordering::SeqCst) {
+            return true;
+        }
+        let busy = self.busy_provider.lock().unwrap();
+        busy.as_ref().is_some_and(|name| {
+            self.requested_names
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map_or(true, |requested| requested.contains(name))
+        })
+    }
     fn state(&self, status: &str) -> Value {
         let selector = self.profile.lock().unwrap().clone();
         let agent_profile = self
@@ -45,12 +60,23 @@ impl Fake {
             .filter(|_| selector.starts_with("SAAA"))
             .unwrap_or(&selector)
             .to_string();
-        let mut providers = contract::required_providers()
+        let names = self
+            .requested_names
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| {
+                contract::required_providers()
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
+            });
+        let mut providers = names
             .into_iter()
             .map(|name| {
                 json!({
-                    "name":name,"protocol":contract::accepted_provider(name).unwrap(),
-                    "endpoint":contract::expected_endpoint(name).unwrap(),
+                    "name":name,"protocol":contract::accepted_provider(&name).unwrap(),
+                    "endpoint":contract::expected_endpoint(&name).unwrap(),
                     "model":format!("claimed-{name}"),"readiness":status,
                     "claimable":status == "ready"
                 })
@@ -73,10 +99,16 @@ impl Fake {
         let generation = self.generation.load(Ordering::SeqCst);
         let profile = self.profile.lock().unwrap().clone();
         let names = self.claim_names.lock().unwrap().clone().unwrap_or_else(|| {
-            contract::required_providers()
-                .into_iter()
-                .map(str::to_string)
-                .collect()
+            self.requested_names
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| {
+                    contract::required_providers()
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect()
+                })
         });
         let mut providers = names.into_iter().rev().map(|name| {
             let protocol = contract::accepted_provider(&name).unwrap_or("unknown");
@@ -156,9 +188,15 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             let body = axum::body::to_bytes(request.into_body(), 10000)
                 .await
                 .unwrap();
+            let embedding_only = fake.requested_names.lock().unwrap().as_ref()
+                == Some(&vec!["embedding".to_string()]);
             assert_eq!(
                 serde_json::from_slice::<Value>(&body).unwrap(),
-                json!({"format":"openai-provider-v1"})
+                json!({"format":if embedding_only {
+                    "larm-embedding-provider-v1"
+                } else {
+                    "openai-provider-v1"
+                }})
             );
             if fake.slow_claim.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -207,11 +245,20 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             }
             let profile = value["profile"].as_str().unwrap().to_string();
             *fake.profile.lock().unwrap() = profile;
+            *fake.requested_names.lock().unwrap() = value
+                .get("providers")
+                .and_then(Value::as_array)
+                .map(|names| {
+                    names
+                        .iter()
+                        .map(|name| name.as_str().unwrap().to_string())
+                        .collect()
+                });
             fake.leases.fetch_add(1, Ordering::SeqCst);
             if fake.slow_create.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            let mut state = fake.state(if fake.pending.load(Ordering::SeqCst) {
+            let mut state = fake.state(if fake.pending_for_requested() {
                 "pending"
             } else {
                 "ready"
@@ -220,7 +267,7 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
                 state.as_object_mut().unwrap().remove("id");
             }
             return (
-                if fake.pending.load(Ordering::SeqCst) {
+                if fake.pending_for_requested() {
                     axum::http::StatusCode::ACCEPTED
                 } else {
                     axum::http::StatusCode::CREATED
@@ -239,7 +286,7 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             state["reason"] = json!("foreground_idle_timeout");
             state
         } else {
-            fake.state(if fake.pending.load(Ordering::SeqCst) {
+            fake.state(if fake.pending_for_requested() {
                 "probing"
             } else {
                 "ready"
@@ -303,6 +350,8 @@ async fn fixture() -> (Arc<Fake>, tokio::task::JoinHandle<()>) {
         catalog_gets: AtomicUsize::new(0),
         leases: AtomicUsize::new(0),
         claim_names: Mutex::new(None),
+        requested_names: Mutex::new(None),
+        busy_provider: Mutex::new(None),
         omit_backchannel_window: AtomicBool::new(false),
         llm_model: Mutex::new(None),
         backchannel_max_tokens: Mutex::new(None),
@@ -322,10 +371,128 @@ fn count(fake: &Fake, suffix: &str) -> usize {
         .count()
 }
 #[tokio::test]
+async fn selected_provider_connects_while_another_provider_is_busy() {
+    for (selected, busy) in [
+        ("backchannel", "llm"),
+        ("llm", "backchannel"),
+        ("embedding", "llm"),
+    ] {
+        let (fake, server) = fixture().await;
+        *fake.busy_provider.lock().unwrap() = Some(busy.into());
+        let (_stop, receiver) = watch::channel(false);
+        let session = Session::connect_with_profile_credential_key_phase_and_providers(
+            &fake.base,
+            ProfilePreference::Variant(ProfileVariant::Conversation),
+            "test-control-token".into(),
+            format!("saaa-session-subset-{selected}"),
+            receiver,
+            None,
+            Some(vec![selected]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            *fake.requested_names.lock().unwrap(),
+            Some(vec![selected.into()])
+        );
+        assert_eq!(session.provider_summary().await.len(), 1);
+        assert!(session.acquire(selected).await.is_ok());
+        assert!(session.acquire(busy).await.is_err());
+        session.close().await.unwrap();
+        assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn selected_provider_rejects_unrequested_claim_and_releases() {
+    let (fake, server) = fixture().await;
+    *fake.claim_names.lock().unwrap() = Some(vec!["backchannel".into(), "llm".into()]);
+    let (_stop, receiver) = watch::channel(false);
+    let result = Session::connect_with_profile_credential_key_phase_and_providers(
+        &fake.base,
+        ProfilePreference::Variant(ProfileVariant::Conversation),
+        "test-control-token".into(),
+        "saaa-session-subset-extra-claim".into(),
+        receiver,
+        None,
+        Some(vec!["backchannel"]),
+    )
+    .await;
+    assert!(result.is_err());
+    assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
+    assert!(fake.released.load(Ordering::SeqCst));
+    server.abort();
+}
+
+#[tokio::test]
+async fn cancelling_selected_provider_releases_the_created_connection() {
+    let (fake, server) = fixture().await;
+    fake.pending.store(true, Ordering::SeqCst);
+    let (stop, receiver) = watch::channel(false);
+    let base = fake.base.clone();
+    let start = tokio::spawn(async move {
+        Session::connect_with_profile_credential_key_phase_and_providers(
+            &base,
+            ProfilePreference::Variant(ProfileVariant::Conversation),
+            "test-control-token".into(),
+            "saaa-session-subset-cancel".into(),
+            receiver,
+            None,
+            Some(vec!["llm"]),
+        )
+        .await
+    });
+    while count(&fake, "/v1/agent-connections") == 0 {
+        tokio::task::yield_now().await;
+    }
+    stop.send_replace(true);
+    assert!(start.await.unwrap().is_err());
+    assert_eq!(fake.leases.load(Ordering::SeqCst), 0);
+    assert!(fake.released.load(Ordering::SeqCst));
+    server.abort();
+}
+
+#[tokio::test]
+async fn abandoning_selected_provider_startup_releases_the_created_connection() {
+    let (fake, server) = fixture().await;
+    fake.pending.store(true, Ordering::SeqCst);
+    let (_stop, receiver) = watch::channel(false);
+    let base = fake.base.clone();
+    let start = tokio::spawn(async move {
+        Session::connect_with_profile_credential_key_phase_and_providers(
+            &base,
+            ProfilePreference::Variant(ProfileVariant::Conversation),
+            "test-control-token".into(),
+            "saaa-session-subset-abandoned".into(),
+            receiver,
+            None,
+            Some(vec!["backchannel"]),
+        )
+        .await
+    });
+    while fake.leases.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    start.abort();
+    let _ = start.await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while fake.leases.load(Ordering::SeqCst) != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(fake.released.load(Ordering::SeqCst));
+    server.abort();
+}
+
+#[tokio::test]
 async fn maps_reordered_providers_and_caches_health_then_releases_once() {
     let (fake, server) = fixture().await;
     let (_stop, receiver) = watch::channel(false);
     let session = Session::connect(&fake.base, receiver).await.unwrap();
+    assert!(fake.requested_names.lock().unwrap().is_none());
     for name in contract::BASE_PROVIDERS.iter().map(|(name, _)| *name) {
         let lease = session.acquire(name).await.unwrap();
         assert_eq!(lease.provider().model, format!("claimed-{name}"));

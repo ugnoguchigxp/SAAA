@@ -5,6 +5,7 @@ export const appRoutes = [
   "records",
   "audit",
   "diagnosis",
+  "unitTest",
   "settings",
 ] as const;
 

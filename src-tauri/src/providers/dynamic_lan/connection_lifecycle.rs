@@ -123,6 +123,7 @@ impl DynamicLanConnection {
             "profile": selected_profile.selector.as_str(),
             "audience": audience.as_str(),
             "client": CLIENT_ID,
+            "providers": ["llm"],
             "ttlSeconds": CONNECTION_TTL_SECONDS,
             "allowFallback": false,
             "deploymentPolicy": "existing-only"
@@ -178,7 +179,10 @@ impl DynamicLanConnection {
         if !matches!(created.status, StatusCode::CREATED | StatusCode::ACCEPTED)
             || (created.status == StatusCode::CREATED && created.value.status != "ready")
             || (created.status == StatusCode::ACCEPTED
-                && !matches!(created.value.status.as_str(), "pending" | "deploying" | "probing"))
+                && !matches!(
+                    created.value.status.as_str(),
+                    "pending" | "deploying" | "probing"
+                ))
         {
             let error = contract_error(());
             return if let Ok(url) = connection_resource_url(&control_base, &created.value.id) {
