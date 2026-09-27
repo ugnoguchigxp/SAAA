@@ -8,9 +8,11 @@ let holdNextRecognition = false;
 let releaseRecognition: (() => void) | null = null;
 let nativeAvailable = false;
 let nativeAecActive = true;
+let nativePlaybackActive = false;
 let nativeStartFails = false;
 let macosMajor = 0;
 let browserEchoCancellation: boolean | null = null;
+let reportNativeStatus: ((status: { aecActive: boolean; playbackActive: boolean }) => void) | null = null;
 const auditEvents: Array<{ eventName: string; correlationId?: string | null }> = [];
 const recognitions: Array<{ utteranceId: string; kind: string }> = [];
 
@@ -39,13 +41,19 @@ mock.module("../src/lib/browserVoiceCapture", () => ({
 mock.module("../src/lib/audioBackend", () => ({
   audioBackendStatus: async () => ({ available: nativeAvailable, macosMajor }),
   nativeCapturePreferred: (status: { available: boolean }) => status.available,
-  startNativeVoiceCapture: async (handler: (frame: Float32Array) => void) => {
+  startNativeVoiceCapture: async (
+    handler: (frame: Float32Array) => void,
+    _onEnded: (reason: string) => void,
+    onStatus: (status: { aecActive: boolean; playbackActive: boolean }) => void,
+  ) => {
     if (nativeStartFails) throw new Error("native capture unavailable");
     onFrame = handler;
-    return { available: true, aecActive: nativeAecActive };
+    reportNativeStatus = onStatus;
+    return { available: true, aecActive: nativeAecActive, playbackActive: nativePlaybackActive };
   },
   stopNativeVoiceCapture: async () => {
     onFrame = null;
+    reportNativeStatus = null;
   },
 }));
 mock.module("../src/lib/audioIpc", () => ({
@@ -176,11 +184,21 @@ test("accepts speech during playback only when native AEC is active", async () =
   await capture.startConversationAsr("default", true);
   const before = capture.conversationAsrSnapshot().entries.length;
   capture.setConversationAsrPlaybackActive(true);
+  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(true);
+  nativePlaybackActive = true;
+  reportNativeStatus?.({ aecActive: true, playbackActive: true });
   expect(capture.conversationAsrSnapshot().playbackLimited).toBe(false);
   feed(0.1, 20);
   feed(0, 15);
   await tick();
   expect(capture.conversationAsrSnapshot().entries).toHaveLength(before + 1);
+  feed(0.1, 4);
+  nativePlaybackActive = false;
+  reportNativeStatus?.({ aecActive: true, playbackActive: false });
+  expect(capture.conversationAsrSnapshot().playbackLimited).toBe(true);
+  expect(capture.conversationAsrSnapshot().entries).toHaveLength(before + 2);
+  feed(0.1, 20);
+  expect(capture.conversationAsrSnapshot().entries).toHaveLength(before + 2);
   capture.setConversationAsrPlaybackActive(false);
   await capture.stopConversationAsr();
 

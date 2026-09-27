@@ -129,7 +129,12 @@ function newDetector() {
 
 function updatePlaybackLimit() {
   const limited = playbackActive && !(captureAecActive && nativePlaybackActive);
-  if (state.playbackLimited !== limited) publish({ playbackLimited: limited });
+  if (state.playbackLimited === limited) return;
+  if (limited) {
+    if (currentUtteranceId) finalizeUtterance();
+    clearPreroll();
+  }
+  publish({ playbackLimited: limited });
 }
 
 function clearPreroll() {
@@ -374,6 +379,9 @@ export async function startConversationAsr(
     );
     if (conversationAsrSnapshot().phase !== "starting") {
       await started.stop();
+      captureAecActive = false;
+      nativePlaybackActive = false;
+      updatePlaybackLimit();
       return;
     }
     capture = started;
