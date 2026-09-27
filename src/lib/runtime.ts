@@ -1,5 +1,5 @@
 import { appSnapshotSchema, parseIpc } from "./ipcValidation";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { stageAudioUpload } from "./audioIpc";
 import type {
   AppSnapshot,
@@ -135,20 +135,31 @@ export async function submitConversationText(
   inputId: string,
   text: string,
   source: "configured" | "larm",
+  onStage: (stage: "qwen" | "ornith") => void,
 ): Promise<{
   content: string;
   model: string;
   providerLabel: string;
 }> {
-  return invoke("submit_conversation_text", { input: { inputId, text, source } });
+  const channel = new Channel<{ stage: "qwen" | "ornith" }>();
+  channel.onmessage = ({ stage }) => onStage(stage);
+  return invoke("submit_conversation_text", { input: { inputId, text, source }, onStage: channel });
 }
 
-export async function transcribeConversationAudio(audioUploadId: string): Promise<{
+export async function speakConversationAnswer(inputId: string): Promise<void> {
+  return invoke<void>("speak_conversation_answer", { inputId });
+}
+
+export async function transcribeConversationAudio(
+  audioUploadId: string,
+  utteranceId: string,
+  kind: "partial" | "final",
+): Promise<{
   text: string;
   language: string | null;
   providerLabel: string;
 }> {
-  return invoke("transcribe_conversation_audio", { input: { audioUploadId } });
+  return invoke("transcribe_conversation_audio", { input: { audioUploadId, utteranceId, kind } });
 }
 
 export async function releaseConversationAsrSession(): Promise<void> {

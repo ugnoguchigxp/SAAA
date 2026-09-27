@@ -59,7 +59,7 @@ export function buildAuditDebugContext(event: AuditEvent): string {
   };
   return [
     "SAAA audit failure debug context",
-    "The payload contains bounded audit metadata only; message content, audio, and credentials are not included.",
+    "Conversation audit events may include bounded text chunks. Audio samples and credentials are not included.",
     "```json",
     JSON.stringify(context, null, 2),
     "```",

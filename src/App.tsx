@@ -94,6 +94,18 @@ function App() {
                     : "default"
                 }
                 echoCancellation={voiceSettings?.aecEnabled !== false}
+                listeningEnabled={voiceSettings?.listeningEnabled === true}
+                vadSensitivity={
+                  voiceSettings?.vadSensitivity === "high" ||
+                  voiceSettings?.vadSensitivity === "low"
+                    ? voiceSettings.vadSensitivity
+                    : "medium"
+                }
+                silenceTimeoutMs={
+                  typeof voiceSettings?.silenceTimeoutMs === "number"
+                    ? voiceSettings.silenceTimeoutMs
+                    : 1_500
+                }
                 onOpenSettings={() => setRoute("settings")}
               />
             ) : route === "memory" ? (

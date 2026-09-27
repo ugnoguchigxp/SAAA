@@ -29,6 +29,7 @@ export async function audioBackendStatus(): Promise<AudioBackendStatus> {
 export async function startNativeVoiceCapture(
   onFrame: (frame: Float32Array) => void,
   onEnded?: (reason: string) => void,
+  onStatus?: (status: AudioBackendStatus) => void,
 ): Promise<AudioBackendStatus> {
   const generation = clearCaptureMonitor();
   const channel = new Channel<unknown>();
@@ -47,6 +48,7 @@ export async function startNativeVoiceCapture(
   };
   const started = await invoke<AudioBackendStatus>("start_native_voice_capture", { onFrame: channel });
   if (generation !== captureGeneration) return started;
+  onStatus?.(started);
   let checking = false;
   let failures = 0;
   const endCapture = (reason: string) => {
@@ -61,6 +63,7 @@ export async function startNativeVoiceCapture(
       .then((status) => {
         failures = 0;
         if (!status.captureActive) endCapture("VoiceProcessing capture stopped unexpectedly");
+        else onStatus?.(status);
       })
       .catch(() => {
         if (++failures >= 3) endCapture("VoiceProcessing capture status is unavailable");
@@ -68,7 +71,7 @@ export async function startNativeVoiceCapture(
       .finally(() => {
         checking = false;
       });
-  }, 500);
+  }, onStatus ? 100 : 500);
   return started;
 }
 

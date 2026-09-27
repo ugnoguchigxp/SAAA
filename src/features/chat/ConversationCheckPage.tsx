@@ -6,53 +6,73 @@ import {
   useSyncExternalStore,
   type FormEvent,
 } from "react";
+import { AppIcon } from "../../components/AppIcon";
 import type { ConversationMessage } from "../../lib/contracts";
 import {
   conversationAsrSnapshot,
   startConversationAsr,
   stopConversationAsr,
   subscribeConversationAsr,
+  setConversationAsrPlaybackActive,
+  queueConversationAsrDelivery,
 } from "../../lib/conversationAsrCapture";
-import { listMessages, submitConversationText } from "../../lib/runtime";
+import { listMessages, speakConversationAnswer, submitConversationText } from "../../lib/runtime";
 import "./conversationCheckPage.css";
+
+type RouteStage = "qwen" | "ornith" | "tts" | null;
+const routeNodes = [
+  { id: "asr", label: "ASR" },
+  { id: "qwen", label: "Qwen 2B" },
+  { id: "ornith", label: "Ornith 1.5" },
+  { id: "tts", label: "TTS" },
+] as const;
 
 export function ConversationCheckPage({
   conversationId,
-  providerLabel,
   inputDeviceId,
   echoCancellation,
+  listeningEnabled,
+  vadSensitivity,
+  silenceTimeoutMs,
   onOpenSettings,
 }: {
   conversationId: string;
   providerLabel: string;
   inputDeviceId: string;
   echoCancellation: boolean;
+  listeningEnabled: boolean;
+  vadSensitivity: "low" | "medium" | "high";
+  silenceTimeoutMs: number;
   onOpenSettings: () => void;
 }) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [text, setText] = useState("");
-  const [source, setSource] = useState<"configured" | "larm">("configured");
   const [sending, setSending] = useState(false);
+  const [stage, setStage] = useState<RouteStage>(null);
+  const [lastReplySource, setLastReplySource] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [lastModel, setLastModel] = useState<string | null>(null);
   const audio = useSyncExternalStore(subscribeConversationAsr, conversationAsrSnapshot);
-  const captures = audio.entries;
-  const fullTranscript = captures
-    .slice()
-    .reverse()
-    .map((capture) => capture.text)
-    .filter((value): value is string => value !== null && value.length > 0)
-    .join("\n");
-  const latestAsrError = captures.find((capture) => capture.status === "failed")?.error;
   const pendingId = useRef<string | null>(null);
+  const audioResponseQueue = useRef(Promise.resolve());
+  const autoStartAttempted = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const latestAsrError = audio.entries[0]?.status === "failed" ? audio.entries[0].error : null;
+  const transcribing = audio.entries.some((entry) => entry.status === "transcribing");
+  const asrActive =
+    audio.phase === "starting" ||
+    (audio.phase === "recording" && !audio.playbackLimited);
+  const displayedText = text || audio.interimText;
+  const status =
+    stage === "qwen" ? "Qwen 2B が振り分け中" :
+    stage === "ornith" ? "Ornith 1.5 が回答を作成中" :
+    stage === "tts" ? "TTS で回答を再生中" :
+    asrActive ? (audio.speechDetected || audio.interimText || transcribing ? "音声を認識中" : "音声を待っています") :
+    audio.phase === "starting" ? "マイクを準備中" : "マイクは停止中";
 
   const refresh = useCallback(async () => {
     const page = await listMessages(conversationId, null);
-    setMessages(
-      page.messages.filter((message) => message.role === "user" || message.role === "assistant"),
-    );
+    setMessages(page.messages.filter((message) => message.role === "user" || message.role === "assistant"));
   }, [conversationId]);
 
   useEffect(() => {
@@ -61,190 +81,142 @@ export function ConversationCheckPage({
     void listMessages(conversationId, null)
       .then((page) => {
         if (active) {
-          setMessages(
-            page.messages.filter(
-              (message) => message.role === "user" || message.role === "assistant",
-            ),
-          );
+          setMessages(page.messages.filter((message) => message.role === "user" || message.role === "assistant"));
           setError(null);
         }
       })
-      .catch((cause) => {
-        if (active) setError(String(cause));
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
+      .catch((cause) => { if (active) setError(String(cause)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [conversationId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, sending]);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (sending || !text.trim() || new TextEncoder().encode(text).length > 4096) return;
-    const inputId = pendingId.current ?? crypto.randomUUID();
+  useEffect(() => {
+    if (!listeningEnabled || autoStartAttempted.current) return;
+    autoStartAttempted.current = true;
+    void startConversationAsr(inputDeviceId, echoCancellation, vadSensitivity, silenceTimeoutMs);
+  }, [listeningEnabled, inputDeviceId, echoCancellation, vadSensitivity, silenceTimeoutMs]);
+
+  const send = useCallback(async (content: string, inputId: string) => {
+    if (!content.trim() || new TextEncoder().encode(content).length > 4096) return;
     pendingId.current = inputId;
+    setText(content);
     setSending(true);
     setError(null);
+    setStage("qwen");
     try {
-      const result = await submitConversationText(inputId, text, source);
-      setLastModel(`${result.providerLabel} · ${result.model}`);
+      const result = await submitConversationText(inputId, content, "larm", (nextStage) => setStage(nextStage));
+      setLastReplySource(result.providerLabel.includes("Qwen") ? "Qwen 2B" : result.providerLabel.includes("ornith") ? "Ornith 1.5" : result.providerLabel);
       await refresh();
-      setText("");
+      setText((current) => current === content ? "" : current);
       pendingId.current = null;
+      setStage("tts");
+      setConversationAsrPlaybackActive(true, inputId);
+      try {
+        await speakConversationAnswer(inputId);
+      } catch (cause) {
+        setError(`回答は保存しましたが、読み上げに失敗しました: ${String(cause)}`);
+      } finally {
+        setConversationAsrPlaybackActive(false, inputId);
+      }
     } catch (cause) {
-      setError(String(cause));
+      const message = String(cause);
+      setError(message.includes("larm_authentication_failed")
+        ? "LARM の認証に失敗しました。保存済みの接続設定と Qwen の Provider 認証を確認してください。"
+        : message);
     } finally {
+      setStage(null);
       setSending(false);
     }
+  }, [refresh]);
+
+  useEffect(() => {
+    for (const capture of audio.entries.slice().reverse()) {
+      if (capture.status !== "completed" || !capture.text?.trim() || capture.deliveryQueued) continue;
+      if (!queueConversationAsrDelivery(capture.id)) continue;
+      const content = capture.text;
+      audioResponseQueue.current = audioResponseQueue.current.then(() => send(content, capture.id));
+    }
+  }, [audio.entries, send]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (sending || !displayedText.trim()) return;
+    const content = displayedText;
+    const inputId = pendingId.current ?? crypto.randomUUID();
+    audioResponseQueue.current = audioResponseQueue.current.then(() => send(content, inputId));
+    await audioResponseQueue.current;
   }
+
+  const toggleRecording = () => {
+    void (audio.phase === "recording"
+      ? stopConversationAsr()
+      : startConversationAsr(inputDeviceId, echoCancellation, vadSensitivity, silenceTimeoutMs));
+  };
 
   return (
     <section className="conversation-check" aria-label="会話">
       <header className="conversation-check-header">
-        <div>
-          <h1>会話</h1>
-          <p>接続先: {source === "larm" ? "保存済み LARM" : providerLabel}</p>
-        </div>
-        <div className="conversation-check-actions">
-          <button
-            type="button"
-            onClick={() => void refresh().catch((cause) => setError(String(cause)))}
-          >
-            履歴を更新
-          </button>
-          <button type="button" onClick={onOpenSettings}>
-            Provider 設定
-          </button>
-        </div>
+        <h1>会話</h1>
+        <button type="button" onClick={onOpenSettings}>設定</button>
       </header>
-      <p className="conversation-check-note" role="status">
-        録音開始後は停止するまで音声を取り込み、10秒ごとに保存済みのASRルートへ送ります。文字起こしの全文を下に表示します。推論用LLMと読み上げは未接続です。
-      </p>
       <div className="conversation-check-history" aria-live="polite">
         {loading && <p>会話を読み込み中…</p>}
-        {!loading && messages.length === 0 && <p>入力して会話用 Provider の回答を確認できます。</p>}
+        {!loading && messages.length === 0 && <p>マイクを有効にするか、メッセージを入力してください。</p>}
         {messages.map((message) => (
           <article key={message.id} className={`conversation-check-message ${message.role}`}>
             <strong>{message.role === "user" ? "あなた" : "SAAA"}</strong>
             <p>{message.content}</p>
           </article>
         ))}
-        {sending && <p role="status">回答を取得中…</p>}
         <div ref={bottomRef} />
       </div>
-      {lastModel && <p className="conversation-check-model">直近の回答: {lastModel}</p>}
-      <div className="conversation-check-audio">
-        <button
-          type="button"
-          disabled={audio.phase === "starting" || audio.phase === "stopping"}
-          onClick={() =>
-            void (audio.phase === "recording"
-              ? stopConversationAsr()
-              : startConversationAsr(inputDeviceId, echoCancellation))
-          }
-        >
-          {audio.phase === "recording" ? "録音を停止" : "録音を開始"}
-        </button>
-        <span role="status">
-          {audio.phase === "recording"
-            ? "録音中 · 停止するまで継続"
-            : audio.phase === "starting"
-              ? "マイクを開始中…"
-              : audio.phase === "stopping"
-                ? "マイクを停止中…"
-                : "停止中"}
-        </span>
-        {audio.error && <p role="alert" className="conversation-check-error">{audio.error}</p>}
-        <section className="conversation-check-transcript" aria-label="文字起こし全文" aria-live="polite">
-          <h2>文字起こし全文（この起動中）</h2>
-          <pre>{fullTranscript || latestAsrError || "文字起こし結果を待っています。"}</pre>
-        </section>
-        <div className="conversation-check-capture-list" aria-label="ASRの区間ごとの結果">
-          <h2>区間ごとの結果</h2>
-          {captures.map((capture, index) => (
-            <article key={capture.id} className="conversation-check-capture-entry">
-              <strong>
-                区間 {captures.length - index} · {capture.recordedAt} · {capture.seconds.toFixed(1)}秒
-              </strong>
-              <p>
-                {capture.status === "queued"
-                  ? "前の区間のASR処理を待機中…"
-                  : capture.status === "transcribing"
-                    ? "ASR接続・文字起こし中…"
-                    : capture.text
-                      ? "文字起こし完了"
-                      : "文字起こしなし"}
-              </p>
-              {capture.text && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setText((current) => current ? `${current}\n${capture.text}` : capture.text ?? "");
-                    pendingId.current = null;
-                  }}
-                >
-                  入力欄に追加
-                </button>
-              )}
-              {capture.provider && (
-                <small>
-                  {capture.provider} · {capture.language ?? "言語未判定"}
-                </small>
-              )}
-              {capture.error && <small className="conversation-check-error">{capture.error}</small>}
-            </article>
+      {(error || audio.error || latestAsrError) && <p role="alert" className="conversation-check-error">{error || audio.error || latestAsrError}</p>}
+      <div className="conversation-route" aria-label="回答の経路">
+        <div className="conversation-route-track">
+          {routeNodes.map((node, index) => (
+            <div className="conversation-route-segment" key={node.id}>
+              {index > 0 && <span className="conversation-route-link" aria-hidden="true">→</span>}
+              <div className={`conversation-route-node${(node.id === "asr" ? asrActive && !stage : stage === node.id) ? " active" : ""}`}>
+                <span className="conversation-route-lamp" aria-hidden="true" />
+                <span>{node.label}</span>
+              </div>
+            </div>
           ))}
         </div>
+        <p className="conversation-route-status" role="status">{status}{!stage && lastReplySource ? ` · 前回回答: ${lastReplySource}` : ""}</p>
       </div>
-      {error && (
-        <p role="alert" className="conversation-check-error">
-          {error}
-        </p>
-      )}
-      <form className="conversation-check-composer" onSubmit={(event) => void submit(event)}>
-        <label htmlFor="conversation-check-source">試行する接続先</label>
-        <select
-          id="conversation-check-source"
-          value={source}
-          disabled={sending}
-          onChange={(event) => {
-            setSource(event.target.value as "configured" | "larm");
-            pendingId.current = null;
-          }}
-        >
-          <option value="configured">保存済みの会話ルート</option>
-          <option value="larm">保存済みの LARM 接続先と profile</option>
-        </select>
-        <label htmlFor="conversation-check-input">メッセージ</label>
-        <textarea
-          id="conversation-check-input"
-          value={text}
-          disabled={sending}
-          onChange={(event) => {
-            setText(event.target.value);
-            pendingId.current = null;
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }
-          }}
-          rows={3}
-          placeholder="メッセージを入力"
-        />
-        <button
-          type="submit"
-          disabled={sending || !text.trim() || new TextEncoder().encode(text).length > 4096}
-        >
-          送信
-        </button>
+      <form className="composer conversation-check-composer" onSubmit={(event) => void submit(event)}>
+        <div className="composer-row">
+          <button
+            className={audio.phase === "recording" ? "voice-button recording" : "voice-button"}
+            type="button"
+            aria-label={audio.phase === "recording" ? "録音を停止" : "録音を開始"}
+            aria-pressed={audio.phase === "recording"}
+            disabled={audio.phase === "starting" || audio.phase === "stopping"}
+            onClick={toggleRecording}
+          >
+            <AppIcon name={audio.phase === "recording" ? "stop" : "mic"} />
+          </button>
+          <textarea
+            rows={1}
+            aria-label="プロンプト全文"
+            value={displayedText}
+            onChange={(event) => { setText(event.currentTarget.value); pendingId.current = null; }}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit();
+            }}
+            placeholder="メッセージを入力、または話しかけてください"
+          />
+          <div className="composer-end">
+            <button className="send-button" type="submit" aria-label="送信" disabled={sending || !displayedText.trim() || new TextEncoder().encode(displayedText).length > 4096}>
+              <AppIcon name="send" />
+            </button>
+          </div>
+        </div>
       </form>
     </section>
   );
