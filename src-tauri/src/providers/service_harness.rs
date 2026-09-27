@@ -189,12 +189,14 @@ async fn resolve_with_legacy_llm_limit(
     let connect_started = std::time::Instant::now();
     let session = match tokio::time::timeout(
         connect_limit,
-        saaa_larm_session::Session::connect_with_profile_credential_and_key(
+        saaa_larm_session::Session::connect_with_profile_credential_key_phase_and_providers(
             address,
             preference,
             credential.token().to_string(),
             format!("saaa-diagnosis-{}", uuid::Uuid::new_v4().simple()),
             receiver,
+            None,
+            Some(vec!["llm", "asr", "tts", "embedding"]),
         ),
     )
     .await
@@ -210,7 +212,7 @@ async fn resolve_with_legacy_llm_limit(
     };
     let connect_ms = connect_started.elapsed().as_millis() as u64;
     let summary = session.provider_summary().await;
-    let mut services = ["llm", "backchannel", "asr", "tts", "embedding"]
+    let mut services = ["llm", "asr", "tts", "embedding"]
         .into_iter()
         .map(
             |capability| match summary.iter().find(|provider| provider.name == capability) {
@@ -228,7 +230,7 @@ async fn resolve_with_legacy_llm_limit(
         )
         .collect::<Vec<_>>();
     let capabilities: &[&str] = if probe_all {
-        &["llm", "backchannel", "asr", "tts", "embedding"]
+        &["llm", "asr", "tts", "embedding"]
     } else {
         &["embedding"]
     };

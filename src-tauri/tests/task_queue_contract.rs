@@ -9,7 +9,7 @@ mod task_queue;
 mod queue_input_state;
 
 #[test]
-fn cancellation_uses_input_order_when_downstream_jobs_are_created_late() {
+fn cancellation_uses_input_order_during_reasoning_and_speech() {
     let mut db = rusqlite::Connection::open_in_memory().unwrap();
     task_queue::migrate(&db).unwrap();
     db.execute_batch(
@@ -19,13 +19,9 @@ fn cancellation_uses_input_order_when_downstream_jobs_are_created_late() {
            ('check_a','c','user','調査して'),('check_b','c','user','訂正して');
          INSERT INTO runtime_runs VALUES ('run_a','c','running',NULL),('run_b','c','running',NULL);",
     ).unwrap();
-    task_queue::enqueue(&db, "c", "qwen", "user_input", "a", 0, "{}", None).unwrap();
-    let input = task_queue::claim(&mut db, "qwen").unwrap().unwrap();
-    task_queue::enqueue(&db, "c", "qwen", "user_input", "b", 0, "{}", None).unwrap();
-    // A finishes routing only after B has arrived.
-    task_queue::enqueue(&db, "c", "ornith", "ornith_task", "a", 0, "{}", None).unwrap();
-    task_queue::finish(&db, &input).unwrap();
-    let research = task_queue::claim(&mut db, "ornith").unwrap().unwrap();
+    task_queue::enqueue(&db, "c", "conversation", "user_input", "a", 0, "{}", None).unwrap();
+    let input = task_queue::claim(&mut db, "conversation").unwrap().unwrap();
+    task_queue::enqueue(&db, "c", "conversation", "user_input", "b", 0, "{}", None).unwrap();
     assert_eq!(
         queue_input_state::active_previous(&db, "c", "b").unwrap(),
         Some(("a".into(), "調査して".into()))
@@ -34,8 +30,8 @@ fn cancellation_uses_input_order_when_downstream_jobs_are_created_late() {
     assert!(queue_input_state::active_previous(&db, "c", "a")
         .unwrap()
         .is_none());
-    // A remains cancellable after reasoning completes, while its audio is queued.
-    task_queue::finish(&db, &research).unwrap();
+    // A remains cancellable after its answer is saved, while audio is queued.
+    task_queue::finish(&db, &input).unwrap();
     task_queue::enqueue(&db, "c", "speech", "speech", "a", 0, "{}", None).unwrap();
     let speech = task_queue::claim(&mut db, "speech").unwrap().unwrap();
     assert_eq!(

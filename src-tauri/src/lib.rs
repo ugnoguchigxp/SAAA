@@ -42,6 +42,7 @@ mod schedule;
 mod situation;
 mod steward;
 mod task_queue;
+mod tts_dictionary;
 #[cfg(feature = "conversation-queue-e2e")]
 pub mod conversation_queue_e2e;
 #[cfg(any(test, feature = "conversation-queue-e2e"))]
@@ -376,7 +377,10 @@ pub fn run() {
                         .map(|_| ())
                 })
                 .map_err(|error| format!("role-routing startup recovery: {error}"))?;
-            app.state::<AppState>().sqlite_writer.write(|connection| task_queue::recover(connection,&["qwen","ornith"],&["speech"]))
+            app.state::<AppState>().sqlite_writer.write(|connection| {
+                runtime::conversation_check::queue_runtime::migrate_legacy_jobs(connection)?;
+                task_queue::recover(connection,&["conversation"],&["speech"])
+            })
                 .map_err(|error| format!("conversation queue recovery: {error}"))?;
             runtime::conversation_check::spawn_queue_workers(app.handle().clone());
             providers::reachability_watcher::spawn(&app.state::<AppState>());

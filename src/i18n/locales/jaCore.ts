@@ -48,6 +48,7 @@ export const jaCore = {
     records: "記録",
     audit: "監査",
     unitTest: "単体テスト",
+    ttsDictionary: "TTS辞書",
     settings: "設定",
   },
   memoryPage: {

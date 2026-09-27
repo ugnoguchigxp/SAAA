@@ -167,7 +167,7 @@ test("diagnosis page shows stages, item list, and blocks rerun while running", a
   expect(response?.textContent).toContain("対象外");
   expect(response?.textContent).not.toContain("正常");
   expect(services).toContain("応答");
-  expect(services).toContain("補助応答");
+  expect(services).not.toContain("補助応答");
   expect(services).not.toContain("音声認識");
   const speech = [...document.querySelectorAll(".diagnosis-services article")].find(
     (card) => card.querySelector("strong")?.textContent === "音声合成",

@@ -16,12 +16,14 @@ pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
             let credential = crate::providers::dynamic_lan::credential::load()
                 .map_err(|error| error.code())?;
             *cached = Some(
-                Session::connect_with_profile_credential_and_key(
+                Session::connect_with_profile_credential_key_phase_and_providers(
                     &base,
                     crate::providers::larm_resources::profile::preference(None),
                     credential.token().to_string(),
                     format!("saaa-session-{}", uuid::Uuid::new_v4()),
                     rx,
+                    None,
+                    Some(vec!["llm"]),
                 )
                 .await
                 .map_err(|_| "personal-connection-unavailable")?,

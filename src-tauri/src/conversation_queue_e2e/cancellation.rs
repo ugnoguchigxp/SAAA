@@ -1,16 +1,13 @@
 //! Delayed-provider fixtures exercise cancellation through the real queue workers.
 use super::*;
 use std::sync::atomic::AtomicUsize;
-use tokio::sync::Notify;
 
 const SLOW: &str = "fixture: slow request";
-const REPLACE: &str = "fixture: replace request";
-const CANCEL: &str = "fixture: cancel request";
+const REPLACE: &str = "代わりに fixture: replace request";
+const CANCEL: &str = "中止して";
 
 #[derive(Default)]
 pub(super) struct Control {
-    routing_started: AtomicBool,
-    release_routing: Notify,
     thinking_started: AtomicBool,
     thinking_count: AtomicUsize,
     thinking_released: AtomicUsize,
@@ -34,30 +31,7 @@ pub(super) async fn respond(fixture: &Fixture, path: &str, body: &Value) -> Opti
         }
         return Some(json!({"action":"answer","content":"置換後の結果です。"}).to_string());
     }
-    if body.to_string().contains("会話の入口") {
-        if text == SLOW {
-            control.routing_started.store(true, Ordering::SeqCst);
-            control.release_routing.notified().await;
-            return Some(json!({"route":"think","reply":null}).to_string());
-        }
-        // Keep A active while B decides to replace/cancel it.
-        wait_until(|| Ok(control.thinking_started.load(Ordering::SeqCst)))
-            .await
-            .expect("old request reaches Ornith");
-        assert!(
-            body.to_string().contains("処理中の前の依頼"),
-            "late-created downstream jobs must still identify the prior input"
-        );
-        return Some(
-            if text == REPLACE {
-                json!({"route":"replace","reply":null})
-            } else {
-                json!({"route":"cancel","reply":"中止しました。"})
-            }
-            .to_string(),
-        );
-    }
-    Some("置換後の回答です。".into())
+    None
 }
 
 async fn wait_until(mut ready: impl FnMut() -> Result<bool, String>) -> Result<(), String> {
@@ -76,22 +50,18 @@ pub(super) async fn verify(state: &AppState, fixture: &Fixture) -> Result<(), St
         let old_key = format!("cancel-old-{index}");
         let new_key = format!("cancel-new-{index}");
         let control = &fixture.cancellation;
-        control.routing_started.store(false, Ordering::SeqCst);
         control.thinking_started.store(false, Ordering::SeqCst);
         conversation_check::queue_runtime::enqueue_text(state, old_key.clone(), SLOW.into())?;
         state.conversation_queue_wake.notify_waiters();
-        wait_until(|| Ok(control.routing_started.load(Ordering::SeqCst))).await?;
+        wait_until(|| Ok(control.thinking_started.load(Ordering::SeqCst))).await?;
         if *action != "explicit" {
-            // B arrives while A is still routing: Ornith(A) will have a later rowid.
             conversation_check::queue_runtime::enqueue_text(
                 state,
                 new_key.clone(),
                 (*action).into(),
             )?;
         }
-        control.release_routing.notify_one();
         if *action == "explicit" {
-            wait_until(|| Ok(control.thinking_started.load(Ordering::SeqCst))).await?;
             conversation_check::queue_runtime::cancel_input(state, &old_key)?;
             conversation_check::queue_runtime::enqueue_text(
                 state,

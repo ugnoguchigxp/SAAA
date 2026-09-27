@@ -27,7 +27,6 @@ test("each text provider runs only its selected capability and shows its own res
       ),
     );
     for (const [capability, label] of [
-      ["backchannel", "Qwen2B"],
       ["llm", "Ornith1.5"],
       ["embedding", "Embedding"],
       ["tts", "TTS"],
@@ -48,11 +47,11 @@ test("each text provider runs only its selected capability and shows its own res
       );
     }
     expect(invokeCalls.map(({ command }) => command)).toEqual(
-      Array(4).fill("run_provider_unit_test"),
+      Array(3).fill("run_provider_unit_test"),
     );
     expect(
       invokeCalls.map(({ args }) => (args as { input: { capability: string } }).input.capability),
-    ).toEqual(["backchannel", "llm", "embedding", "tts"]);
+    ).toEqual(["llm", "embedding", "tts"]);
   } finally {
     await act(async () => root.unmount());
     environment.restore();

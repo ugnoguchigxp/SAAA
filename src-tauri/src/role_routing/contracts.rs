@@ -143,19 +143,6 @@ impl Default for RoleRoutingSettings {
             enabled: true,
             actors: vec![
                 RoutingActor {
-                    id: "larm-frontdesk".into(),
-                    label: "LARM 受付（backchannel）".into(),
-                    aliases: vec![],
-                    transport: "provider".into(),
-                    provider_id: Some(crate::DYNAMIC_LAN_PROVIDER_ID.into()),
-                    model: None,
-                    location: "local".into(),
-                    resource_group: "larm-backchannel".into(),
-                    max_input_bytes: 16_000,
-                    larm_provider: Some("backchannel".into()),
-                    capabilities: vec!["social_reply".into()],
-                },
-                RoutingActor {
                     id: "larm-reasoner".into(),
                     label: "LARM 思考（llm）".into(),
                     aliases: vec![],
@@ -170,14 +157,14 @@ impl Default for RoleRoutingSettings {
                 },
             ],
             roles: RoutingRoles {
-                frontend: Some("larm-frontdesk".into()),
+                frontend: None,
                 reasoner: Some("larm-reasoner".into()),
                 ..RoutingRoles::default()
             },
             recipes: vec![RoutingRecipe {
                 id: "00-butler-respond".into(),
                 action: RoutingAction::Respond,
-                roles: vec!["frontend".into(), "reasoner".into()],
+                roles: vec!["reasoner".into()],
                 enabled: true,
             }],
             limits: RoutingLimits::default(),

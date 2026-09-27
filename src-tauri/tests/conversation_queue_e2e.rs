@@ -1,7 +1,13 @@
 #![cfg(feature = "conversation-queue-e2e")]
 
+#[test]
+fn unfinished_two_model_job_migrates_on_an_isolated_database() {
+    saaa_lib::conversation_queue_e2e::verify_legacy_queue_migration()
+        .expect("legacy queue migration");
+}
+
 #[tokio::test]
-async fn asr_qwen_ornith_tool_saved_answer_tts_reaches_terminal_queue_states() {
+async fn asr_ornith_tool_saved_answer_tts_reaches_terminal_queue_states() {
     let report = saaa_lib::conversation_queue_e2e::run()
         .await
         .expect("conversation queue E2E");
@@ -12,16 +18,16 @@ async fn asr_qwen_ornith_tool_saved_answer_tts_reaches_terminal_queue_states() {
         .contains("[出典1: example.invalid](https://example.invalid/report)"));
     assert_eq!(
         report["spoken"],
-        serde_json::json!(["資料では確認済みの事実は42です。"])
+        serde_json::json!(["シリョウではカクニン済みのジジツは42です。"])
     );
-    assert_eq!(report["progressSpoken"], "少し考えます。");
-    assert_eq!(report["speechBeforeDone"], false);
+    assert!(report["progressSpoken"].is_null() || report["progressSpoken"] == "只今お調べします。");
+    assert_eq!(report["speechBeforeDone"], true);
     assert_eq!(report["quickGreeting"], "こんにちは。");
     assert_eq!(report["cancellationVerified"], true);
     let waiting = saaa_lib::conversation_queue_e2e::run_waiting()
         .await
         .expect("ten-second waiting E2E");
-    assert_eq!(waiting["waitingSpoken"], "もうすこしおまちください。");
+    assert!(waiting["waitingSpoken"].is_null());
     let rejected = saaa_lib::conversation_queue_e2e::run_invalid_reply()
         .await
         .expect("invalid answer is neither saved nor spoken");
@@ -30,5 +36,5 @@ async fn asr_qwen_ornith_tool_saved_answer_tts_reaches_terminal_queue_states() {
         .await
         .expect("authentication failure evicts the rejected session without retrying it");
     assert_eq!(authentication["reconnected"], true);
-    assert_eq!(authentication["llmCalls"], 1);
+    assert_eq!(authentication["llmCalls"], 2);
 }

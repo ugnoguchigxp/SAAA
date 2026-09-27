@@ -201,7 +201,7 @@ fn declaration(name: &str) -> Value {
 }
 
 fn state_value() -> Value {
-    let providers = ["asr", "backchannel", "llm", "tts", "embedding"]
+    let providers = ["asr", "llm", "tts", "embedding"]
         .iter()
         .map(|name| {
             let mut value = declaration(name);
@@ -216,7 +216,7 @@ fn state_value() -> Value {
 }
 
 fn claim_value(base: &str) -> Value {
-    let providers = ["asr", "backchannel", "llm", "tts", "embedding"]
+    let providers = ["asr", "llm", "tts", "embedding"]
         .iter()
         .map(|name| {
             let mut value = declaration(name);
@@ -259,7 +259,7 @@ async fn serve(
         return Json(json!({"contractVersion":"agent-connection.v3","catalogRevision":"queue-e2e",
             "audiences":["saaa-desktop"],
             "requestedProfile":"SAAA","profiles":[{"id":"saaa-conversation-ornith15",
-            "providers":[declaration("asr"),declaration("backchannel"),declaration("llm"),declaration("tts"),declaration("embedding")],"services":[]}]})).into_response();
+            "providers":[declaration("asr"),declaration("llm"),declaration("tts"),declaration("embedding")],"services":[]}]})).into_response();
     }
     if path.starts_with("/v1/agent-connections") {
         if request
@@ -329,20 +329,31 @@ async fn serve(
                     body["max_tokens"], 4_096,
                     "tool follow-up keeps the advertised output reserve"
                 );
-                assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+                if serialized.contains("TOOL_RESULT:") {
+                    assert_ne!(body["chat_template_kwargs"]["enable_thinking"], false);
+                }
             }
             if *count > 0 && fixture.fail_after_search.load(Ordering::SeqCst) {
                 *count += 1;
-                return Json(
-                    json!({"choices":[{"message":{"content":""},"finish_reason":"length"}]}),
-                )
-                .into_response();
+                if body["stream"] == true {
+                    let event = json!({"model":body["model"],"choices":[{"index":0,"delta":{},"finish_reason":"length"}]});
+                    return ([(header::CONTENT_TYPE, "text/event-stream")],
+                        format!("data: {event}\n\ndata: [DONE]\n\n")).into_response();
+                }
+                return Json(json!({"choices":[{"message":{"content":""},"finish_reason":"length"}]})).into_response();
             }
             assert!(
                 serialized.contains(&chrono::Local::now().format("%Y-%m-%d").to_string()),
                 "runtime date reaches Ornith"
             );
-            let result = match *count {
+            let current_user_text = body["messages"]
+                .as_array()
+                .and_then(|messages| messages.iter().rev().find(|message| message["role"] == "user"))
+                .and_then(|message| message["content"].as_str())
+                .unwrap_or_default();
+            let result = if current_user_text == "こんにちは" {
+                json!({"action":"answer","content":"こんにちは。","sources":[]}).to_string()
+            } else { match *count {
                 0 => json!({"action":"web_search","query":"fixture fact"}).to_string(),
                 1 => {
                     assert!(
@@ -386,7 +397,7 @@ async fn serve(
                     };
                     json!({"action":"answer","content":answer,"sources":["https://example.invalid/report"]}).to_string()
                 }
-            };
+            }};
             *count += 1;
             result
         } else if serialized.contains("会話の入口") {
@@ -421,42 +432,33 @@ async fn serve(
             }
         };
         if body["stream"] == true {
-            let model = body["model"].as_str().unwrap_or("fixture-qwen");
-            let event = json!({"model":model,"choices":[{"index":0,"delta":{"content":content},"finish_reason":"stop"}]});
-            let first = format!("data: {event}\n\n");
-            let before_done = fixture.clone();
-            let chunks = futures_util::stream::once(async move {
-                Ok::<_, std::io::Error>(axum::body::Bytes::from(first))
-            })
-            .chain(futures_util::stream::once(async move {
-                let first_speech = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                    loop {
-                        if before_done
-                            .spoken
-                            .lock()
-                            .expect("fixture spoken lock")
-                            .iter()
-                            .any(|text| {
-                                text != "少し考えます。" && text != "もうすこしおまちください。"
-                            })
-                        {
-                            break;
+            let model = body["model"].as_str().unwrap_or("fixture-ornith");
+            if let Some(split_at) = content.find("資料では確認済みの事実は42です。") {
+                let split_at = split_at + "資料では確認済みの事実は42です。".len();
+                let first_event = json!({"model":model,"choices":[{"index":0,"delta":{"content":&content[..split_at]},"finish_reason":null}]});
+                let second_event = json!({"model":model,"choices":[{"index":0,"delta":{"content":&content[split_at..]},"finish_reason":"stop"}]});
+                let first = format!("data: {first_event}\n\n");
+                let second = format!("data: {second_event}\n\ndata: [DONE]\n\n");
+                let before_done = fixture.clone();
+                let chunks = futures_util::stream::once(async move {
+                    Ok::<_, std::io::Error>(axum::body::Bytes::from(first))
+                }).chain(futures_util::stream::once(async move {
+                    let first_speech = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                        loop {
+                            if before_done.spoken.lock().expect("fixture spoken lock").iter()
+                                .any(|text| text == "シリョウではカクニン済みのジジツは42です。") { break; }
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                    }
-                })
-                .await
-                .is_ok();
-                before_done
-                    .speech_before_done
-                    .store(first_speech, Ordering::SeqCst);
-                Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"data: [DONE]\n\n"))
-            }));
-            return (
-                [(header::CONTENT_TYPE, "text/event-stream")],
-                axum::body::Body::from_stream(chunks),
-            )
-                .into_response();
+                    }).await.is_ok();
+                    before_done.speech_before_done.store(first_speech, Ordering::SeqCst);
+                    Ok::<_, std::io::Error>(axum::body::Bytes::from(second))
+                }));
+                return ([(header::CONTENT_TYPE, "text/event-stream")],
+                    axum::body::Body::from_stream(chunks)).into_response();
+            }
+            let event = json!({"model":model,"choices":[{"index":0,"delta":{"content":content},"finish_reason":"stop"}]});
+            let stream = format!("data: {event}\n\ndata: [DONE]\n\n");
+            return ([(header::CONTENT_TYPE, "text/event-stream")], stream).into_response();
         }
         return Json(json!({"choices":[{"message":{"content":content},"finish_reason":"stop"}]}))
             .into_response();
@@ -469,6 +471,32 @@ impl Drop for FixtureGuard {
     fn drop(&mut self) {
         *active().lock().expect("active fixture lock") = None;
     }
+}
+
+pub fn verify_legacy_queue_migration() -> Result<(), String> {
+    let db = rusqlite::Connection::open_in_memory().map_err(crate::database_error)?;
+    task_queue::migrate(&db).map_err(crate::database_error)?;
+    let scope = "legacy";
+    let key = "input";
+    let payload = json!({"text":"調べて"}).to_string();
+    let old_input = task_queue::enqueue(&db, scope, "qwen", "user_input", key, 0, &payload, None)?;
+    db.execute("UPDATE task_queue_jobs SET state='completed' WHERE id=?1", [&old_input])
+        .map_err(crate::database_error)?;
+    task_queue::enqueue(&db, scope, "ornith", "ornith_task", key, 0, &payload, None)?;
+    conversation_check::queue_runtime::migrate_legacy_jobs(&db)?;
+    let rows: Vec<(String, String, String)> = {
+        let mut query = db.prepare("SELECT lane,kind,state FROM task_queue_jobs ORDER BY rowid")
+            .map_err(crate::database_error)?;
+        let rows = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(crate::database_error)?
+            .collect::<Result<_, _>>().map_err(crate::database_error)?;
+        rows
+    };
+    if rows != [("qwen".into(), "user_input".into(), "completed".into()),
+                ("conversation".into(), "conversation_resume".into(), "queued".into())] {
+        return Err(format!("legacy queue migration mismatch: {rows:?}"));
+    }
+    Ok(())
 }
 
 pub async fn run() -> Result<Value, String> {
@@ -597,7 +625,7 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
     }
     conversation_check::spawn_queue_workers(app.handle().clone());
     state.conversation_queue_wake.notify_waiters();
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         let done = state.sqlite_readers.read(|connection| {
             let state: Option<String> = connection.query_row(
@@ -608,7 +636,7 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
         })?;
         if fixture.invalid_reply.load(Ordering::SeqCst) {
             let rejected: bool = state.sqlite_readers.read(|connection| {
-                connection.query_row("SELECT EXISTS(SELECT 1 FROM task_queue_jobs WHERE job_key=?1 AND kind='ornith_result' AND state='failed')",
+                connection.query_row("SELECT EXISTS(SELECT 1 FROM task_queue_jobs WHERE job_key=?1 AND kind='user_input' AND state='failed')",
                     [input_id], |row| row.get(0)).map_err(crate::database_error)
             })?;
             if rejected {
@@ -629,7 +657,7 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
                 })?;
                 let spoken = fixture.spoken.lock().map_err(|_| "spoken lock")?.clone();
                 if saved || done.is_some() || pending_progress != 0
-                    || spoken.iter().any(|text| text != "少し考えます。")
+                    || spoken.iter().any(|text| text != "只今お調べします。")
                 {
                     return Err(format!("uncommitted answer leaked to speech: {spoken:?}"));
                 }
@@ -638,6 +666,13 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
         }
         if done.as_deref() == Some("completed") {
             break;
+        }
+        if fixture.authentication_failure.load(Ordering::SeqCst) {
+            let failed: bool = state.sqlite_readers.read(|connection| {
+                connection.query_row("SELECT EXISTS(SELECT 1 FROM task_queue_jobs WHERE job_key=?1 AND kind='user_input' AND state='failed')",
+                    [input_id], |row| row.get(0)).map_err(crate::database_error)
+            })?;
+            if failed { break; }
         }
         if done.as_deref() == Some("failed") || tokio::time::Instant::now() > deadline {
             let jobs = state
@@ -655,12 +690,13 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
     }
     let (jobs, answer) = state.sqlite_readers.read(|connection| {
         let jobs = task_queue::snapshot(connection, PRIMARY_CONVERSATION_ID)?;
-        let answer: String = connection
+        let answer: Option<String> = connection
             .query_row(
                 "SELECT content FROM conversation_messages WHERE id=?1",
                 [format!("reply_{input_id}")],
                 |row| row.get(0),
             )
+            .optional()
             .map_err(crate::database_error)?;
         Ok((jobs, answer))
     })?;
@@ -669,17 +705,21 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
         .filter(|job| job.key == input_id)
         .map(|job| (job.kind.clone(), job.state.clone()))
         .collect::<Vec<_>>();
+    if states.iter().any(|(kind, _)| kind == "ornith_task" || kind == "ornith_result") {
+        return Err(format!("new input created a legacy two-model job: {states:?}"));
+    }
     if fixture.invalid_reply.load(Ordering::SeqCst) {
         let spoken = fixture.spoken.lock().map_err(|_| "spoken lock")?;
-        if answer.contains("<think>")
+        if answer.as_deref().is_some_and(|answer| answer.contains("<think>"))
             || spoken.iter().any(|s| s.contains("<think>"))
-            || !answer.contains("結果を整理する段階で失敗")
+            || !answer.as_deref().is_some_and(|answer| answer.contains("結果を整理する段階で失敗"))
         {
-            return Err("invalid model content escaped into a saved or spoken answer".into());
+            return Err(format!("invalid model content escaped into a saved or spoken answer: {answer:?}; states={states:?}"));
         }
         return Ok(json!({"rejectedWithoutSpeech":true}));
     }
     if fixture.authentication_failure.load(Ordering::SeqCst) {
+        fixture.authentication_failure.store(false, Ordering::SeqCst);
         let next_key = "auth-recovery-greeting";
         conversation_check::queue_runtime::enqueue_text(
             &state,
@@ -706,10 +746,6 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         let llm_calls = *fixture.llm_calls.lock().map_err(|_| "LLM count lock")?;
-        let handoff: String = state.sqlite_readers.read(|connection| {
-            connection.query_row("SELECT json_extract(payload_json,'$.status') FROM task_queue_jobs WHERE job_key=?1 AND kind='ornith_result'",
-                [input_id], |row| row.get(0)).map_err(crate::database_error)
-        })?;
         let creates = fixture
             .calls
             .lock()
@@ -718,33 +754,26 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
             .filter(|call| call.as_str() == "POST /v1/agent-connections")
             .count();
         let spoken = fixture.spoken.lock().map_err(|_| "spoken lock")?.clone();
-        if handoff != "failed"
-            || llm_calls != 1
+        if llm_calls < 2
             || creates < 2
             || !states
                 .iter()
-                .any(|(kind, state)| kind == "ornith_task" && state == "failed")
-            || !spoken.contains(&answer)
-            || !answer.contains("Provider authentication failed")
+                .any(|(kind, state)| kind == "user_input" && state == "failed")
+            || answer.is_some()
+            || spoken.iter().any(|speech| speech.contains("Provider authentication failed"))
         {
             return Err(format!("authentication recovery failed: calls={llm_calls}, creates={creates}, states={states:?}"));
         }
         return Ok(json!({"reconnected":true,"llmCalls":llm_calls,"answer":answer}));
     }
-    for kind in ["user_input", "ornith_task", "ornith_result", "speech"] {
+    let answer = answer.ok_or("Ornith did not save an answer")?;
+    for kind in ["user_input", "speech"] {
         if !states
             .iter()
             .any(|(name, state)| name == kind && state == "completed")
         {
             return Err(format!("{kind} did not complete: {states:?}"));
         }
-    }
-    let handoff: String = state.sqlite_readers.read(|connection| {
-        connection.query_row("SELECT json_extract(payload_json,'$.status') FROM task_queue_jobs WHERE job_key=?1 AND kind='ornith_result'",
-            [input_id], |row| row.get(0)).map_err(crate::database_error)
-    })?;
-    if handoff != "completed" {
-        return Err(format!("Ornith handoff status mismatch: {handoff}"));
     }
     let expected_answer = if fixture.fail_after_search.load(Ordering::SeqCst) {
         assert!(answer.contains("結果を整理する段階で失敗"));
@@ -758,18 +787,13 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
         format!("{expected_answer}\n\n<!-- saaa:source-links -->\n[出典1: example.invalid](https://example.invalid/report)\n")
     };
     if answer != expected_display {
-        return Err(format!("Qwen answer mismatch: {answer}"));
+        return Err(format!("Ornith answer mismatch: {answer}"));
     }
     let spoken = fixture
         .spoken
         .lock()
         .map_err(|_| "spoken lock unavailable")?
         .clone();
-    let progress_count = if fixture.slow_ornith.load(Ordering::SeqCst) {
-        2
-    } else {
-        1
-    };
     let logged_progress = state.sqlite_readers.read(|connection| {
         let mut statement = connection
             .prepare(
@@ -788,7 +812,11 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(crate::database_error)
     })?;
-    if logged_progress
+    let progress_count = logged_progress.len();
+    let expected_progress = state.sqlite_readers.read(|connection| {
+        logged_progress.iter().map(|text| crate::tts_dictionary::apply_saved(connection, text)).collect::<Result<Vec<_>, _>>()
+    })?;
+    if expected_progress
         != spoken
             .iter()
             .take(progress_count)
@@ -796,34 +824,21 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
             .collect::<Vec<_>>()
     {
         return Err(format!(
-            "spoken progress missing from conversation log: {logged_progress:?}"
+            "spoken progress missing from conversation log: {expected_progress:?}"
         ));
     }
-    if spoken.first().map(String::as_str) != Some("少し考えます。")
-        || spoken.get(progress_count..).unwrap_or_default().join("") != expected_answer
+    let expected_speech = state.sqlite_readers.read(|connection| {
+        crate::tts_dictionary::apply_saved(connection, expected_answer)
+    })?;
+    if (progress_count > 0 && spoken.first() != expected_progress.first())
+        || spoken.get(progress_count..).unwrap_or_default().join("") != expected_speech
     {
         return Err(format!(
-            "TTS did not receive the final Qwen answer: {spoken:?}"
+            "TTS did not receive the final Ornith answer: {spoken:?}"
         ));
     }
-    if fixture.slow_ornith.load(Ordering::SeqCst)
-        && spoken.get(1).map(String::as_str) != Some("もうすこしおまちください。")
-    {
-        return Err(format!("ten-second waiting speech mismatch: {spoken:?}"));
-    }
-    if fixture.slow_ornith.load(Ordering::SeqCst) {
-        let times = fixture
-            .spoken_times
-            .lock()
-            .map_err(|_| "fixture time lock unavailable")?;
-        let interval = times[1].duration_since(times[0]);
-        if !(std::time::Duration::from_secs(9)..=std::time::Duration::from_millis(11_500))
-            .contains(&interval)
-        {
-            return Err(format!(
-                "waiting speech interval was {interval:?}, expected about ten seconds"
-            ));
-        }
+    if spoken.iter().any(|line| line == "もうすこしおまちください。") {
+        return Err(format!("retired waiting speech was spoken: {spoken:?}"));
     }
     let pending_progress: i64 = state.sqlite_readers.read(|connection| {
         connection.query_row(
@@ -834,7 +849,7 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
     if pending_progress != 0 {
         return Err("waiting speech was not cancelled after the answer".into());
     }
-    let final_spoken = vec![expected_answer];
+    let final_spoken = spoken.get(progress_count..).unwrap_or_default().to_vec();
     let searches = fixture
         .searches
         .lock()
@@ -848,18 +863,14 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
         .lock()
         .map_err(|_| "calls lock unavailable")?
         .clone();
-    let order = [
-        "/asr/v1/audio/transcriptions",
-        "/backchannel/v1/chat/completions",
-        "/llm/v1/chat/completions",
-    ];
+    let order = ["/asr/v1/audio/transcriptions", "/llm/v1/chat/completions"];
     assert_eq!(
         calls
             .iter()
             .filter(|call| call.contains("/backchannel/v1/chat/completions"))
             .count(),
-        1,
-        "Ornith result must not block Qwen with a second generation"
+        0,
+        "conversation must not call the Qwen backchannel"
     );
     let mut cursor = 0;
     for path in order {
@@ -881,10 +892,10 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
         {
             return Err("Ornith repeated a failed tool follow-up".into());
         }
-        let failure_detail: Option<String> = state.sqlite_readers.read(|connection| {
+        let failure_kind: Option<String> = state.sqlite_readers.read(|connection| {
             connection
                 .query_row(
-                    "SELECT json_extract(attributes_json,'$.detail') FROM audit_events
+                    "SELECT json_extract(attributes_json,'$.kind') FROM audit_events
                  WHERE event_name='conversation-provider-failure' ORDER BY rowid DESC LIMIT 1",
                     [],
                     |row| row.get(0),
@@ -893,8 +904,8 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
                 .map_err(crate::database_error)
         })?;
         return Ok(
-            json!({"answer":answer,"spoken":final_spoken,"progressSpoken":spoken[0],"waitingSpoken":if fixture.slow_ornith.load(Ordering::SeqCst) {spoken.get(1)} else {None},"searches":searches,
-            "jobStates":states,"providerFailureDetail":failure_detail}),
+            json!({"answer":answer,"spoken":final_spoken,"progressSpoken":logged_progress.first(),"waitingSpoken":null,"searches":searches,
+            "jobStates":states,"providerFailureKind":failure_kind}),
         );
     }
     let llm_before = *fixture
@@ -931,19 +942,19 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
     let greeting_jobs = state
         .sqlite_readers
         .read(|connection| task_queue::snapshot(connection, PRIMARY_CONVERSATION_ID))?;
-    if greeting_jobs
+    if !greeting_jobs
         .iter()
-        .any(|job| job.key == greeting_id && job.kind == "ornith_task")
+        .any(|job| job.key == greeting_id && job.kind == "user_input" && job.state == "completed")
     {
-        return Err("quick greeting unexpectedly reached Ornith".into());
+        return Err("greeting did not reach Ornith".into());
     }
     if *fixture
         .llm_calls
         .lock()
         .map_err(|_| "LLM count lock unavailable")?
-        != llm_before
+        <= llm_before
     {
-        return Err("quick greeting called Ornith".into());
+        return Err("greeting did not call Ornith".into());
     }
     let spoken_after = fixture
         .spoken
@@ -955,7 +966,7 @@ async fn run_with_server(base: &str, fixture: &Arc<Fixture>) -> Result<Value, St
     }
     cancellation::verify(&state, fixture).await?;
     Ok(
-        json!({"cancellationVerified":true,"transcript":transcript,"answer":answer,"spoken":final_spoken,"progressSpoken":spoken[0],"waitingSpoken":if fixture.slow_ornith.load(Ordering::SeqCst) {spoken.get(1)} else {None},"searches":searches,
+        json!({"cancellationVerified":true,"transcript":transcript,"answer":answer,"spoken":final_spoken,"progressSpoken":logged_progress.first(),"waitingSpoken":null,"searches":searches,
         "jobStates":states,"providerCalls":calls,"quickGreeting":spoken_after.last(),
         "speechBeforeDone":fixture.speech_before_done.load(Ordering::SeqCst)}),
     )

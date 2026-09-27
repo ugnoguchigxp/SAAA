@@ -6,19 +6,6 @@ export function defaultRoleRoutingSettings(): RoleRoutingSettings {
     enabled: true,
     actors: [
       {
-        id: "larm-frontdesk",
-        label: "LARM 受付（backchannel）",
-        aliases: [],
-        transport: "provider",
-        providerId: "lan-llm-dynamic",
-        model: null,
-        location: "local",
-        resourceGroup: "larm-backchannel",
-        maxInputBytes: 16000,
-        larmProvider: "backchannel",
-        capabilities: ["social_reply"],
-      },
-      {
         id: "larm-reasoner",
         label: "LARM 思考（llm）",
         aliases: [],
@@ -33,7 +20,7 @@ export function defaultRoleRoutingSettings(): RoleRoutingSettings {
       },
     ],
     roles: {
-      frontend: "larm-frontdesk",
+      frontend: null,
       reasoner: "larm-reasoner",
       advanced: null,
       reviewer: null,
@@ -44,7 +31,7 @@ export function defaultRoleRoutingSettings(): RoleRoutingSettings {
       {
         id: "00-butler-respond",
         action: "respond",
-        roles: ["frontend", "reasoner"],
+        roles: ["reasoner"],
         enabled: true,
       },
     ],

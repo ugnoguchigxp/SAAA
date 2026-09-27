@@ -108,12 +108,17 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
   border: 1px solid #283340;
   border-radius: 12px;
   padding: 18px;
   background: #111820;
 }
-.conversation-check-history > p {
+.conversation-check-history-content {
+  min-height: 100%;
+  display: flow-root;
+}
+.conversation-check-history-content > p {
   margin: 0;
   color: #9aabba;
 }
@@ -140,6 +145,10 @@
 .conversation-check-message p {
   margin: 5px 0 0;
   line-height: 1.55;
+}
+.conversation-check-message .markdown-content {
+  margin-top: 5px;
+  white-space: normal;
 }
 .conversation-check-sources {
   display: flex;

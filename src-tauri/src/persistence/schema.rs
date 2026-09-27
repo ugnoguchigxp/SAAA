@@ -41,6 +41,11 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
            updated_at TEXT NOT NULL,
            PRIMARY KEY(namespace, key)
          );
+         CREATE TABLE IF NOT EXISTS tts_dictionary (
+           written TEXT PRIMARY KEY NOT NULL,
+           spoken TEXT NOT NULL,
+           updated_at TEXT NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS credential_secrets (
            service TEXT NOT NULL,
            account TEXT NOT NULL,

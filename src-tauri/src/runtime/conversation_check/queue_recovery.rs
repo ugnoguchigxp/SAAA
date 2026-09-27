@@ -11,7 +11,7 @@ pub(crate) fn mark_uncertain_speech(
     now_ms: i64,
 ) -> Result<(), String> {
     // A speech job with no saved answer may have emitted audio before the
-    // process died. Its Qwen job must not retry, regardless of job state.
+    // process died. Its result-publication job must not retry, regardless of job state.
     connection
         .execute(
             "UPDATE task_queue_jobs AS q SET state='failed',owner=NULL,lease_until_ms=NULL,

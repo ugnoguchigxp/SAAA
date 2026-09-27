@@ -116,7 +116,7 @@ export function RoleRoutingSection({
           if (next) onChange(next);
         }}
       >
-        執事構成（LARM: Qwen 2B 受付 + Ornith 思考）を適用
+        執事構成（LARM: Ornith 1.5）を適用
       </button>
       {settings.actors
         .filter((actor) => actor.providerId === "lan-llm-dynamic")

@@ -9,6 +9,8 @@ import {
 import { AppIcon } from "../../components/AppIcon";
 import { useArtifactWorkspace } from "./artifacts/ArtifactDrawer";
 import { normalizeAnswerUrl } from "./artifacts/answerUrls";
+import { MarkdownView } from "./ui/MarkdownView";
+import { useLatestMessageScroll } from "./useLatestMessageScroll";
 import { listen } from "@tauri-apps/api/event";
 import type { ConversationMessage } from "../../lib/contracts";
 import {
@@ -33,10 +35,9 @@ import {
 } from "../../lib/runtime";
 import "./conversationCheckPage.css";
 
-type RouteStage = "qwen" | "ornith" | "tts" | null;
+type RouteStage = "dispatch" | "ornith" | "tts" | null;
 const routeNodes = [
   { id: "asr", label: "ASR" },
-  { id: "qwen", label: "Qwen 2B" },
   { id: "ornith", label: "Ornith 1.5" },
   { id: "tts", label: "TTS" },
 ] as const;
@@ -62,7 +63,6 @@ export function ConversationCheckPage({
   listeningEnabled,
   vadSensitivity,
   silenceTimeoutMs,
-  onOpenSettings,
   onToggleListening,
 }: {
   conversationId: string;
@@ -73,10 +73,15 @@ export function ConversationCheckPage({
   listeningEnabled: boolean;
   vadSensitivity: "low" | "medium" | "high";
   silenceTimeoutMs: number;
-  onOpenSettings: () => void;
   onToggleListening?: (enabled: boolean) => void;
 }) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [liveAnswers, setLiveAnswers] = useState<Record<string, string>>({});
+  const {
+    messageAreaRef: historyRef,
+    messageContentRef: historyContentRef,
+    updateFollowLatest: updateHistoryFollow,
+  } = useLatestMessageScroll(conversationId, false);
   const artifacts = useArtifactWorkspace();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -87,11 +92,7 @@ export function ConversationCheckPage({
     .slice()
     .reverse()
     .find((job) => job.kind === "speech");
-  const lastReplySource = lastSpeech
-    ? jobs.some((job) => job.key === lastSpeech.key && job.kind === "ornith_result")
-      ? "Ornith 1.5"
-      : "Qwen 2B"
-    : null;
+  const lastReplySource = lastSpeech ? "Ornith 1.5" : null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const audio = useSyncExternalStore(subscribeConversationAsr, conversationAsrSnapshot);
@@ -99,7 +100,6 @@ export function ConversationCheckPage({
   const refreshGeneration = useRef(0);
   const audioResponseQueue = useRef(Promise.resolve());
   const autoStartAttempted = useRef(false);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
   const latestJob = jobs
     .slice()
     .reverse()
@@ -127,8 +127,8 @@ export function ConversationCheckPage({
     .reverse()
     .find((job) => job.kind === "speech" && job.state === "interrupted");
   const status =
-    stage === "qwen"
-      ? "Qwen 2B が振り分け中"
+    stage === "dispatch"
+      ? "Ornith 1.5 に接続中"
       : stage === "ornith"
         ? "Ornith 1.5 が回答を作成中"
         : stage === "tts"
@@ -155,6 +155,10 @@ export function ConversationCheckPage({
     setMessages(
       page.messages.filter((message) => message.role === "user" || message.role === "assistant"),
     );
+    setLiveAnswers((current) => Object.fromEntries(Object.entries(current).filter(([inputId]) =>
+      !page.messages.some((message) => message.id === `reply_${inputId}`) &&
+      !snapshot.jobs.some((job) => job.key === inputId && ["failed", "cancelled"].includes(job.state)),
+    )));
   }, [conversationId]);
 
   useEffect(() => {
@@ -205,28 +209,36 @@ export function ConversationCheckPage({
   }, [refreshQueue]);
 
   useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void listen<{ inputId: string; text: string }>("conversation-answer-delta", ({ payload }) => {
+      if (!active || !payload.text) return;
+      setLiveAnswers((current) => ({
+        ...current,
+        [payload.inputId]: (current[payload.inputId] ?? "") + payload.text,
+      }));
+    }).then((stop) => {
+      if (active) unlisten = stop;
+      else stop();
+    }).catch((cause) => setError(String(cause)));
+    return () => { active = false; unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
     setConversationAsrPlaybackActive(speechPlaying);
     const active =
-      jobs.find((job) => job.state === "running" && job.kind === "ornith_task") ??
-      jobs.find(
-        (job) =>
-          job.state === "running" && (job.kind === "user_input" || job.kind === "ornith_result"),
-      ) ??
+      jobs.find((job) => job.state === "running" && job.kind === "user_input") ??
       jobs.find((job) => job.state === "running" && job.kind === "speech");
     setStage(
-      active?.kind === "ornith_task"
+      active?.kind === "user_input"
         ? "ornith"
         : active?.kind === "speech"
           ? "tts"
           : active
-            ? "qwen"
+            ? "dispatch"
             : null,
     );
   }, [jobs, speechPlaying]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, sending]);
 
   useEffect(() => {
     if (!listeningEnabled || autoStartAttempted.current) return;
@@ -256,7 +268,7 @@ export function ConversationCheckPage({
         const message = String(cause);
         setError(
           message.includes("larm_authentication_failed")
-            ? "LARM の認証に失敗しました。保存済みの接続設定と Qwen の Provider 認証を確認してください。"
+            ? "LARM の認証に失敗しました。保存済みの接続設定と Ornith の Provider 認証を確認してください。"
             : message,
         );
         return false;
@@ -277,7 +289,7 @@ export function ConversationCheckPage({
         if (!(await send(content, capture.id)))
           failConversationAsrDelivery(
             capture.id,
-            "Qwenの処理キューへ送信できませんでした。再送してください。",
+            "会話の処理キューへ送信できませんでした。再送してください。",
           );
       });
     }
@@ -301,7 +313,7 @@ export function ConversationCheckPage({
       if (!(await send(content, id)))
         failConversationAsrDelivery(
           id,
-          "Qwenの処理キューへ送信できませんでした。再送してください。",
+          "会話の処理キューへ送信できませんでした。再送してください。",
         );
     });
   }
@@ -320,55 +332,66 @@ export function ConversationCheckPage({
     <section className="conversation-check" aria-label="会話">
       <header className="conversation-check-header">
         <h1>会話</h1>
-        <button type="button" onClick={onOpenSettings}>
-          設定
-        </button>
       </header>
-      <div className="conversation-check-history" aria-live="polite">
-        {loading && <p>会話を読み込み中…</p>}
-        {!loading && messages.length === 0 && (
-          <p>マイクを有効にするか、メッセージを入力してください。</p>
-        )}
-        {messages.map((message) => {
-          const displayed =
-            message.role === "assistant"
-              ? displayAnswer(message.content)
-              : { answer: message.content, sources: [] };
-          return (
-            <article key={message.id} className={`conversation-check-message ${message.role}`}>
-              <strong>{message.role === "user" ? "あなた" : agentName}</strong>
-              <p>{displayed.answer}</p>
-              {displayed.sources.length > 0 && (
-                <div className="conversation-check-sources" aria-label="出典">
-                  {displayed.sources.map((source) => (
-                    <a
-                      key={source.url}
-                      href={source.url}
-                      onClick={(event) => {
-                        if (!artifacts) return;
-                        event.preventDefault();
-                        artifacts.openSource({
-                          conversationId,
-                          url: source.url,
-                          title: source.label,
-                        });
-                      }}
-                    >
-                      {source.label}
-                    </a>
-                  ))}
-                </div>
-              )}
+      <div
+        ref={historyRef}
+        className="conversation-check-history"
+        aria-live="polite"
+        onScroll={updateHistoryFollow}
+      >
+        <div ref={historyContentRef} className="conversation-check-history-content">
+          {loading && <p>会話を読み込み中…</p>}
+          {!loading && messages.length === 0 && (
+            <p>マイクを有効にするか、メッセージを入力してください。</p>
+          )}
+          {messages.map((message) => {
+            const displayed =
+              message.role === "assistant"
+                ? displayAnswer(message.content)
+                : { answer: message.content, sources: [] };
+            return (
+              <article key={message.id} className={`conversation-check-message ${message.role}`}>
+                <strong>{message.role === "user" ? "あなた" : agentName}</strong>
+                {message.role === "assistant"
+                  ? <MarkdownView text={displayed.answer} displayMode="inline" />
+                  : <p>{displayed.answer}</p>}
+                {displayed.sources.length > 0 && (
+                  <div className="conversation-check-sources" aria-label="出典">
+                    {displayed.sources.map((source) => (
+                      <a
+                        key={source.url}
+                        href={source.url}
+                        onClick={(event) => {
+                          if (!artifacts) return;
+                          event.preventDefault();
+                          artifacts.openSource({
+                            conversationId,
+                            url: source.url,
+                            title: source.label,
+                          });
+                        }}
+                      >
+                        {source.label}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </article>
+            );
+          })}
+          {Object.entries(liveAnswers).map(([inputId, content]) => (
+            <article key={`stream_${inputId}`} className="conversation-check-message assistant streaming">
+              <strong>{agentName}</strong>
+              <MarkdownView text={content} displayMode="inline" />
             </article>
-          );
-        })}
-        {(stage === "qwen" || stage === "ornith") && (
-          <div className="conversation-thinking" role="status" aria-label="思考中">
-            <div className="llm-thinking-indicator" aria-hidden="true"><span /><span /><span /></div>
-            <span>{status}</span>
-          </div>
-        )}
-        <div ref={bottomRef} />
+          ))}
+          {(stage === "dispatch" || stage === "ornith") && (
+            <div className="conversation-thinking" role="status" aria-label="思考中">
+              <div className="llm-thinking-indicator" aria-hidden="true"><span /><span /><span /></div>
+              <span>{status}</span>
+            </div>
+          )}
+        </div>
       </div>
       {(error || queueError) && (
         <p role="alert" className="conversation-check-error">

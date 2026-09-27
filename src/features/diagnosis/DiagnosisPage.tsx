@@ -6,7 +6,6 @@ import { useDiagnosisReport } from "./useDiagnosisReport";
 const LARM_PROVIDER_ID = "provider.lan-llm-dynamic";
 const LARM_SERVICES = [
   { id: "llm", itemId: "harness.llm" },
-  { id: "backchannel", itemId: "harness.backchannel" },
   { id: "asr", itemId: "harness.asr" },
   { id: "tts", itemId: "harness.tts" },
   { id: "embedding", itemId: "harness.embedding" },

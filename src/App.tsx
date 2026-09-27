@@ -21,6 +21,7 @@ import { ArtifactWorkspaceProvider } from "./features/chat/artifacts/ArtifactDra
 import { ConversationCheckPage } from "./features/chat/ConversationCheckPage";
 import { DEFAULT_AGENT_NAME } from "./features/settings/settingsDefaults";
 import { ProviderUnitTestPage } from "./features/providerUnitTest/ProviderUnitTestPage";
+import { TtsDictionaryPage } from "./features/ttsDictionary/TtsDictionaryPage";
 import { DesignSystemProvider } from "./design-system";
 import "./design-system/styles.css";
 import { AppShell } from "./shell/AppShell";
@@ -139,7 +140,6 @@ function App() {
                     : 1_500
                 }
                 onToggleListening={toggleListening}
-                onOpenSettings={() => setRoute("settings")}
               />
             </div>
             {route === "settings" ? (
@@ -189,6 +189,8 @@ function App() {
                 echoCancellation={voiceSettings?.aecEnabled !== false}
                 onOpenSettings={() => setRoute("settings")}
               />
+            ) : route === "ttsDictionary" ? (
+              <TtsDictionaryPage />
             ) : (
               <>
                 <RecordsPage

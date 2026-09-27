@@ -1,4 +1,4 @@
-//! Conversation-screen turn path: finalized ASR text, Qwen handoff, ornith answer and TTS.
+//! Conversation-screen turn path: finalized ASR text, Ornith answer and TTS.
 //! Continuous partial-ASR routing and the durable work queue remain separate runtime work.
 pub(crate) mod queue_runtime;
 #[path = "conversation_check/streaming_speech.rs"]
@@ -22,7 +22,6 @@ use crate::{
     RunCancellation, StartTurnInput, PRIMARY_CONVERSATION_ID,
 };
 
-static BUSY: AtomicBool = AtomicBool::new(false);
 static ASR_SESSION: OnceLock<tokio::sync::Mutex<Option<CachedAsrSession>>> = OnceLock::new();
 static SPEECH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -132,20 +131,6 @@ fn asr_session() -> &'static tokio::sync::Mutex<Option<CachedAsrSession>> {
 pub(crate) async fn reset_fixture_asr_session() {
     if let Some(cached) = asr_session().lock().await.take() {
         let _ = cached.session.close().await;
-    }
-}
-
-struct BusyGuard;
-impl BusyGuard {
-    fn acquire() -> Result<Self, String> {
-        BUSY.compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-            .map(|_| Self)
-            .map_err(|_| "会話の応答を処理中です。".to_string())
-    }
-}
-impl Drop for BusyGuard {
-    fn drop(&mut self) {
-        BUSY.store(false, Ordering::Release);
     }
 }
 
@@ -324,50 +309,6 @@ pub(crate) fn record_conversation_capture_audit_event(
         &input.phase,
         input.outcome.as_deref(),
         &attributes,
-    )
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct QwenDecision {
-    route: String,
-    reply: Option<String>,
-    #[serde(default)]
-    web_query: Option<String>,
-}
-
-fn parse_qwen_decision(raw: &str) -> Result<QwenDecision, String> {
-    let decision: QwenDecision = serde_json::from_str(raw.trim())
-        .map_err(|_| "Qwenの振り分け結果を読み取れませんでした。".to_string())?;
-    match decision.route.as_str() {
-        "quick"
-            if decision
-                .reply
-                .as_deref()
-                .is_some_and(|reply| !reply.trim().is_empty() && reply.len() <= 1000) =>
-        {
-            Ok(decision)
-        }
-        "think" if decision.reply.is_none() => Ok(decision),
-        _ => Err("Qwenの振り分け結果が契約に合いません。".into()),
-    }
-}
-
-fn is_standalone_greeting(text: &str) -> bool {
-    let normalized = text
-        .trim()
-        .trim_end_matches(['。', '！', '!', '？', '?', '、', '.', ' '])
-        .to_lowercase();
-    matches!(
-        normalized.as_str(),
-        "こんにちは"
-            | "こんにちわ"
-            | "こんばんは"
-            | "おはよう"
-            | "おはようございます"
-            | "もしもし"
-            | "hello"
-            | "hi"
     )
 }
 
@@ -689,9 +630,11 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
     if content.trim().is_empty() || content.len() > MAX_ANSWER_BYTES {
         return Err("読み上げる回答がありません。".into());
     }
-    let spoken = speech_text_for_answer(&content);
-    if spoken.is_empty() {
-        return Err("読み上げ可能な回答本文がありません。".into());
+    let spoken = state.sqlite_readers.read(|connection| {
+        crate::tts_dictionary::apply_saved(connection, &speech_text_for_answer(&content))
+    })?;
+    if spoken.trim().is_empty() {
+        return Ok(());
     }
     audit.text("tts", "conversation-tts-text", &spoken);
     audit.event(
@@ -925,365 +868,43 @@ async fn cached_larm_asr(
 #[tauri::command]
 pub(crate) async fn submit_conversation_text(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
     input: SubmitInput,
     on_stage: tauri::ipc::Channel<ConversationStageEvent>,
 ) -> Result<SubmitResult, String> {
-    validate_identifier(&input.input_id, "input id")?;
-    let audit = ConversationAudit::new(state.sqlite_writer.clone(), input.input_id.clone());
-    let started = Instant::now();
-    audit.event(
-        "conversation",
-        "conversation-submit-request",
-        "request",
-        None,
-        json!({
-            "source": if matches!(input.source, CheckSource::Larm) { "larm" } else { "configured" },
-            "textBytes": input.text.len(),
-        }),
-    );
-    if input.text.len() <= 4_096 {
-        audit.text("conversation", "conversation-input-text", &input.text);
-    } else {
-        audit.event(
-            "conversation",
-            "conversation-input-rejected",
-            "decision",
-            Some("failure"),
-            json!({
-                "reason": "too-large", "textBytes": input.text.len(),
-            }),
-        );
-    }
-    let result = submit_conversation_text_inner(&state, input, &on_stage, &audit).await;
-    match &result {
-        Ok(value) => audit.event(
-            "conversation",
-            "conversation-submit-result",
-            "terminal",
-            Some("success"),
-            json!({
-                "model": value.model, "provider": value.provider_label,
-                "elapsedMs": started.elapsed().as_millis() as u64,
-            }),
-        ),
-        Err(error) => audit.event(
-            "conversation",
-            "conversation-submit-result",
-            "error",
-            Some("failure"),
-            json!({
-                "error": error, "elapsedMs": started.elapsed().as_millis() as u64,
-            }),
-        ),
-    }
-    result
-}
-
-async fn submit_conversation_text_inner(
-    state: &AppState,
-    input: SubmitInput,
-    on_stage: &tauri::ipc::Channel<ConversationStageEvent>,
-    audit: &ConversationAudit,
-) -> Result<SubmitResult, String> {
-    validate_identifier(&input.input_id, "input id")?;
-    if input.text.trim().is_empty() || input.text.len() > 4096 {
-        return Err("入力は1〜4096バイトにしてください。".into());
-    }
-    let _busy = BusyGuard::acquire()?;
-    let user_id = format!("check_{}", input.input_id);
-    let answer_id = format!("reply_{}", input.input_id);
-    let saved = state.sqlite_readers.read(|connection| {
-        connection
-            .query_row(
-                "SELECT u.content, a.content FROM conversation_messages u \
-             JOIN conversation_messages a ON a.id=?2 \
-             WHERE u.id=?1 AND u.conversation_id=?3 AND a.conversation_id=?3",
-                params![user_id, answer_id, PRIMARY_CONVERSATION_ID],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(database_error)
-    })?;
-    if let Some((original, content)) = saved {
-        if original != input.text {
-            return Err("同じ入力IDで異なる本文は送信できません。".into());
+    let _ = input.source;
+    queue_runtime::enqueue_text(&state, input.input_id.clone(), input.text)?;
+    state.conversation_queue_wake.notify_waiters();
+    let _ = app.emit("conversation-queue-updated", ());
+    report_stage(&on_stage, "ornith");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
+    loop {
+        let outcome = state.sqlite_readers.read(|connection| {
+            let answer = connection.query_row(
+                "SELECT content FROM conversation_messages WHERE id=?1 AND conversation_id=?2",
+                params![format!("reply_{}", input.input_id), PRIMARY_CONVERSATION_ID],
+                |row| row.get::<_, String>(0),
+            ).optional().map_err(database_error)?;
+            let status = connection.query_row(
+                "SELECT status,error_message FROM runtime_runs WHERE id=?1",
+                [format!("run_{}", input.input_id)],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            ).optional().map_err(database_error)?;
+            Ok((answer, status))
+        })?;
+        if let Some(content) = outcome.0 {
+            return Ok(SubmitResult { content, model: "Ornith 1.5".into(), provider_label: "LARM llm".into() });
         }
-        audit.event(
-            "conversation",
-            "conversation-submit-deduplicated",
-            "decision",
-            Some("success"),
-            json!({}),
-        );
-        return Ok(SubmitResult {
-            content,
-            model: "保存済み".into(),
-            provider_label: "会話記録".into(),
-        });
-    }
-    let (providers, route) = state.sqlite_readers.read(|connection| {
-        Ok((
-            persistence::load_model_providers(connection)?,
-            persistence::load_routing_settings(connection)?.conversation_respond,
-        ))
-    })?;
-    let (content, model, provider_label) =
-        if matches!(input.source, CheckSource::Larm) || route.source == "harness" {
-            audit.event(
-                "conversation",
-                "conversation-response-route",
-                "decision",
-                None,
-                json!({
-                    "source": "larm", "timeoutMs": route.timeout_ms,
-                }),
-            );
-            let mut recent =
-                state.sqlite_readers.read(|connection| {
-                    let mut statement = connection.prepare(
-                "SELECT role, content FROM conversation_messages WHERE conversation_id=?1 \
-                 AND role IN ('user','assistant') ORDER BY created_at DESC, rowid DESC LIMIT 8",
-            ).map_err(database_error)?;
-                    let rows = statement
-                        .query_map(params![PRIMARY_CONVERSATION_ID], |row| {
-                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                        })
-                        .map_err(database_error)?;
-                    rows.collect::<Result<Vec<_>, _>>().map_err(database_error)
-                })?;
-            recent.reverse();
-            complete_larm_jarvis(
-                &providers,
-                &recent,
-                &input.text,
-                route.timeout_ms,
-                on_stage,
-                audit,
-            )
-            .await?
-        } else {
-            audit.event(
-                "conversation",
-                "conversation-response-route",
-                "decision",
-                None,
-                json!({
-                    "source": "configured", "providerId": route.primary_provider_id,
-                    "timeoutMs": route.timeout_ms,
-                }),
-            );
-            let provider = providers
-                .providers
-                .iter()
-                .find(|candidate| {
-                    route.primary_provider_id.as_deref() == Some(candidate.id())
-                        && candidate.enabled()
-                })
-                .ok_or("設定済みの会話用Providerが見つかりません。")?;
-            match provider {
-                ModelProviderSettings::OpenAiCompatible(provider) => {
-                    let key = crate::providers::openai_compatible::provider_api_key(provider)?;
-                    if provider.authentication == "api-key" && key.is_none() {
-                        return Err("会話用ProviderのAPIキーがありません。".into());
-                    }
-                    let authorization = key
-                        .as_deref()
-                        .map(|key| zeroize::Zeroizing::new(format!("Bearer {key}")));
-                    audit.event(
-                        "provider",
-                        "conversation-role-send",
-                        "start",
-                        None,
-                        json!({
-                            "role": "configured", "model": provider.model,
-                        }),
-                    );
-                    let content = complete_http_with_instruction(
-                        &provider.endpoint,
-                        authorization.as_deref().map(String::as_str),
-                        &provider.model,
-                        &input.text,
-                        route.timeout_ms,
-                        512,
-                        provider.request_options.as_ref(),
-                        false,
-                        None,
-                        &[],
-                        Some((audit, "configured")),
-                        None,
-                        None,
-                    )
-                    .await?;
-                    (content, provider.model.clone(), provider.label.clone())
-                }
-                _ => return Err("この会話用Provider形式は最小確認画面では未対応です。".into()),
+        if let Some((status, error)) = outcome.1 {
+            if status == "failed" || status == "cancelled" {
+                return Err(error.unwrap_or_else(|| "会話の処理は終了しました。".into()));
             }
-        };
-    audit.text("conversation", "conversation-output-text", &content);
-    if content.trim().is_empty() || content.len() > MAX_ANSWER_BYTES {
-        return Err("Providerの回答が空か、上限を超えました。".into());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("会話の処理が時間内に完了しませんでした。".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    audit.event(
-        "conversation",
-        "conversation-reply-persist",
-        "start",
-        None,
-        json!({
-            "model": model, "provider": provider_label, "textBytes": content.len(),
-        }),
-    );
-    state.sqlite_writer.write(|connection| {
-        let transaction = connection.transaction().map_err(database_error)?;
-        let now = now_iso();
-        transaction
-            .execute(
-                "INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) \
-             VALUES(?1,?2,'user',?3,?4)",
-                params![user_id, PRIMARY_CONVERSATION_ID, input.text, now],
-            )
-            .map_err(database_error)?;
-        transaction
-            .execute(
-                "INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) \
-             VALUES(?1,?2,'assistant',?3,?4)",
-                params![answer_id, PRIMARY_CONVERSATION_ID, content, now],
-            )
-            .map_err(database_error)?;
-        transaction
-            .execute(
-                "UPDATE conversations SET updated_at=?1 WHERE id=?2",
-                params![now, PRIMARY_CONVERSATION_ID],
-            )
-            .map_err(database_error)?;
-        transaction
-            .execute(
-                "INSERT INTO audit_events(id,occurred_at,component,event_name,phase,outcome,correlation_id,conversation_id,attributes_json) \
-                 VALUES(?1,?2,'conversation','reply-route','terminal','success',?3,?4,?5)",
-                params![
-                    format!("audit_{}", uuid::Uuid::new_v4().simple()),
-                    now,
-                    input.input_id,
-                    PRIMARY_CONVERSATION_ID,
-                    serde_json::json!({
-                        "provider": provider_label,
-                        "model": model,
-                        "qwenDecision": if provider_label.contains("ornith") {
-                            "think"
-                        } else if provider_label.contains("Qwen") {
-                            "quick"
-                        } else {
-                            "not-applicable"
-                        },
-                    }).to_string(),
-                ],
-            )
-            .map_err(database_error)?;
-        transaction.commit().map_err(database_error)
-    })?;
-    audit.event(
-        "conversation",
-        "conversation-reply-persist",
-        "terminal",
-        Some("success"),
-        json!({
-            "model": model, "provider": provider_label,
-        }),
-    );
-    Ok(SubmitResult {
-        content,
-        model,
-        provider_label,
-    })
-}
-
-async fn complete_larm_jarvis(
-    providers: &crate::ModelProvidersSettings,
-    recent: &[(String, String)],
-    text: &str,
-    timeout_ms: u64,
-    on_stage: &tauri::ipc::Channel<ConversationStageEvent>,
-    audit: &ConversationAudit,
-) -> Result<(String, String, String), String> {
-    let started = Instant::now();
-    audit.event(
-        "provider",
-        "conversation-larm-connect",
-        "start",
-        None,
-        json!({
-            "profile": providers.harness.larm_profile,
-        }),
-    );
-    let session = match cached_larm_asr(providers, Some(audit)).await {
-        Ok(session) => {
-            audit.event(
-                "provider",
-                "conversation-larm-connect",
-                "terminal",
-                Some("success"),
-                json!({
-                    "elapsedMs": started.elapsed().as_millis() as u64,
-                }),
-            );
-            session
-        }
-        Err(error) => {
-            audit.event(
-                "provider",
-                "conversation-larm-connect",
-                "error",
-                Some("failure"),
-                json!({
-                    "error": error, "elapsedMs": started.elapsed().as_millis() as u64,
-                }),
-            );
-            return Err(error);
-        }
-    };
-    let answer = async {
-        report_stage(on_stage, "qwen");
-        if is_standalone_greeting(text) {
-            let (content, model) = complete_larm_role(
-                &session, "backchannel", recent, text, timeout_ms, audit,
-                "あなたは会話の入口です。挨拶には自然な日本語で短く応答してください。JSONや内部思考を出力しないでください。依頼や事実を作らないでください。",
-            ).await?;
-            audit.event("conversation", "conversation-qwen-decision", "decision", Some("success"), json!({
-                "route": "quick", "reason": "standalone-greeting",
-            }));
-            return Ok((content, model, "LARM Qwen backchannel".into()));
-        }
-        let (control, qwen_model) = complete_larm_role(
-            &session, "backchannel", recent, text, timeout_ms, audit,
-            "あなたは会話の入口です。必ずJSONオブジェクトだけを返す。形式は {\"route\":\"quick\",\"reply\":\"短い回答\"} または {\"route\":\"think\",\"reply\":null}。挨拶、お礼、現在の発言だけで確実に答えられる簡単な質問はquick。最新情報、過去の会話、調査、計画、操作、曖昧な内容はthink。事実や進捗を推測しない。",
-        ).await?;
-        // A malformed routing response must never become a quick answer.
-        // Send it to the thinking role, which can still answer the request.
-        let decision = match parse_qwen_decision(&control) {
-            Ok(decision) => {
-                audit.event("conversation", "conversation-qwen-decision", "decision", Some("success"), json!({
-                    "route": decision.route, "reason": "model-decision",
-                }));
-                decision
-            }
-            Err(error) => {
-                audit.event("conversation", "conversation-qwen-decision", "decision", Some("degraded"), json!({
-                    "route": "think", "reason": "invalid-qwen-output", "parseError": error,
-                }));
-                QwenDecision { route: "think".into(), reply: None, web_query: None }
-            }
-        };
-        if decision.route == "quick" {
-            return Ok((decision.reply.unwrap_or_default(), qwen_model, "LARM Qwen backchannel".into()));
-        }
-        report_stage(on_stage, "ornith");
-        let (content, model) = complete_larm_role(
-            &session, "llm", recent, text, timeout_ms, audit,
-            "あなたはSAAAの思考担当です。ユーザーの依頼に日本語で正確に答える。利用できない外部情報や操作結果を作らず、必要なら制限を明示する。内部推論は表示せず、ユーザー向けの回答本文だけを返す。",
-        ).await?;
-        Ok::<_, String>((content, model, "LARM ornith llm".into()))
-    }
-    .await;
-    answer
 }
 
 fn fit_role_history(
@@ -1319,30 +940,6 @@ fn fit_role_history(
     }
 }
 
-async fn complete_larm_role(
-    session: &Arc<saaa_larm_session::Session>,
-    role: &str,
-    recent: &[(String, String)],
-    text: &str,
-    timeout_ms: u64,
-    audit: &ConversationAudit,
-    instruction: &str,
-) -> Result<(String, String), String> {
-    complete_larm_role_with_events(
-        session,
-        role,
-        recent,
-        text,
-        timeout_ms,
-        audit,
-        instruction,
-        None,
-        None,
-        false,
-    )
-    .await
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn complete_larm_role_with_events(
     session: &Arc<saaa_larm_session::Session>,
@@ -1354,7 +951,6 @@ async fn complete_larm_role_with_events(
     instruction: &str,
     on_delta: Option<&dyn crate::runtime::event_hub::RuntimeEventSender>,
     cancellation: Option<Arc<RunCancellation>>,
-    finalize_after_tool: bool,
 ) -> Result<(String, String), String> {
     let started = Instant::now();
     audit.event(
@@ -1381,7 +977,7 @@ async fn complete_larm_role_with_events(
         if provider.protocol != "openai.chat-completions.v1" {
             return Err(format!("{role}の会話プロトコルに対応していません。"));
         }
-        let request_timeout_ms = timeout_ms.min(if finalize_after_tool { 60_000 } else { 120_000 });
+        let request_timeout_ms = timeout_ms.min(120_000);
         let budget = lease
             .request_budget(std::time::Duration::from_millis(request_timeout_ms))
             .map_err(str::to_string)?;
@@ -1392,17 +988,13 @@ async fn complete_larm_role_with_events(
             .usable_context_bytes()
             .min((advertised.max_input_tokens() as usize).saturating_sub(2_048));
         // The input budget already reserves this output space. Do not shrink it for
-        // Qwen or tool follow-ups: a concise-answer instruction is not a token limit.
+        // tool follow-ups: a concise-answer instruction is not a token limit.
         let max_output_tokens = advertised.output_reserve_tokens.min(u32::MAX as u64) as u32;
         let fitted = fit_role_history(instruction, recent, text, capacity)?;
         let authorization = zeroize::Zeroizing::new(format!("Bearer {}", provider.token()));
         let options = saaa_larm_session::http_api::LlmOptions {
             tools: false,
-            thinking: if role == "backchannel" || finalize_after_tool {
-                saaa_larm_session::http_api::Thinking::Disabled
-            } else {
-                saaa_larm_session::http_api::Thinking::Auto
-            },
+            thinking: saaa_larm_session::http_api::Thinking::Auto,
             ..Default::default()
         };
         audit.event(
@@ -1412,7 +1004,7 @@ async fn complete_larm_role_with_events(
             None,
             json!({
                 "role": role, "model": provider.model, "budgetMs": budget.as_millis() as u64,
-                "thinking": if role == "backchannel" || finalize_after_tool { "disabled" } else { "auto" },
+                "thinking": "auto",
                 "maxOutputTokens": max_output_tokens,
             }),
         );
@@ -1432,15 +1024,7 @@ async fn complete_larm_role_with_events(
             cancellation,
         )
         .await?;
-        audit.text(
-            "provider",
-            if role == "backchannel" {
-                "conversation-qwen-output"
-            } else {
-                "conversation-ornith-output"
-            },
-            &content,
-        );
+        audit.text("provider", "conversation-ornith-output", &content);
         if role == "llm" && (content.contains("<think>") || content.contains("</think>")) {
             return Err("ornithの内部思考が回答本文に混入しました。".into());
         }
@@ -1507,12 +1091,14 @@ async fn connect_larm(
         providers.harness.larm_profile.as_deref(),
     );
     let (_stop, receiver) = tokio::sync::watch::channel(false);
-    let connection = saaa_larm_session::Session::connect_with_profile_credential_and_key(
+    let connection = saaa_larm_session::Session::connect_with_profile_credential_key_phase_and_providers(
         &providers.harness.address,
         preference,
         token,
         format!("saaa-conversation-check-{}", uuid::Uuid::new_v4().simple()),
         receiver,
+        None,
+        Some(vec!["tts", "asr", "llm", "embedding"]),
     )
     .await;
     let session = match connection {
@@ -1721,9 +1307,7 @@ async fn complete_http_with_instruction(
 
 #[cfg(test)]
 mod jarvis_tests {
-    use super::{
-        fit_role_history, is_standalone_greeting, parse_qwen_decision, speech_text_for_answer,
-    };
+    use super::{fit_role_history, speech_text_for_answer};
 
     #[test]
     fn replay_reads_answer_without_source_links() {
@@ -1748,32 +1332,4 @@ mod jarvis_tests {
         assert!(fit_role_history("固定ポリシー", &required, "今の依頼", 150).is_err());
     }
 
-    #[test]
-    fn only_standalone_greetings_use_qwen_directly() {
-        assert!(is_standalone_greeting("こんにちは。"));
-        assert!(is_standalone_greeting("こんにちわ！"));
-        assert!(is_standalone_greeting("Hello!"));
-        assert!(!is_standalone_greeting("こんにちは。株価を教えて"));
-        assert!(!is_standalone_greeting("マイクロソフトの株価を教えて"));
-    }
-
-    #[test]
-    fn quick_reply_requires_nonempty_bounded_body() {
-        let quick = parse_qwen_decision(r#"{"route":"quick","reply":"こんにちは。"}"#).unwrap();
-        assert_eq!(quick.reply.as_deref(), Some("こんにちは。"));
-        assert!(parse_qwen_decision(r#"{"route":"quick","reply":""}"#).is_err());
-        assert!(parse_qwen_decision(r#"{"route":"quick","reply":null}"#).is_err());
-    }
-
-    #[test]
-    fn thought_handoff_cannot_publish_qwen_body() {
-        assert!(parse_qwen_decision(r#"{"route":"think","reply":null}"#).is_ok());
-        let search = parse_qwen_decision(
-            r#"{"route":"think","reply":null,"web_query":"東京 今日 天気"}"#,
-        )
-        .unwrap();
-        assert_eq!(search.web_query.as_deref(), Some("東京 今日 天気"));
-        assert!(parse_qwen_decision(r#"{"route":"think","reply":"調査しました"}"#).is_err());
-        assert!(parse_qwen_decision(r#"{"route":"quick","reply":"はい","extra":true}"#).is_err());
-    }
 }

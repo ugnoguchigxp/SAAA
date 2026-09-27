@@ -48,6 +48,7 @@ export const enCore = {
     records: "Records",
     audit: "Audit",
     unitTest: "Unit tests",
+    ttsDictionary: "TTS dictionary",
     settings: "Settings",
   },
   memoryPage: {

@@ -4,7 +4,7 @@
 async fn provider_failure_after_web_search_reaches_a_terminal_reply() {
     let report = saaa_lib::conversation_queue_e2e::run_failure_after_search()
         .await
-        .expect("failed Ornith follow-up reaches Qwen and speech");
+        .expect("failed Ornith follow-up reaches a terminal reply");
     assert!(report["answer"]
         .as_str()
         .unwrap()
@@ -12,7 +12,7 @@ async fn provider_failure_after_web_search_reaches_a_terminal_reply() {
     assert_eq!(report["spoken"], serde_json::json!([report["answer"]]));
     assert_eq!(report["searches"], serde_json::json!(["fixture fact"]));
     assert_eq!(
-        report["providerFailureDetail"],
-        "chat-finish-reason-not-stop"
+        report["providerFailureKind"],
+        "partial-output"
     );
 }

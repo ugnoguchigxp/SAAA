@@ -4,7 +4,7 @@ import { stageAudioUpload } from "../../lib/audioIpc";
 import { startBrowserVoiceCapture, type BrowserVoiceCapture } from "../../lib/browserVoiceCapture";
 import "./providerUnitTestPage.css";
 
-type Capability = "asr" | "tts" | "backchannel" | "llm" | "embedding";
+type Capability = "asr" | "tts" | "llm" | "embedding";
 type TestResult = {
   capability: Capability;
   model: string;
@@ -20,12 +20,6 @@ const services: Array<{ id: Capability; label: string; description: string; init
     label: "TTS",
     description: "入力文を音声に変換して再生できます。",
     initial: "こんにちは。音声合成のテストです。",
-  },
-  {
-    id: "backchannel",
-    label: "Qwen2B",
-    description: "backchannel に入力文を送り、応答を表示します。",
-    initial: "短く自己紹介してください。",
   },
   {
     id: "llm",
