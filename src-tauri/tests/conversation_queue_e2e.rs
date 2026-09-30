@@ -18,7 +18,7 @@ async fn asr_ornith_tool_saved_answer_tts_reaches_terminal_queue_states() {
         .contains("[出典1: example.invalid](https://example.invalid/report)"));
     assert_eq!(
         report["spoken"],
-        serde_json::json!(["シリョウではカクニン済みのジジツは42です。"])
+        serde_json::json!(["資料では確認済みの事実は42です。"])
     );
     assert!(report["progressSpoken"].is_null() || report["progressSpoken"] == "只今お調べします。");
     assert_eq!(report["speechBeforeDone"], true);

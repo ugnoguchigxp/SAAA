@@ -1,11 +1,63 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-#[path = "tts_dictionary/preset_matcher.rs"]
-mod preset_matcher;
+#[path = "tts_dictionary/custom_matcher.rs"]
+mod custom_matcher;
+pub(crate) use custom_matcher::CompiledDictionary;
 
 use crate::{database_error, now_iso, AppState, ModelProviderSettings, RunCancellation};
+
+#[derive(Default)]
+pub(crate) struct DictionaryCache {
+    inner: Mutex<CacheState>,
+}
+
+#[derive(Default)]
+struct CacheState {
+    revision: u64,
+    snapshot: Option<Arc<CompiledDictionary>>,
+}
+
+impl DictionaryCache {
+    pub(crate) fn snapshot(
+        &self,
+        readers: &crate::persistence::SqliteReaders,
+    ) -> Result<Arc<CompiledDictionary>, String> {
+        let revision = {
+            let state = self
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(snapshot) = &state.snapshot {
+                return Ok(snapshot.clone());
+            }
+            state.revision
+        };
+        let loaded = Arc::new(compile(readers.read(list)?));
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(snapshot) = &state.snapshot {
+            return Ok(snapshot.clone());
+        }
+        if state.revision == revision {
+            state.snapshot = Some(loaded.clone());
+        }
+        Ok(loaded)
+    }
+
+    fn publish(&self, entries: Vec<Entry>) {
+        let snapshot = Arc::new(compile(entries));
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.revision = state.revision.wrapping_add(1);
+        state.snapshot = Some(snapshot);
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +94,8 @@ pub(crate) struct PreviewInput {
     text: String,
     original: Option<String>,
     entry: Option<Entry>,
+    #[serde(default)]
+    raw: bool,
 }
 
 fn validate(entry: &Entry) -> Result<(), String> {
@@ -76,23 +130,20 @@ pub(crate) fn list(connection: &Connection) -> Result<Vec<Entry>, String> {
 }
 
 pub(crate) fn apply(text: &str, entries: &[Entry]) -> String {
-    let custom: Vec<_> = entries
-        .iter()
-        .map(|entry| (entry.written.clone(), entry.spoken.clone()))
-        .collect();
-    preset_matcher::apply(text, &custom)
+    compile(entries.to_vec()).apply(text)
 }
 
 pub(crate) fn apply_saved(connection: &Connection, text: &str) -> Result<String, String> {
-    Ok(apply(text, &list(connection)?))
+    Ok(compile(list(connection)?).apply(text))
 }
 
-pub(crate) fn ready_stream_prefix_len(text: &str, entries: &[Entry]) -> usize {
-    let custom: Vec<_> = entries
-        .iter()
-        .map(|entry| (entry.written.clone(), entry.spoken.clone()))
-        .collect();
-    preset_matcher::ready_prefix_len(text, &custom)
+pub(crate) fn compile(entries: Vec<Entry>) -> CompiledDictionary {
+    CompiledDictionary::new(
+        entries
+            .into_iter()
+            .map(|entry| (entry.written, entry.spoken))
+            .collect(),
+    )
 }
 
 #[tauri::command]
@@ -102,28 +153,15 @@ pub(crate) fn list_tts_dictionary(state: tauri::State<'_, AppState>) -> Result<V
 
 #[tauri::command]
 pub(crate) fn search_tts_dictionary_presets(
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
     query: String,
 ) -> Result<PresetSearchResult, String> {
     if query.len() > 200 || query.chars().any(char::is_control) {
         return Err("検索語が長すぎるか、不正です。".into());
     }
-    let excluded: std::collections::HashSet<String> = state
-        .sqlite_readers
-        .read(list)?
-        .into_iter()
-        .map(|entry| entry.written)
-        .collect();
-    let overridden = excluded
-        .iter()
-        .filter(|written| preset_matcher::lookup(written).is_some())
-        .count();
     Ok(PresetSearchResult {
-        total: preset_matcher::count() - overridden,
-        entries: preset_matcher::search(&query, 100, &excluded)
-            .into_iter()
-            .map(|(written, spoken)| Entry { written, spoken })
-            .collect(),
+        total: 0,
+        entries: Vec::new(),
     })
 }
 
@@ -151,12 +189,7 @@ pub(crate) fn lookup_tts_dictionary_entry(
             entry: Entry { written, spoken },
         }));
     }
-    Ok(
-        preset_matcher::lookup(&written).map(|spoken| ExistingEntry {
-            source: "preset",
-            entry: Entry { written, spoken },
-        }),
-    )
+    Ok(None)
 }
 
 #[tauri::command]
@@ -165,14 +198,6 @@ pub(crate) fn save_tts_dictionary_entry(
     input: SaveInput,
 ) -> Result<Vec<Entry>, String> {
     validate(&input.entry)?;
-    if preset_matcher::lookup(&input.entry.written).is_some()
-        && input.original.as_deref() != Some(input.entry.written.as_str())
-        && input.preset_override.as_deref() != Some(input.entry.written.as_str())
-    {
-        return Err(
-            "その表記は既定語彙に登録されています。既定語彙から選択して編集してください。".into(),
-        );
-    }
     state.sqlite_writer.write(|connection| {
         let transaction = connection.transaction().map_err(database_error)?;
         if input.original.as_deref() != Some(input.entry.written.as_str()) {
@@ -193,7 +218,9 @@ pub(crate) fn save_tts_dictionary_entry(
             params![input.entry.written, input.entry.spoken, now_iso()],
         ).map_err(database_error)?;
         transaction.commit().map_err(database_error)?;
-        list(connection)
+        let entries = list(connection)?;
+        state.tts_dictionary_cache.publish(entries.clone());
+        Ok(entries)
     })
 }
 
@@ -209,7 +236,9 @@ pub(crate) fn delete_tts_dictionary_entry(
                 params![written],
             )
             .map_err(database_error)?;
-        list(connection)
+        let entries = list(connection)?;
+        state.tts_dictionary_cache.publish(entries.clone());
+        Ok(entries)
     })
 }
 
@@ -239,7 +268,11 @@ pub(crate) async fn preview_tts_dictionary(
         });
         entries.push(entry);
     }
-    let text = apply(&crate::voice_text::text_for_speech(&input.text), &entries);
+    let text = if input.raw {
+        input.text.trim().to_string()
+    } else {
+        apply(&crate::voice_text::text_for_speech(&input.text), &entries)
+    };
     if text.is_empty() {
         return Err("読み上げ可能な文がありません。".into());
     }
@@ -336,8 +369,9 @@ mod tests {
     }
 
     #[test]
-    fn preset_reading_is_used_and_custom_entry_overrides_it() {
-        assert_eq!(apply("銀行", &[]), "ギンコウ");
+    fn only_custom_readings_are_applied() {
+        assert_eq!(apply("今日", &[]), "今日");
+        assert_eq!(apply("銀行", &[]), "銀行");
         let custom = vec![Entry {
             written: "銀行".into(),
             spoken: "バンク".into(),
@@ -360,6 +394,20 @@ mod tests {
             apply_saved(&connection, "重複を確認"),
             Ok("ちょうふくを確認".into())
         );
+    }
+
+    #[test]
+    fn cached_snapshot_changes_only_when_published() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        crate::persistence::schema::initialize_database(&connection).expect("schema");
+        let writer = Arc::new(crate::persistence::SqliteWriter::from_connection(connection));
+        let readers = crate::persistence::SqliteReaders::serialized(writer);
+        let cache = DictionaryCache::default();
+        let first = cache.snapshot(&readers).expect("initial snapshot");
+        assert_eq!(first.apply("今日"), "今日");
+        cache.publish(vec![Entry { written: "今日".into(), spoken: "きょう".into() }]);
+        assert_eq!(first.apply("今日"), "今日");
+        assert_eq!(cache.snapshot(&readers).expect("updated snapshot").apply("今日"), "きょう");
     }
 
     #[test]

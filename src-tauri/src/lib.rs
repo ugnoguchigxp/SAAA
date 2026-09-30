@@ -334,6 +334,7 @@ pub fn run() {
             app.manage(AppState {
                 sqlite_writer,
                 sqlite_readers,
+                tts_dictionary_cache: tts_dictionary::DictionaryCache::default(),
                 data_directory: voice_data_directory,
                 context_still_recall:
                     memory::context_still_recall::ContextStillRecallClient::from_environment(),

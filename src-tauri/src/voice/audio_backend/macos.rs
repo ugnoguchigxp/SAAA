@@ -130,7 +130,7 @@ impl NativeUnit {
         let ffi_config = SaaaVpioConfig {
             sample_rate: VPIO_RATE,
             ducking_level: config.ducking.as_vpio_level(),
-            enable_advanced_ducking: 0,
+            enable_advanced_ducking: 1,
             enable_agc: 0,
             bypass_voice_processing: if config.bypass { 1 } else { 0 },
             reserved: 0,
@@ -311,7 +311,7 @@ impl MacEngine {
             return Err("VoiceProcessing AGC stayed enabled after initialize".into());
         }
         if status.bypass_enabled != u8::from(config.bypass)
-            || status.advanced_ducking != 0
+            || status.advanced_ducking != 1
             || status.ducking_level != config.ducking.as_vpio_level()
         {
             drop(unit);

@@ -26,7 +26,7 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
     let mut active_guard = None;
     let mut playback_guard = None;
     let mut route = None;
-    let mut dictionary_entries = Vec::new();
+    let mut dictionary = None;
     let mut pending_spoken = String::new();
     let mut error = None;
     loop {
@@ -60,13 +60,15 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
                 speech_guard = Some(SPEECH_LOCK.get_or_init(|| tokio::sync::Mutex::new(())).lock().await);
                 let settings = state.sqlite_readers.read(|connection| {
                     Ok((persistence::load_model_providers(connection)?,
-                        persistence::load_routing_settings(connection)?.voice_speak,
-                        crate::tts_dictionary::list(connection)?))
+                        persistence::load_routing_settings(connection)?.voice_speak))
                 });
                 match settings {
-                    Ok((providers, voice_route, entries)) => {
+                    Ok((providers, voice_route)) => {
                         route = Some((providers, voice_route));
-                        dictionary_entries = entries;
+                        match state.tts_dictionary_cache.snapshot(&state.sqlite_readers) {
+                            Ok(snapshot) => dictionary = Some(snapshot),
+                            Err(cause) => { error = Some(cause); break; }
+                        }
                     }
                     Err(cause) => { error = Some(cause); break; }
                 }
@@ -79,10 +81,8 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
                 initialized = true;
             }
             pending_spoken.push_str(&chunk.spoken);
-            let ready_len = crate::tts_dictionary::ready_stream_prefix_len(
-                &pending_spoken,
-                &dictionary_entries,
-            );
+            let matcher = dictionary.as_ref().expect("speech dictionary loaded");
+            let ready_len = matcher.ready_prefix_len(&pending_spoken);
             if ready_len == 0 {
                 continue;
             }
@@ -90,7 +90,7 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
             pending_spoken.drain(..ready_len);
             let (providers, voice_route) = route.as_ref().expect("speech route loaded");
             let played = play_chunk(&app, &input_id, providers, voice_route,
-                &ready, &audit, cancellation.clone(), &mut player).await;
+                &ready, matcher, &audit, cancellation.clone(), &mut player).await;
             started |= super::speech_playing();
             if started { audio_started.store(true, Ordering::Release); }
             if let Err(cause) = played {
@@ -107,7 +107,8 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
         } else {
             let (providers, voice_route) = route.as_ref().expect("pending speech has a route");
             if let Err(cause) = play_chunk(&app, &input_id, providers, voice_route,
-                &pending_spoken, &audit, cancellation.clone(), &mut player).await {
+                &pending_spoken, dictionary.as_ref().expect("speech dictionary loaded"),
+                &audit, cancellation.clone(), &mut player).await {
                 error = Some(cause);
             }
             started |= super::speech_playing();
@@ -155,6 +156,7 @@ pub(super) async fn play_progress<R: tauri::Runtime>(
             persistence::load_routing_settings(connection)?.voice_speak,
         ))
     })?;
+    let dictionary = state.tts_dictionary_cache.snapshot(&state.sqlite_readers)?;
     ensure_current(state, job)?;
     if !super::queue_runtime::progress_eligible(state, job)? {
         return Ok(());
@@ -179,6 +181,7 @@ pub(super) async fn play_progress<R: tauri::Runtime>(
         &providers,
         &route,
         &text,
+        &dictionary,
         audit,
         cancellation,
         &mut continuous,
@@ -211,6 +214,7 @@ async fn play_chunk<R: tauri::Runtime>(
     providers: &crate::ModelProvidersSettings,
     route: &crate::VoiceRouteSettings,
     text: &str,
+    dictionary: &crate::tts_dictionary::CompiledDictionary,
     audit: &ConversationAudit,
     cancellation: Arc<RunCancellation>,
     continuous: &mut Option<crate::voice::local_audio_output::ContinuousPlayback>,
@@ -218,9 +222,7 @@ async fn play_chunk<R: tauri::Runtime>(
     if cancellation.is_cancelled() {
         return Err("Speech cancelled".into());
     }
-    let spoken = app.state::<AppState>().sqlite_readers.read(|connection| {
-        crate::tts_dictionary::apply_saved(connection, text)
-    })?;
+    let spoken = dictionary.apply(text);
     if spoken.trim().is_empty() {
         return Ok(());
     }

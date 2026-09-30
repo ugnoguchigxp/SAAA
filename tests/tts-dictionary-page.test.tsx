@@ -3,246 +3,146 @@ import { act } from "react";
 import { installJsdom } from "./jsdomGlobals";
 import { invokeCalls, invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
 
-test("edits a reading, previews it with the configured TTS, and persists it", async () => {
+async function setup(initial: { written: string; spoken: string }[]) {
   const environment = installJsdom();
   resetTauriCoreMock();
   const { TtsDictionaryPage } = await import("../src/features/ttsDictionary/TtsDictionaryPage");
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(document.getElementById("root")!);
-  let entries = [{ written: "SAAA", spoken: "サー" }];
+  let entries = initial;
   invokeImpl.handler = async (command, args) => {
     if (command === "list_tts_dictionary") return entries;
-    if (command === "search_tts_dictionary_presets") return { total: 80205, entries: [] };
     if (command === "save_tts_dictionary_entry") {
-      const input = (args as { input: { entry: { written: string; spoken: string } } }).input;
-      entries = [input.entry];
+      const input = (
+        args as { input: { original: string | null; entry: { written: string; spoken: string } } }
+      ).input;
+      entries = entries
+        .filter((item) => item.written !== input.original && item.written !== input.entry.written)
+        .concat(input.entry);
+      return entries;
+    }
+    if (command === "delete_tts_dictionary_entry") {
+      entries = entries.filter((item) => item.written !== (args as { written: string }).written);
       return entries;
     }
     if (command === "preview_tts_dictionary") return undefined;
     throw new Error(`unexpected command: ${command}`);
   };
-  try {
-    await act(async () => root.render(<TtsDictionaryPage />));
-    await act(async () =>
-      document.querySelector<HTMLButtonElement>(".tts-dictionary-list > button")!.click(),
-    );
-    const reading = document.querySelector<HTMLInputElement>(
-      ".tts-dictionary-editor label:nth-of-type(2) input",
-    )!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
-        reading,
-        "サーアーアーエー",
-      );
-      reading.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () =>
-      document.querySelector<HTMLButtonElement>(".tts-dictionary-preview button")!.click(),
-    );
-    expect(invokeCalls.find(({ command }) => command === "preview_tts_dictionary")?.args).toEqual({
-      input: {
-        text: "SAAAに相談してみましょう。",
-        original: "SAAA",
-        entry: { written: "SAAA", spoken: "サーアーアーエー" },
-      },
-    });
-    await act(async () =>
-      document.querySelector<HTMLButtonElement>(".tts-dictionary-actions .primary")!.click(),
-    );
-    expect(entries).toEqual([{ written: "SAAA", spoken: "サーアーアーエー" }]);
-  } finally {
-    await act(async () => root.unmount());
-    environment.restore();
-    resetTauriCoreMock();
-  }
-});
+  await act(async () => root.render(<TtsDictionaryPage />));
+  return {
+    entries: () => entries,
+    close: async () => {
+      await act(async () => root.unmount());
+      environment.restore();
+      resetTauriCoreMock();
+    },
+  };
+}
 
-test("saves a symbol as a skipped reading and previews the omission", async () => {
-  const environment = installJsdom();
-  resetTauriCoreMock();
-  const { TtsDictionaryPage } = await import("../src/features/ttsDictionary/TtsDictionaryPage");
-  const { createRoot } = await import("react-dom/client");
-  const root = createRoot(document.getElementById("root")!);
-  let entries = [{ written: "■", spoken: "しかく" }];
-  invokeImpl.handler = async (command, args) => {
-    if (command === "list_tts_dictionary") return entries;
-    if (command === "search_tts_dictionary_presets") return { total: 80205, entries: [] };
-    if (command === "save_tts_dictionary_entry") {
-      entries = [(args as { input: { entry: { written: string; spoken: string } } }).input.entry];
-      return entries;
-    }
-    if (command === "preview_tts_dictionary") return undefined;
-    throw new Error(`unexpected command: ${command}`);
-  };
+function change(input: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
+    input,
+    value,
+  );
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+test("renders three compact tables without status or presets", async () => {
+  const page = await setup([{ written: "今日", spoken: "きょう" }]);
   try {
-    await act(async () => root.render(<TtsDictionaryPage />));
-    await act(async () =>
-      document.querySelector<HTMLButtonElement>(".tts-dictionary-list > button")!.click(),
-    );
-    await act(async () =>
-      document.querySelector<HTMLInputElement>(".tts-dictionary-skip input")!.click(),
-    );
+    expect(document.querySelectorAll(".tts-dictionary-tables table")).toHaveLength(3);
     expect(
-      document.querySelector<HTMLInputElement>(".tts-dictionary-editor label:nth-of-type(2) input")
-        ?.disabled,
-    ).toBe(true);
-    await act(async () =>
-      document.querySelector<HTMLButtonElement>(".tts-dictionary-preview button")!.click(),
-    );
-    expect(invokeCalls.find(({ command }) => command === "preview_tts_dictionary")?.args).toEqual({
-      input: {
-        text: "■に相談してみましょう。",
-        original: "■",
-        entry: { written: "■", spoken: "" },
-      },
-    });
-    await act(async () =>
-      document.querySelector<HTMLButtonElement>(".tts-dictionary-actions .primary")!.click(),
-    );
-    expect(entries).toEqual([{ written: "■", spoken: "" }]);
-    expect(document.querySelector(".tts-dictionary-list > button")?.textContent).toContain(
-      "読み飛ばす",
-    );
+      Array.from(document.querySelectorAll(".tts-dictionary-tables th")).map(
+        (item) => item.textContent,
+      ),
+    ).toEqual(["文字", "読み方", "削除", "文字", "読み方", "削除", "文字", "読み方", "削除"]);
+    expect(invokeCalls.map((call) => call.command)).toEqual(["list_tts_dictionary"]);
+    expect(document.querySelector("textarea")).toBeNull();
   } finally {
-    await act(async () => root.unmount());
-    environment.restore();
-    resetTauriCoreMock();
+    await page.close();
   }
 });
 
-test("finds a bundled reading and saves a custom override", async () => {
-  const environment = installJsdom();
-  resetTauriCoreMock();
-  const { TtsDictionaryPage } = await import("../src/features/ttsDictionary/TtsDictionaryPage");
-  const { createRoot } = await import("react-dom/client");
-  const root = createRoot(document.getElementById("root")!);
-  let entries: { written: string; spoken: string }[] = [];
-  invokeImpl.handler = async (command, args) => {
-    if (command === "list_tts_dictionary") return entries;
-    if (command === "search_tts_dictionary_presets") {
-      const query = (args as { query: string }).query;
-      return { total: 80205, entries: query ? [{ written: "銀行", spoken: "ギンコウ" }] : [] };
-    }
-    if (command === "save_tts_dictionary_entry") {
-      const input = (args as { input: { original: string | null; entry: { written: string; spoken: string } } }).input;
-      expect(input.original).toBeNull();
-      entries = [input.entry];
-      return entries;
-    }
-    throw new Error(`unexpected command: ${command}`);
-  };
+test("previews only the focused reading without saving it", async () => {
+  const page = await setup([{ written: "今日", spoken: "きょう" }]);
   try {
-    await act(async () => root.render(<TtsDictionaryPage />));
-    const search = document.querySelector<HTMLInputElement>(".tts-dictionary-list-tools input")!;
+    const reading = document.querySelector<HTMLInputElement>('[aria-label="今日の読み方"]')!;
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(search, "銀行");
-      search.dispatchEvent(new Event("input", { bubbles: true }));
+      reading.focus();
+      change(reading, "キョウ");
     });
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
-    expect(document.querySelector(".tts-dictionary-preset-heading")?.textContent).toContain("80,205");
-    await act(async () => document.querySelector<HTMLButtonElement>(".tts-dictionary-presets button")!.click());
-    expect(document.querySelector<HTMLInputElement>(".tts-dictionary-editor label:nth-of-type(2) input")?.value).toBe("ギンコウ");
-    expect(document.querySelector(".tts-dictionary-actions")?.textContent).not.toContain("削除");
-    await act(async () => document.querySelector<HTMLButtonElement>(".tts-dictionary-actions .primary")!.click());
-    expect(entries).toEqual([{ written: "銀行", spoken: "ギンコウ" }]);
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(".tts-dictionary-toolbar button:last-of-type")!
+        .click(),
+    );
+    expect(invokeCalls.find((call) => call.command === "preview_tts_dictionary")?.args).toEqual({
+      input: { text: "キョウ", original: null, entry: null, raw: true },
+    });
+    expect(page.entries()).toEqual([{ written: "今日", spoken: "きょう" }]);
   } finally {
-    await act(async () => root.unmount());
-    environment.restore();
-    resetTauriCoreMock();
+    await page.close();
   }
 });
 
-test("shows the first 100 presets on opening and searches the remaining words", async () => {
-  const environment = installJsdom();
-  resetTauriCoreMock();
-  const { TtsDictionaryPage } = await import("../src/features/ttsDictionary/TtsDictionaryPage");
-  const { createRoot } = await import("react-dom/client");
-  const root = createRoot(document.getElementById("root")!);
-  const initial = Array.from({ length: 100 }, (_, index) => ({
-    written: `語句${String(index).padStart(3, "0")}`,
-    spoken: `ゴク${index}`,
+test("saves a changed cell and deletes its row", async () => {
+  const page = await setup([{ written: "SAAA", spoken: "サー" }]);
+  try {
+    const reading = document.querySelector<HTMLInputElement>('[aria-label="SAAAの読み方"]')!;
+    await act(async () => {
+      reading.focus();
+      change(reading, "サーアー");
+      reading.blur();
+    });
+    expect(page.entries()).toEqual([{ written: "SAAA", spoken: "サーアー" }]);
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="SAAAを削除"]')!.click(),
+    );
+    expect(page.entries()).toEqual([]);
+  } finally {
+    await page.close();
+  }
+});
+
+test("adds a row from the table toolbar", async () => {
+  const page = await setup([]);
+  try {
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(".tts-dictionary-toolbar button:first-of-type")!
+        .click(),
+    );
+    const written = document.querySelector<HTMLInputElement>('[aria-label="新規の文字"]')!;
+    const spoken = document.querySelector<HTMLInputElement>('[aria-label="新規の読み方"]')!;
+    await act(async () => {
+      change(written, "今日");
+      spoken.focus();
+    });
+    await act(async () => {
+      change(spoken, "きょう");
+      spoken.blur();
+    });
+    expect(page.entries()).toEqual([{ written: "今日", spoken: "きょう" }]);
+  } finally {
+    await page.close();
+  }
+});
+
+test("shows a bounded number of editable rows for a large dictionary", async () => {
+  const entries = Array.from({ length: 120 }, (_, index) => ({
+    written: `語${index}`,
+    spoken: `よみ${index}`,
   }));
-  invokeImpl.handler = async (command, args) => {
-    if (command === "list_tts_dictionary") return [];
-    if (command === "search_tts_dictionary_presets") {
-      return {
-        total: 80205,
-        entries: (args as { query: string }).query ? [{ written: "銀行", spoken: "ギンコウ" }] : initial,
-      };
-    }
-    throw new Error(`unexpected command: ${command}`);
-  };
+  const page = await setup(entries);
   try {
-    await act(async () => root.render(<TtsDictionaryPage />));
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
-    expect(document.querySelectorAll(".tts-dictionary-presets button")).toHaveLength(100);
-    expect(document.querySelector(".tts-dictionary-presets")?.textContent).toContain("残りは検索");
-    const search = document.querySelector<HTMLInputElement>(".tts-dictionary-list-tools input")!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(search, "銀行");
-      search.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
-    expect(document.querySelectorAll(".tts-dictionary-presets button")).toHaveLength(1);
-    expect(document.querySelector(".tts-dictionary-presets")?.textContent).toContain("銀行");
+    expect(document.querySelectorAll(".tts-dictionary-tables tbody tr")).toHaveLength(90);
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="辞書のページ"] button:last-of-type')!
+        .click(),
+    );
+    expect(document.querySelectorAll(".tts-dictionary-tables tbody tr")).toHaveLength(30);
   } finally {
-    await act(async () => root.unmount());
-    environment.restore();
-    resetTauriCoreMock();
-  }
-});
-
-test("rejects an existing custom word while typing a new entry", async () => {
-  const environment = installJsdom();
-  resetTauriCoreMock();
-  const { TtsDictionaryPage } = await import("../src/features/ttsDictionary/TtsDictionaryPage");
-  const { createRoot } = await import("react-dom/client");
-  const root = createRoot(document.getElementById("root")!);
-  invokeImpl.handler = async (command) => {
-    if (command === "list_tts_dictionary") return [{ written: "SAAA", spoken: "サー" }];
-    if (command === "search_tts_dictionary_presets") return { total: 80205, entries: [] };
-    throw new Error(`unexpected command: ${command}`);
-  };
-  try {
-    await act(async () => root.render(<TtsDictionaryPage />));
-    const written = document.querySelector<HTMLInputElement>(".tts-dictionary-editor label:first-of-type input")!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(written, "SAAA");
-      written.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(document.querySelector("#tts-dictionary-duplicate")?.textContent).toContain("カスタム登録語");
-    expect(document.querySelector<HTMLButtonElement>(".tts-dictionary-actions .primary")?.disabled).toBe(true);
-  } finally {
-    await act(async () => root.unmount());
-    environment.restore();
-    resetTauriCoreMock();
-  }
-});
-
-test("rejects a preset word while typing a new entry", async () => {
-  const environment = installJsdom();
-  resetTauriCoreMock();
-  const { TtsDictionaryPage } = await import("../src/features/ttsDictionary/TtsDictionaryPage");
-  const { createRoot } = await import("react-dom/client");
-  const root = createRoot(document.getElementById("root")!);
-  invokeImpl.handler = async (command) => {
-    if (command === "list_tts_dictionary") return [];
-    if (command === "search_tts_dictionary_presets") return { total: 80205, entries: [] };
-    if (command === "lookup_tts_dictionary_entry") return { source: "preset", entry: { written: "銀行", spoken: "ギンコウ" } };
-    throw new Error(`unexpected command: ${command}`);
-  };
-  try {
-    await act(async () => root.render(<TtsDictionaryPage />));
-    const written = document.querySelector<HTMLInputElement>(".tts-dictionary-editor label:first-of-type input")!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(written, "銀行");
-      written.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(document.querySelector("#tts-dictionary-duplicate")?.textContent).toContain("既定語彙");
-    expect(document.querySelector<HTMLButtonElement>(".tts-dictionary-actions .primary")?.disabled).toBe(true);
-  } finally {
-    await act(async () => root.unmount());
-    environment.restore();
-    resetTauriCoreMock();
+    await page.close();
   }
 });

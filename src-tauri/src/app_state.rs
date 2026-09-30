@@ -7,6 +7,7 @@ pub(crate) fn context_segments_from_env() -> bool {
 pub(super) struct AppState {
     pub(super) sqlite_writer: Arc<SqliteWriter>,
     pub(super) sqlite_readers: SqliteReaders,
+    pub(super) tts_dictionary_cache: tts_dictionary::DictionaryCache,
     pub(super) data_directory: PathBuf,
     pub(super) context_still_recall: memory::context_still_recall::ContextStillRecallClient,
     pub(super) context_still_search: memory::context_still_search::ContextStillSearchClient,

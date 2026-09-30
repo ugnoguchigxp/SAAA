@@ -446,7 +446,7 @@ async fn serve(
                     let first_speech = tokio::time::timeout(std::time::Duration::from_secs(2), async {
                         loop {
                             if before_done.spoken.lock().expect("fixture spoken lock").iter()
-                                .any(|text| text == "シリョウではカクニン済みのジジツは42です。") { break; }
+                                .any(|text| text == "資料では確認済みの事実は42です。") { break; }
                             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                         }
                     }).await.is_ok();

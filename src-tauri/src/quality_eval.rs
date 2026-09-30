@@ -208,6 +208,7 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
     Ok(AppState {
         sqlite_writer,
         sqlite_readers,
+        tts_dictionary_cache: crate::tts_dictionary::DictionaryCache::default(),
         data_directory: PathBuf::new(),
         context_still_recall: memory::context_still_recall::ContextStillRecallClient::disabled(),
         context_still_search: memory::context_still_search::ContextStillSearchClient::disabled(),

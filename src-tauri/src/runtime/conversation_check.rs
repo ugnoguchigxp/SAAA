@@ -630,9 +630,8 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
     if content.trim().is_empty() || content.len() > MAX_ANSWER_BYTES {
         return Err("読み上げる回答がありません。".into());
     }
-    let spoken = state.sqlite_readers.read(|connection| {
-        crate::tts_dictionary::apply_saved(connection, &speech_text_for_answer(&content))
-    })?;
+    let dictionary = state.tts_dictionary_cache.snapshot(&state.sqlite_readers)?;
+    let spoken = dictionary.apply(&speech_text_for_answer(&content));
     if spoken.trim().is_empty() {
         return Ok(());
     }
