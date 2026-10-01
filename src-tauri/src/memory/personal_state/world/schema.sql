@@ -1,6 +1,7 @@
 -- World Model projection (WM-05). Additive: the canonical history stays in the
 -- existing personal_assertions / personal_transitions / personal_payloads tables.
--- All tables are re-derivable and erase on tombstone insert.
+-- Projection tables are re-derivable and erase on tombstone insert.
+-- Outcome observations below are canonical typed records with source invalidation.
 
 CREATE TABLE IF NOT EXISTS personal_world_projection_meta (
  id INTEGER PRIMARY KEY CHECK(id=1),
@@ -83,4 +84,42 @@ BEGIN
  DELETE FROM personal_world_focus;
  DELETE FROM personal_world_entities;
  DELETE FROM personal_world_projection_meta;
+END;
+
+-- Quoted outcomes are observations, never a promotion to proven causality.
+CREATE TABLE IF NOT EXISTS personal_world_observations (
+ id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, prior_assertion_id TEXT NOT NULL,
+ source_id TEXT NOT NULL, source_version INTEGER NOT NULL,
+ value_json TEXT NOT NULL CHECK(json_valid(value_json) AND length(CAST(value_json AS BLOB))<=2000),
+ observed_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS personal_world_observation_sources (
+ observation_id TEXT NOT NULL REFERENCES personal_world_observations(id) ON DELETE CASCADE,
+ source_id TEXT NOT NULL, source_version INTEGER NOT NULL,
+ PRIMARY KEY(observation_id,source_id,source_version)
+);
+CREATE INDEX IF NOT EXISTS personal_world_observation_source ON personal_world_observation_sources(source_id);
+CREATE TRIGGER IF NOT EXISTS personal_world_observation_forget AFTER INSERT ON personal_tombstones
+BEGIN
+ DELETE FROM personal_world_observations WHERE id IN (
+  SELECT observation_id FROM personal_world_observation_sources WHERE source_id=NEW.source_id
+ );
+END;
+CREATE TRIGGER IF NOT EXISTS personal_world_observation_edit AFTER UPDATE OF content ON conversation_messages
+WHEN NEW.content!=OLD.content
+BEGIN
+ DELETE FROM personal_world_observations WHERE id IN (
+  SELECT observation_id FROM personal_world_observation_sources WHERE source_id=OLD.id
+ );
+END;
+CREATE TRIGGER IF NOT EXISTS personal_world_observation_delete AFTER DELETE ON conversation_messages
+BEGIN
+ DELETE FROM personal_world_observations WHERE id IN (
+  SELECT observation_id FROM personal_world_observation_sources WHERE source_id=OLD.id
+ );
+END;
+CREATE TRIGGER IF NOT EXISTS personal_world_observation_scope AFTER UPDATE OF state ON context_scopes
+WHEN NEW.state!='active'
+BEGIN
+ DELETE FROM personal_world_observations WHERE scope_key=OLD.scope_key;
 END;

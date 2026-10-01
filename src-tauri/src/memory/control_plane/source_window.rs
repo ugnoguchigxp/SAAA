@@ -54,8 +54,31 @@ pub struct WorkingStateInput<'a> {
     pub source_window_id: &'a str,
     pub valid_until: Option<&'a str>,
 }
+static SAVED_MEMORY_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 pub fn memory_enabled() -> bool {
-    env::var("SAAA_MEMORY_ENABLED").as_deref() == Ok("1")
+    match env::var("SAAA_MEMORY_ENABLED") {
+        Ok(value) => value == "1",
+        Err(env::VarError::NotPresent) => {
+            SAVED_MEMORY_ENABLED.load(std::sync::atomic::Ordering::Acquire)
+        }
+        Err(env::VarError::NotUnicode(_)) => false,
+    }
+}
+
+/// Process cache of the committed preference, loaded at startup and after an IPC update.
+/// SQLite remains the source of truth; an explicit environment override takes precedence.
+pub fn restore_memory_preference(c: &Connection) -> Result<(), String> {
+    let enabled = c
+        .query_row(
+            "SELECT enabled FROM personal_maintenance WHERE id=1",
+            [],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(crate::database_error)?;
+    SAVED_MEMORY_ENABLED.store(enabled, std::sync::atomic::Ordering::Release);
+    Ok(())
 }
 pub fn ensure_continuity_state(
     connection: &Connection,

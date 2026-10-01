@@ -8,7 +8,7 @@ pub(super) use super::source::{
     prepare_candidate, prepare_explicit_question_candidate, WorldOmission, WorldSourceOutcome,
     WorldSourceRequest, WORLD_KIND,
 };
-pub(super) use super::turn::{compose_parts, TurnCompose};
+pub(super) use super::compose_test_support::{compose_fixture, ComposedFixture};
 pub(super) use crate::memory::context_window::{
     ContextHealthReport, ContextWindow, ProjectedContextMessage,
 };

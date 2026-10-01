@@ -1,3 +1,4 @@
+import { enMemoryPage } from "./enMemoryPage";
 import { uiEnglish } from "../../features/chat/ui/translations";
 
 export const enCore = {
@@ -51,21 +52,7 @@ export const enCore = {
     ttsDictionary: "TTS dictionary",
     settings: "Settings",
   },
-  memoryPage: {
-    columns: { content: "Content", kind: "Kind", status: "Status", sources: "Evidence" },
-    disabled: "Memory extraction is paused.",
-    contractPending: "The memory connection needs attention.",
-    pending: "{{count}} pending",
-    empty: "No memory has been recorded.",
-    detailLabel: "Memory details",
-    correct: "Correct in conversation",
-    sources: "Evidence",
-    noSources: "No evidence is available.",
-    openRecord: "Open record",
-    forget: "Forget",
-    forgetConfirm: "Forget this source and the state derived from it? This cannot be undone.",
-    select: "Select an item to view details.",
-  },
+  memoryPage: enMemoryPage,
   workPage: {
     tabsLabel: "Work view",
     queue: "Queue",

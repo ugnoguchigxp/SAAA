@@ -516,3 +516,6 @@ pub(crate) struct ChainFixture {
     pub(super) source: SourceRef,
     pub(super) now_ms: i64,
 }
+
+#[path = "chain_fixture/maintenance.rs"]
+mod maintenance;

@@ -1,7 +1,10 @@
 use crate::RunCancellation;
-use std::sync::{Arc, LazyLock, Mutex};
-pub(super) static SLOT: LazyLock<tokio::sync::Mutex<()>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(()));
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, LazyLock, Mutex,
+};
+pub(super) static SLOT: LazyLock<tokio::sync::RwLock<()>> =
+    LazyLock::new(|| tokio::sync::RwLock::new(()));
 pub(super) static BACKGROUND: Mutex<Option<Arc<RunCancellation>>> = Mutex::new(None);
 pub fn interrupt() {
     if let Ok(slot) = BACKGROUND.lock() {
@@ -10,24 +13,42 @@ pub fn interrupt() {
         }
     }
 }
-/// External process adapters cannot expose individual model-call boundaries;
-/// conservatively reserve the shared slot for the process while Personal State is on.
-pub fn blocking_generation() -> Option<tokio::sync::MutexGuard<'static, ()>> {
-    if super::super::control_plane::memory_enabled() {
-        interrupt();
-        Some(SLOT.blocking_lock())
-    } else {
-        None
-    }
-}
-pub async fn foreground() -> tokio::sync::MutexGuard<'static, ()> {
-    interrupt();
-    SLOT.lock().await
-}
+mod foreground;
+pub(super) use foreground::foreground_requested;
+pub use foreground::{blocking_generation, foreground, ForegroundSlot};
 pub fn generation_slot_busy() -> bool {
-    SLOT.try_lock().is_err()
+    foreground_requested() || SLOT.try_write().is_err()
 }
 #[cfg(test)]
-pub fn occupy_for_test() -> tokio::sync::MutexGuard<'static, ()> {
-    SLOT.blocking_lock()
+pub fn occupy_for_test() -> tokio::sync::RwLockWriteGuard<'static, ()> {
+    SLOT.blocking_write()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn world_maintenance_foregrounds_share_reads_and_cancel_background_before_waiting() {
+        let background = SLOT.write().await;
+        let cancel = Arc::new(RunCancellation::default());
+        *BACKGROUND.lock().unwrap() = Some(cancel.clone());
+        let first = tokio::spawn(foreground());
+        tokio::time::timeout(std::time::Duration::from_secs(2), cancel.cancelled())
+            .await
+            .unwrap();
+        assert!(foreground_requested());
+        assert!(generation_slot_busy());
+        drop(background);
+        let first = tokio::time::timeout(std::time::Duration::from_secs(2), first)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = tokio::time::timeout(std::time::Duration::from_secs(2), foreground())
+            .await
+            .unwrap();
+        assert!(generation_slot_busy());
+        drop(second);
+        drop(first);
+        *BACKGROUND.lock().unwrap() = None;
+    }
 }

@@ -58,13 +58,19 @@ fn personal_state(state: &AppState) -> DiagnosisItem {
         .sqlite_writer
         .read_serialized(crate::memory::personal_state::commands::summary)
     {
-        Ok(_) => item(
+        Ok(summary) => item(
             "memory.personal_state",
             "memory",
             "Personal state",
-            DiagnosisStatus::Ok,
+            if summary["enabled"] == false {
+                DiagnosisStatus::Skipped
+            } else if summary["ready"] == true {
+                DiagnosisStatus::Ok
+            } else {
+                DiagnosisStatus::Warn
+            },
             DiagnosisSeverity::Degraded,
-            "",
+            summary["contractReason"].as_str().unwrap_or(""),
             None,
         ),
         Err(error) => item(
@@ -80,19 +86,24 @@ fn personal_state(state: &AppState) -> DiagnosisItem {
 }
 
 fn world(state: &AppState) -> DiagnosisItem {
-    match state
-        .sqlite_readers
-        .read(|connection| capabilities::status(connection, crate::PRIMARY_CONVERSATION_ID))
-    {
-        Ok(_) => item(
-            "world.status",
-            "memory",
-            "World model",
-            DiagnosisStatus::Ok,
-            DiagnosisSeverity::Degraded,
-            "",
-            None,
-        ),
+    let result = state.sqlite_writer.read_serialized(|c| {
+        capabilities::status(c, crate::PRIMARY_CONVERSATION_ID)?;
+        let summary = crate::memory::personal_state::commands::summary(c)?;
+        let active: u64 = c.query_row("SELECT count(*) FROM personal_projection p JOIN personal_assertions a ON a.id=p.assertion_id WHERE p.status='active' AND json_extract(a.metadata,'$.kind') IN ('world_entity','world_relation','world_focus')", [], |r| r.get(0)).map_err(crate::database_error)?;
+        Ok((summary, active))
+    });
+    match result {
+        Ok((summary, active)) => {
+            let enabled = summary["enabled"] == true;
+            let ready = summary["ready"] == true;
+            let reason = summary["maintenance"]["reason"]
+                .as_str()
+                .unwrap_or("not-started");
+            item("world.status", "memory", "World model",
+                if !enabled { DiagnosisStatus::Skipped } else if !ready || reason.ends_with("unavailable") { DiagnosisStatus::Warn } else { DiagnosisStatus::Ok },
+                DiagnosisSeverity::Degraded,
+                &format!("enabled={enabled}; contract_ready={ready}; active={active}; maintenance={reason}"), None)
+        }
         Err(error) => item(
             "world.status",
             "memory",
@@ -170,22 +181,32 @@ mod tests {
     }
 
     #[test]
-    fn dg_07_memory_and_world_ok_on_fresh_database() {
-        let items = memory(&fresh());
-        assert_eq!(
-            items
-                .iter()
-                .find(|item| item.id == "memory.personal_state")
-                .map(|item| item.status),
-            Some(DiagnosisStatus::Ok)
-        );
-        assert_eq!(
-            items
-                .iter()
-                .find(|item| item.id == "world.status")
-                .map(|item| item.status),
-            Some(DiagnosisStatus::Ok)
-        );
+    fn world_maintenance_diagnosis_distinguishes_unready_from_readable_database() {
+        let state = fresh();
+        let summary = state
+            .sqlite_writer
+            .read_serialized(crate::memory::personal_state::commands::summary)
+            .unwrap();
+        let items = memory(&state);
+        let expected = if summary["enabled"] == false {
+            DiagnosisStatus::Skipped
+        } else if summary["ready"] == false {
+            DiagnosisStatus::Warn
+        } else {
+            DiagnosisStatus::Ok
+        };
+        for id in ["memory.personal_state", "world.status"] {
+            assert_eq!(
+                items.iter().find(|item| item.id == id).unwrap().status,
+                expected
+            );
+        }
+        assert!(items
+            .iter()
+            .find(|item| item.id == "world.status")
+            .unwrap()
+            .message
+            .contains("active=0"));
     }
 
     #[test]

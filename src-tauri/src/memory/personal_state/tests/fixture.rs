@@ -200,6 +200,18 @@ impl worker::Extractor for Fixture {
 pub(super) async fn worker_persists_patch_coverage_and_result_in_one_commit_then_forget_erases() {
     let c = db();
     insert(&c, "s1", "送信しない");
+    let principal: String = c
+        .query_row("SELECT principal FROM personal_scope", [], |r| r.get(0))
+        .unwrap();
+    let user_scope = format!("user:{principal}");
+    super::super::world::test_support::ensure_scope(&c, &user_scope);
+    c.execute(
+        "INSERT INTO personal_source_scope_refs VALUES('s1',1,?1)",
+        [&user_scope],
+    )
+    .unwrap();
+    c.execute("UPDATE personal_jobs SET scope_key=?1", [&user_scope])
+        .unwrap();
     let writer = SqliteWriter::from_connection(c);
     assert!(worker::tick_isolated(&writer, &Fixture, true)
         .await
@@ -320,9 +332,12 @@ pub(super) async fn partial_messages_stay_candidate_until_full_message_finalizat
     assert!(worker::tick_isolated(&writer, &Fixture, true)
         .await
         .unwrap());
-    assert!(worker::tick_isolated(&writer, &Fixture, true)
-        .await
-        .unwrap());
+    assert_eq!(
+        worker::tick_isolated(&writer, &Fixture, true)
+            .await
+            .unwrap_err(),
+        "world-scope-unresolved"
+    );
     writer
         .read_serialized(|c| {
             let l = store::load(c)?;
@@ -337,7 +352,7 @@ pub(super) async fn partial_messages_stay_candidate_until_full_message_finalizat
                 c.query_row("SELECT status FROM personal_jobs", [], |r| r
                     .get::<_, String>(0))
                     .unwrap(),
-                "completed"
+                "blocked"
             );
             Ok(())
         })
@@ -469,6 +484,14 @@ pub(super) async fn unrelated_scope_input_does_not_abort_a_scoped_extraction_com
             [],
         )
         .unwrap();
+    super::super::world::test_support::ensure_scope(&connection, "project:scope-test");
+    connection.execute("INSERT INTO context_scope_links(parent_scope_key,child_scope_key,relation,created_at) VALUES('project:scope-test','task:a','owns','1')",[]).unwrap();
+    connection
+        .execute(
+            "INSERT INTO personal_source_scope_refs VALUES('scope-a-input',1,'project:scope-test')",
+            [],
+        )
+        .unwrap();
     let writer = std::sync::Arc::new(SqliteWriter::from_connection(connection));
     let fixture = UnrelatedScopeFixture {
         writer: writer.clone(),
@@ -501,9 +524,12 @@ pub(super) async fn request_local_extraction_never_appears_in_another_request_or
     let c = db();
     insert(&c, "local-request", "この依頼だけ日本語で");
     let writer = SqliteWriter::from_connection(c);
-    assert!(worker::tick_isolated(&writer, &ScopedFixture, true)
-        .await
-        .unwrap());
+    assert_eq!(
+        worker::tick_isolated(&writer, &ScopedFixture, true)
+            .await
+            .unwrap_err(),
+        "world-scope-unresolved"
+    );
     writer
         .read_serialized(|c| {
             let own = projection::compose(c, Some("local-request"), 262144)?;

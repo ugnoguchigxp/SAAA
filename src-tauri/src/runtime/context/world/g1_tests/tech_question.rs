@@ -349,7 +349,7 @@ pub(super) fn g1_fixture_input(question: Option<&str>) -> Fixture {
     fixture
 }
 pub(super) fn world_candidate(
-    composed: &TurnCompose,
+    composed: &ComposedFixture,
 ) -> Option<&crate::runtime::context::source::Candidate> {
     composed
         .envelope
@@ -490,7 +490,7 @@ pub(super) fn world_g1_09_notice_only_frame_reaches_the_envelope_block() {
     // the provider through the same broker block.
     let fixture = Fixture::new(&[]);
     let scope = load_scope(&fixture);
-    let composed = compose_parts(
+    let composed = compose_fixture(
         true,
         Some(Arc::new(fixture.service())),
         fixture.access().principal,

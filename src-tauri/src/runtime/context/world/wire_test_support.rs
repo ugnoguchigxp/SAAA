@@ -1,14 +1,14 @@
 #![cfg(test)]
 use super::{
     g1_tests as graph,
-    turn::{compose_parts, TurnCompose},
+    compose_test_support::{compose_fixture, ComposedFixture},
 };
 use crate::memory::personal_state::world::runtime_test_support::{Fixture, RUN_ID};
 use std::sync::Arc;
 pub(crate) struct Harness {
     pub fixture: Fixture,
     pub state: crate::AppState,
-    pub composed: TurnCompose,
+    pub composed: ComposedFixture,
     pub history: Vec<crate::ConversationMessage>,
     pub session: String,
 }
@@ -29,7 +29,7 @@ impl Harness {
         let access = fixture.access();
         let mut window = graph::window();
         window.messages.last_mut().unwrap().content = "hello".into();
-        let composed = compose_parts(
+        let composed = compose_fixture(
             true,
             Some(Arc::new(
                 fixture.service().with_sources(state.situation.clone()),

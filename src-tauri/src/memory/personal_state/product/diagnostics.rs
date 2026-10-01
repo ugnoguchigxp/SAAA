@@ -33,7 +33,8 @@ pub fn record(a: &Adapter, id: &str, v: &Value) -> Result<(), String> {
         phases.insert(name.into(), json!(state));
     }
     let result = json!({"complete":saaa_larm_session::personal_state::forget_complete(v,&cap.subject_digest,id),"phases":phases});
-    a.writer.write(|c|{c.execute("INSERT INTO personal_remote_results VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET result=excluded.result,updated_at=excluded.updated_at",rusqlite::params![id,result.to_string(),super::super::now()]).map_err(database_error)?;Ok(())})
+    a.writer.transact(|c|{c.execute("INSERT INTO personal_remote_results VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET result=excluded.result,updated_at=excluded.updated_at",rusqlite::params![id,result.to_string(),super::super::now()]).map_err(database_error)?;
+        c.execute("DELETE FROM personal_remote_results WHERE id NOT IN (SELECT id FROM personal_remote_results ORDER BY updated_at DESC,id DESC LIMIT 1000)", []).map_err(database_error)?;Ok(())})
 }
 pub fn read(c: &Connection) -> Result<Value, String> {
     let mut q = c

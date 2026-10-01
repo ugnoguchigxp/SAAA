@@ -22,7 +22,7 @@ pub(crate) fn authorize_frame_request(
         .strip_prefix("project:")
         .or_else(|| project.strip_prefix("user:"))
         .ok_or(FrameError::ScopeDenied)?;
-    if is_user && (!request.runtime_refs.is_empty() || request.graph_request.is_some()) {
+    if is_user && !request.runtime_refs.is_empty() {
         return Err(FrameError::ScopeDenied);
     }
     if !saaa_personal_state_core::world::runtime_frame::validate_frame_identifier(project_id)

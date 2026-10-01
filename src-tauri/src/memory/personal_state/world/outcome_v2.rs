@@ -28,7 +28,7 @@ pub struct PreparedOutcomePatch {
     pub new_assertion_id: String,
 }
 
-fn operation_key(
+pub(super) fn operation_key(
     project_scope: &str,
     prior_assertion_id: &str,
     outcome_source: &SourceKey,
@@ -218,6 +218,19 @@ pub fn commit_prepared_outcome(
     prepared: &PreparedOutcomePatch,
     fence: &str,
 ) -> Result<bool, String> {
+    writer.write(|c| {
+        let tx = c.transaction().map_err(crate::database_error)?;
+        let committed = commit_prepared_connection(&tx, prepared, fence)?;
+        tx.commit().map_err(crate::database_error)?;
+        Ok(committed)
+    })
+}
+
+pub(crate) fn commit_prepared_connection(
+    c: &Connection,
+    prepared: &PreparedOutcomePatch,
+    fence: &str,
+) -> Result<bool, String> {
     let mut patch = prepared.patch.clone();
     patch.fence = fence.to_string();
     let mut payloads = prepared.payloads.clone();
@@ -251,29 +264,25 @@ pub fn commit_prepared_outcome(
         .ok_or("world-invalid-payload")?;
     let mut stored = BTreeMap::new();
     stored.insert(payload_id, canonical);
-    writer
-        .write(|c| {
-            let ledger = store::load(c)?;
-            let context = CommitContext {
-                access: AccessRequest {
-                    principal: &ledger.principal,
-                    scope: "primary",
-                    task_request: patch.assertions[0].access.task_request.as_deref(),
-                    purpose: Purpose::StateExtract,
-                    max_classification: Classification::Confidential,
-                    policy_revision: ledger.policy_revision,
-                    authorized: true,
-                },
-                enabled: true,
-                now: patch.assertions[0].recorded_at,
-                live_fence: fence,
-                issued_patch_id: &prepared.operation_key,
-                issued_assertion_ids: BTreeSet::from([prepared.new_assertion_id.clone()]),
-                issued_payload_bytes: payload_bytes,
-                evidence_allowlist: inputs.clone(),
-                input_dependencies: inputs,
-            };
-            store::commit(c, &patch, &context, &stored)
-        })
-        .map_err(|e| e.to_string())
+    let ledger = store::load(c)?;
+    let context = CommitContext {
+        access: AccessRequest {
+            principal: &ledger.principal,
+            scope: "primary",
+            task_request: patch.assertions[0].access.task_request.as_deref(),
+            purpose: Purpose::StateExtract,
+            max_classification: Classification::Confidential,
+            policy_revision: ledger.policy_revision,
+            authorized: true,
+        },
+        enabled: true,
+        now: patch.assertions[0].recorded_at,
+        live_fence: fence,
+        issued_patch_id: &prepared.operation_key,
+        issued_assertion_ids: BTreeSet::from([prepared.new_assertion_id.clone()]),
+        issued_payload_bytes: payload_bytes,
+        evidence_allowlist: inputs.clone(),
+        input_dependencies: inputs,
+    };
+    store::commit(c, &patch, &context, &stored)
 }

@@ -1,7 +1,7 @@
 //! SQLite-owned control plane for sessionless continuity and local memory work.
 //! Raw conversation text remains owned exclusively by `conversation_messages`.
 //!
-//! Projection stays disabled unless `SAAA_MEMORY_ENABLED=1`.
+//! Projection follows the saved preference; SAAA_MEMORY_ENABLED is an explicit override.
 
 #[cfg(test)]
 use rusqlite::OptionalExtension;
@@ -22,7 +22,7 @@ pub use source_window::{
 };
 pub use source_window::{
     cancel_unhandled_jobs, ensure_continuity_state, load_projection_items, memory_enabled,
-    record_projection_event, ProjectionItem, CONTEXT_POLICY_VERSION,
+    record_projection_event, restore_memory_preference, ProjectionItem, CONTEXT_POLICY_VERSION,
 };
 #[cfg(test)]
 mod tests;

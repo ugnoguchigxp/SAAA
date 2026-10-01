@@ -20,3 +20,6 @@ mod source_tests;
 pub(crate) mod state_claim;
 pub(crate) mod turn;
 pub(crate) mod wire_test_support;
+
+#[cfg(test)]
+pub(crate) mod compose_test_support;

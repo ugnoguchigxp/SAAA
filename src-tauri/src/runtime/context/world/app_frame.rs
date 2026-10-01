@@ -48,11 +48,7 @@ pub(crate) fn prepare(state: &AppState, run_id: &str) -> Result<Prepared, String
                 authorized: true,
             },
             runtime_refs: super::turn::runtime_refs(&scope),
-            graph_request: if scope.is_user_only() {
-                None
-            } else {
-                super::question_input::read(state, run_id).graph_request()
-            },
+            graph_request: super::question_input::read(state, run_id).graph_request(),
             max_bytes: 8192,
             ttl_ms: 1000,
         })

@@ -7,7 +7,12 @@ import {
   startConversationAsr,
   stopConversationAsr,
 } from "./lib/conversationAsrCapture";
-import { getAppSnapshot, reportFrontendReady, setVoiceListeningEnabled } from "./lib/runtime";
+import {
+  getAppSnapshot,
+  reportFrontendReady,
+  setVoiceListeningEnabled,
+  enqueueConversationText,
+} from "./lib/runtime";
 import { applySnapshotLanguage } from "./lib/appLanguage";
 import { toMessage } from "./lib/appHelpers";
 import { findSettingsDocument, type AppSnapshot } from "./lib/contracts";
@@ -166,9 +171,17 @@ function App() {
                   setRecordTargetId(id);
                   setRoute("records");
                 }}
-                onCorrect={() =>
-                  setError("会話Runtimeの再構築中は記憶の訂正依頼を受け付けられません。")
-                }
+                onCorrect={() => {
+                  const correction = window.prompt(t("memoryPage.correctionPrompt"));
+                  if (!correction?.trim()) return;
+                  void enqueueConversationText(crypto.randomUUID(), correction.trim())
+                    .then(() => setRoute("conversation"))
+                    .catch((cause) => setError(toMessage(cause)));
+                }}
+                onAsk={async (question) => {
+                  await enqueueConversationText(crypto.randomUUID(), question);
+                  setRoute("conversation");
+                }}
               />
             ) : route === "work" ? (
               <WorkPage

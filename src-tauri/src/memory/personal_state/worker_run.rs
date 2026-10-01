@@ -1,4 +1,4 @@
-//! One leased extraction job, with atomic continuity and World commit.
+//! Durable continuity-first extraction; each stage commits with its checkpoint.
 use super::*;
 pub(super) async fn run(
     writer: &SqliteWriter,
@@ -6,6 +6,9 @@ pub(super) async fn run(
     job: &jobs::Job,
     cancel: Arc<RunCancellation>,
 ) -> Result<(), String> {
+    if job.stage == "world" {
+        return world_stage(writer, extractor, job, cancel).await;
+    }
     let (chunk, ledger) = writer.write(|c| {
         let tx = c.transaction().map_err(database_error)?;
         let source = sources::load(
@@ -63,20 +66,11 @@ pub(super) async fn run(
         }
         c.execute(
             "UPDATE personal_jobs SET lease_until=?2 WHERE id=?1 AND lease_generation=?3",
-            rusqlite::params![job.id, now + 30000, job.lease],
+            rusqlite::params![job.id, now + 60000, job.lease],
         )
         .map_err(database_error)?;
         Ok(())
     })?;
-    let world_extraction = crate::memory::personal_state::world::extraction::extract(
-        writer,
-        extractor,
-        &chunk.source,
-        &chunk.text,
-        request_scope.as_deref(),
-        cancel.clone(),
-    )
-    .await?;
     let mut dependencies = BTreeSet::from([chunk.source.key.clone()]);
     for a in ledger.assertions.values() {
         if a.kind.is_world() {
@@ -118,6 +112,17 @@ pub(super) async fn run(
             || candidate.task_request.as_deref() != request_scope.as_deref()
         {
             return Err("personal-extraction-scope".into());
+        }
+        // New/backlog fairness must never allow an older observation to replace
+        // a more recent current assertion about the same topic.
+        if ledger.assertions.values().any(|a| {
+            a.kind == candidate.kind
+                && a.semantic_key == candidate.semantic_key
+                && a.access.task_request.as_deref() == request_scope.as_deref()
+                && a.observed_at > chunk.source.recorded_at
+                && ledger.status(&a.id, now) == Status::Active
+        }) {
+            continue;
         }
         let id = crate::new_id("assertion");
         let payload = crate::new_id("payload");
@@ -244,33 +249,21 @@ pub(super) async fn run(
                 &mut context,
             )?;
             store::commit(&tx, &patch, &context, &payloads)?;
-            if let Some(world) = &world_extraction {
-                let mut provenance = extractor.provenance();
-                provenance.extractor_version = "world-extraction-v1".into();
-                provenance.schema_version = "world-v2".into();
-                provenance.prompt_digest =
-                    saaa_personal_state_core::world::runtime_frame::hex_sha256(
-                        crate::memory::personal_state::world::extraction::INSTRUCTION.as_bytes(),
-                    );
-                crate::memory::personal_state::world::extraction::commit(
-                    &tx,
-                    world,
-                    &chunk.source,
-                    request_scope.as_deref().ok_or("world-extraction-scope")?,
-                    &fence,
-                    provenance,
-                    now,
-                )?;
+            if chunk.source.finalized {
+                jobs::advance_world(&tx, job, crate::memory::personal_state::now())?;
+            } else {
+                jobs::finish(&tx, job, chunk.source.key.end, chunk.total_bytes, false)?;
             }
-            jobs::finish(
-                &tx,
-                job,
-                chunk.source.key.end,
-                chunk.total_bytes,
-                chunk.source.finalized,
-            )?;
             tx.commit().map_err(database_error)?;
             Ok(())
         })
-    })
+    })?;
+    if chunk.source.finalized {
+        world_stage(writer, extractor, job, cancel).await?;
+    }
+    Ok(())
 }
+
+#[path = "worker_run/world_stage.rs"]
+mod world_stage;
+use world_stage::run as world_stage;

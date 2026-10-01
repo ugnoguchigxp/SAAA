@@ -7,18 +7,21 @@ use tokio::sync::{watch, Mutex};
 static SESSION: Mutex<Option<Arc<Session>>> = Mutex::const_new(None);
 
 pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
+    let local_binding = super::local_binding::LocalBinding::load();
     let session = {
         let mut cached = SESSION.lock().await;
         if cached.is_none() {
             let base = std::env::var("SAAA_LARM_CONTROL_URL")
                 .unwrap_or_else(|_| "http://192.168.0.130:9810".into());
             let (_alive, rx) = watch::channel(false);
-            let credential = crate::providers::dynamic_lan::credential::load()
-                .map_err(|error| error.code())?;
+            let credential =
+                crate::providers::dynamic_lan::credential::load().map_err(|error| error.code())?;
             *cached = Some(
                 Session::connect_with_profile_credential_key_phase_and_providers(
                     &base,
-                    crate::providers::larm_resources::profile::preference(None),
+                    maintenance_profile(
+                        std::env::var("SAAA_PERSONAL_STATE_PROFILE").ok().as_deref(),
+                    )?,
                     credential.token().to_string(),
                     format!("saaa-session-{}", uuid::Uuid::new_v4()),
                     rx,
@@ -29,7 +32,10 @@ pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
                 .map_err(|_| "personal-connection-unavailable")?,
             );
         }
-        cached.as_ref().ok_or("personal-connection-unavailable")?.clone()
+        cached
+            .as_ref()
+            .ok_or("personal-connection-unavailable")?
+            .clone()
     };
     let lease = match session.acquire("llm").await {
         Ok(lease) => lease,
@@ -47,13 +53,18 @@ pub async fn configure(writer: Arc<SqliteWriter>) -> Result<Adapter, String> {
     let client = Client::new(&endpoint, lease.provider().token().to_string())?;
     let runtime = std::env::var("SAAA_PERSONAL_STATE_RUNTIME")
         .unwrap_or_else(|_| "qwen-worker-quality".into());
+    let local_ready = local_binding.as_ref().is_ok_and(|binding| {
+        binding
+            .validate(&endpoint, &runtime, &lease.provider().model)
+            .is_ok()
+    });
     let (cap, can_generate) = match client
         .personal_capability(lease.allocation_id(), &runtime)
         .await
     {
         Ok(cap) => {
             cap.validate(&subject, lease.allocation_id(), &runtime, super::now())?;
-            (cap, true)
+            (cap, local_ready)
         }
         Err(_) => {
             // OFF still permits authenticated forget and receipt reconciliation. Cached
@@ -141,5 +152,19 @@ fn certification(
 pub async fn shutdown() {
     if let Some(session) = SESSION.lock().await.take() {
         let _ = session.close().await;
+    }
+}
+
+use super::local_binding::maintenance_profile;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn world_maintenance_explicit_profile_never_falls_back_to_conversation() {
+        assert!(
+            matches!(maintenance_profile(Some("local-world-worker")).unwrap(), saaa_larm_session::ProfilePreference::Explicit(value) if value == "local-world-worker")
+        );
+        assert!(maintenance_profile(Some(" ")).is_err());
+        assert!(maintenance_profile(Some(" local-world-worker")).is_err());
     }
 }

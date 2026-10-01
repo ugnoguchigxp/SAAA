@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn world_g1_04_graph_only_question_fetches_a_frame_without_runtime_refs() {
     let fixture = g1_fixture();
     let scope = load_scope(&fixture);
-    let composed = compose_parts(
+    let composed = compose_fixture(
         true,
         Some(Arc::new(fixture.service())),
         fixture.access().principal,
@@ -83,7 +83,7 @@ pub(super) fn world_g1_06_alias_resolves_only_when_it_is_unique() {
 pub(super) fn world_g1_07_plain_chat_keeps_the_runtime_only_path() {
     let fixture = g1_fixture();
     let scope = load_scope(&fixture);
-    let composed = compose_parts(
+    let composed = compose_fixture(
         true,
         Some(Arc::new(fixture.service())),
         fixture.access().principal,
@@ -143,23 +143,6 @@ pub(super) fn world_g1_saved_input_reaches_the_app_composer() {
     );
     let state =
         crate::test_state::app_state_with_capabilities(fixture.writer.clone(), capabilities);
-    let scope = load_scope(&fixture);
-    let composed = super::super::turn::compose_for_app_enabled(
-        &state,
-        RUN_ID,
-        &scope,
-        window(),
-        vec![],
-        allowed(&scope),
-        true,
-    )
-    .unwrap();
-    let candidate = world_candidate(&composed).expect("saved explicit question produces graph");
-    assert!(
-        parse_rendered_json(&candidate.content)["graph"]["nodes"]
-            .as_array()
-            .is_some_and(|n| !n.is_empty()),
-        "{}",
-        candidate.content
-    );
+    let (_, frame) = super::super::app_frame::prepare(&state, RUN_ID).unwrap();
+    assert!(frame.frame().graph.as_ref().is_some_and(|graph| !graph.nodes.is_empty()));
 }

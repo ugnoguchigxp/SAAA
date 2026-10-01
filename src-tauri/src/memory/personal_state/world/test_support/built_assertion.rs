@@ -9,11 +9,12 @@ pub fn writer_db() -> SqliteWriter {
     SqliteWriter::from_connection(memory_db())
 }
 pub fn ensure_scope(c: &Connection, project: &str) {
-    let opaque = project.strip_prefix("project:").unwrap_or(project);
+    let kind = if project.starts_with("user:") { "user" } else { "project" };
+    let opaque = project.strip_prefix("project:").or_else(|| project.strip_prefix("user:")).unwrap_or(project);
     c.execute(
         "INSERT OR REPLACE INTO context_scopes(scope_key,kind,opaque_id,state,created_at)
-         VALUES(?1,'project',?2,'active','1')",
-        params![project, opaque],
+         VALUES(?1,?3,?2,'active','1')",
+        params![project, opaque, kind],
     )
     .expect("scope");
     c.execute(

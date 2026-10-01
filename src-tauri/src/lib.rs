@@ -247,6 +247,7 @@ pub fn run() {
             if situation_settings.enabled {
                 spawn_situation_monitor(sqlite_writer.clone(), situation.clone());
             }
+            sqlite_writer.read_serialized(memory::control_plane::restore_memory_preference).map_err(std::io::Error::other)?;
             memory::personal_state::worker::spawn(Arc::downgrade(&sqlite_writer));
             let generated_capabilities = Arc::new(build_capability_service(
                 sqlite_writer.clone(),

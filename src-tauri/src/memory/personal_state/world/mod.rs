@@ -33,3 +33,5 @@ mod tests;
 mod v2_tests;
 pub mod validation;
 pub mod validation_v2;
+
+mod extracted_outcomes;

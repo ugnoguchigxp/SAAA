@@ -144,7 +144,7 @@ fn voice_asr_channel_audits_metadata_without_transcript_text() {
 }
 
 #[tokio::test]
-async fn voice_asr_channel_observes_final_without_delivering_work_or_text_to_audit() {
+async fn voice_asr_channel_audits_final_metadata_without_spoken_text() {
     let connection = Arc::new(crate::persistence::SqliteWriter::from_connection(
         Connection::open_in_memory().expect("database opens"),
     ));
@@ -183,17 +183,17 @@ async fn voice_asr_channel_observes_final_without_delivering_work_or_text_to_aud
                 .expect("events encode")
         };
         assert!(!encoded.contains("private spoken words"));
-        if encoded.contains("jarvis-observed-dispatch") {
+        if encoded.contains("asr-final-received") {
             observed = true;
             break;
         }
         tokio::task::yield_now().await;
     }
-    assert!(observed, "shadow dispatch should be audited");
+    assert!(observed, "final receipt should be audited");
 }
 
 #[tokio::test]
-async fn voice_asr_commit_boundary_flushes_latest_partial_to_shadow_only() {
+async fn voice_asr_partial_is_delivered_without_persisting_text_or_dispatching_work() {
     let connection = Arc::new(crate::persistence::SqliteWriter::from_connection(
         Connection::open_in_memory().expect("database opens"),
     ));
@@ -224,22 +224,12 @@ async fn voice_asr_commit_boundary_flushes_latest_partial_to_shadow_only() {
             language: None,
         })
         .expect("partial sends");
-    super::voice_frontend_observer::observe_boundary("boundary_session");
-    let mut observed = false;
-    for _ in 0..100 {
-        let encoded = {
-            let db = connection.lock().expect("database lock");
-            serde_json::to_string(&recent_events(&db, 20).expect("events load"))
-                .expect("events encode")
-        };
-        assert!(!encoded.contains("private words"));
-        if encoded.contains("jarvis-observed-dispatch") {
-            observed = true;
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert!(observed, "boundary should flush the latest partial");
+    let encoded = connection.read_serialized(|c| recent_events(c, 20).map(|events| serde_json::to_string(&events).unwrap())).unwrap();
+    assert!(!encoded.contains("private words"));
+    assert!(!encoded.contains("asr-partial"));
+    assert!(encoded.contains("asr-ready"));
+    let runs: i64 = connection.read_serialized(|c| c.query_row("SELECT count(*) FROM runtime_runs", [], |r| r.get(0)).map_err(crate::database_error)).unwrap();
+    assert_eq!(runs, 0, "partial receipt must not dispatch a conversation run");
 }
 
 #[test]

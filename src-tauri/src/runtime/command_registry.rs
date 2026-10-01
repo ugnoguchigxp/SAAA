@@ -1,11 +1,10 @@
-//! IPC command list. Kept out of `lib.rs` so the production line budget stays at 800.
-//! Expand `saaa_invoke_handler!` at the `Builder::invoke_handler` call site so Tauri command
-//! macros resolve in `lib.rs`. One command per line; do not pack multiple commands onto one line.
+//! IPC commands expanded in lib.rs. Keep one command per line.
 
 macro_rules! saaa_invoke_handler {
     () => {
         tauri::generate_handler![
             memory::personal_state::commands::personal_state_snapshot,
+            memory::personal_state::commands::set_personal_state_enabled,
             memory::personal_state::commands::personal_source_page,
             memory::personal_state::commands::forget_personal_source,
             memory::personal_state::commands::personal_state_extract_once,

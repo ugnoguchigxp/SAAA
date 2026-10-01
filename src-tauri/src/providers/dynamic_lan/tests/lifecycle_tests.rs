@@ -326,7 +326,7 @@ async fn live_dynamic_lan_claim_and_chat() {
         content: prompt.into(),
         created_at: String::new(),
     }];
-    let result = crate::providers::chat_completions::run(
+    let result = crate::providers::chat_completions::run_with_options(
         connection.endpoint(),
         authorization.as_deref(),
         connection.model(),
@@ -342,6 +342,11 @@ async fn live_dynamic_lan_claim_and_chat() {
             context_sources: &[],
             context_omissions: &[],
             output_persistence: None,
+        },
+        crate::providers::chat_completions::RequestMode::Stream,
+        &saaa_larm_session::http_api::LlmOptions {
+            tools: false,
+            ..Default::default()
         },
     )
     .await;

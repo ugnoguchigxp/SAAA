@@ -1,0 +1,356 @@
+{
+  "scope": "current-change-only",
+  "growth": 1.1,
+  "registeredNewFiles": 21,
+  "existingBaselineValuesChanged": [],
+  "changedSourceFiles": 69,
+  "violations": [],
+  "globalCheck": "fails-existing-unrelated",
+  "records": [
+    {
+      "path": "scripts/world-maintenance-eval.ts",
+      "measured": 303,
+      "ceiling": 334
+    },
+    {
+      "path": "src-tauri/src/diagnosis/checks/memory.rs",
+      "measured": 171,
+      "ceiling": 176
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "measured": 446,
+      "ceiling": 828
+    },
+    {
+      "path": "src-tauri/src/memory/control_plane/mod.rs",
+      "measured": 29,
+      "ceiling": 728
+    },
+    {
+      "path": "src-tauri/src/memory/control_plane/source_window.rs",
+      "measured": 514,
+      "ceiling": 541
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/commands.rs",
+      "measured": 147,
+      "ceiling": 151
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/commands/snapshot.rs",
+      "measured": 47,
+      "ceiling": 52
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/jobs.rs",
+      "measured": 68,
+      "ceiling": 70
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/jobs/lifecycle.rs",
+      "measured": 48,
+      "ceiling": 53
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/local_binding.rs",
+      "measured": 69,
+      "ceiling": 76
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/maintenance.rs",
+      "measured": 51,
+      "ceiling": 57
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/mod.rs",
+      "measured": 38,
+      "ceiling": 38
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/product_binding.rs",
+      "measured": 158,
+      "ceiling": 165
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/product_extract_sources.rs",
+      "measured": 33,
+      "ceiling": 43
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/product_extract_sources/context.rs",
+      "measured": 29,
+      "ceiling": 32
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/product_extract.rs",
+      "measured": 57,
+      "ceiling": 68
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/product/diagnostics.rs",
+      "measured": 56,
+      "ceiling": 57
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/scheduler.rs",
+      "measured": 26,
+      "ceiling": 38
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/scheduler/foreground.rs",
+      "measured": 38,
+      "ceiling": 42
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/schema.rs",
+      "measured": 75,
+      "ceiling": 77
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/sources.rs",
+      "measured": 123,
+      "ceiling": 132
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/sources/world_context.rs",
+      "measured": 33,
+      "ceiling": 37
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/tests/fixture.rs",
+      "measured": 549,
+      "ceiling": 576
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/worker_run.rs",
+      "measured": 270,
+      "ceiling": 305
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/worker_run/world_stage.rs",
+      "measured": 69,
+      "ceiling": 76
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/worker_scope.rs",
+      "measured": 42,
+      "ceiling": 43
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/worker_scope/knowledge.rs",
+      "measured": 36,
+      "ceiling": 40
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/worker.rs",
+      "measured": 255,
+      "ceiling": 389
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/extracted_outcomes.rs",
+      "measured": 177,
+      "ceiling": 195
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/extraction_tests.rs",
+      "measured": 0,
+      "ceiling": 0
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/extraction.rs",
+      "measured": 103,
+      "ceiling": 338
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/extraction/commit.rs",
+      "measured": 391,
+      "ceiling": 431
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/mod.rs",
+      "measured": 38,
+      "ceiling": 38
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/outcome_v2.rs",
+      "measured": 289,
+      "ceiling": 308
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/query_v2_context.rs",
+      "measured": 508,
+      "ceiling": 556
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/runtime_scope_authorize.rs",
+      "measured": 168,
+      "ceiling": 185
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/test_support/built_assertion.rs",
+      "measured": 296,
+      "ceiling": 325
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/v2_tests/chain_fixture.rs",
+      "measured": 522,
+      "ceiling": 571
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/v2_tests/chain_fixture/maintenance.rs",
+      "measured": 78,
+      "ceiling": 86
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/world/validation.rs",
+      "measured": 138,
+      "ceiling": 154
+    },
+    {
+      "path": "src-tauri/src/persistence/audit/tests.rs",
+      "measured": 400,
+      "ceiling": 452
+    },
+    {
+      "path": "src-tauri/src/persistence/schema.rs",
+      "measured": 306,
+      "ceiling": 329
+    },
+    {
+      "path": "src-tauri/src/providers/agent_session/sse/world_eval_tests.rs",
+      "measured": 0,
+      "ceiling": 0
+    },
+    {
+      "path": "src-tauri/src/providers/dynamic_lan/tests/lifecycle_tests.rs",
+      "measured": 430,
+      "ceiling": 531
+    },
+    {
+      "path": "src-tauri/src/providers/dynamic_lan/tests/resolution_tests.rs",
+      "measured": 454,
+      "ceiling": 514
+    },
+    {
+      "path": "src-tauri/src/runtime/command_registry.rs",
+      "measured": 151,
+      "ceiling": 151
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/app_frame.rs",
+      "measured": 58,
+      "ceiling": 69
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/compose_test_support.rs",
+      "measured": 51,
+      "ceiling": 57
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/g1_tests.rs",
+      "measured": 0,
+      "ceiling": 733
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/g1_tests/tech_question.rs",
+      "measured": 515,
+      "ceiling": 567
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/g1_tests/world_g1_04_graph_only_question_fetches_a_frame_.rs",
+      "measured": 149,
+      "ceiling": 183
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/mod.rs",
+      "measured": 26,
+      "ceiling": 27
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/state_claim.rs",
+      "measured": 128,
+      "ceiling": 142
+    },
+    {
+      "path": "src-tauri/src/runtime/context/world/wire_test_support.rs",
+      "measured": 0,
+      "ceiling": 0
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime.rs",
+      "measured": 1010,
+      "ceiling": 1018
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime/speech.rs",
+      "measured": 94,
+      "ceiling": 104
+    },
+    {
+      "path": "src-tauri/src/tests/codex_live_read_only_turn_completes.rs",
+      "measured": 394,
+      "ceiling": 519
+    },
+    {
+      "path": "src-tauri/src/tests/rr_15_asr_tool_tts_reconnect_e2e_and_rr_38_norma.rs",
+      "measured": 27,
+      "ceiling": 548
+    },
+    {
+      "path": "src/App.tsx",
+      "measured": 232,
+      "ceiling": 386
+    },
+    {
+      "path": "src/features/memory/api.ts",
+      "measured": 59,
+      "ceiling": 69
+    },
+    {
+      "path": "src/features/memory/maintenanceSchema.ts",
+      "measured": 21,
+      "ceiling": 24
+    },
+    {
+      "path": "src/features/memory/MemoryMaintenance.tsx",
+      "measured": 112,
+      "ceiling": 124
+    },
+    {
+      "path": "src/features/memory/MemoryPage.tsx",
+      "measured": 325,
+      "ceiling": 333
+    },
+    {
+      "path": "src/features/memory/sourcePageSchema.ts",
+      "measured": 16,
+      "ceiling": 18
+    },
+    {
+      "path": "src/i18n/locales/enCore.ts",
+      "measured": 308,
+      "ceiling": 325
+    },
+    {
+      "path": "src/i18n/locales/enMemoryPage.ts",
+      "measured": 38,
+      "ceiling": 42
+    },
+    {
+      "path": "src/i18n/locales/jaCore.ts",
+      "measured": 301,
+      "ceiling": 322
+    },
+    {
+      "path": "src/i18n/locales/jaMemoryPage.ts",
+      "measured": 37,
+      "ceiling": 41
+    },
+    {
+      "path": "tests/world-maintenance.test.tsx",
+      "measured": 114,
+      "ceiling": 126
+    }
+  ]
+}

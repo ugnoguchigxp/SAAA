@@ -75,7 +75,7 @@ pub async fn tick(
     extractor: &dyn Extractor,
     enabled: bool,
 ) -> Result<bool, String> {
-    tick_with_scheduler(writer, extractor, enabled, &SLOT, &BACKGROUND).await
+    tick_with_scheduler(writer, extractor, enabled, &SLOT, &BACKGROUND, true).await
 }
 #[cfg(test)]
 pub async fn tick_isolated(
@@ -87,8 +87,9 @@ pub async fn tick_isolated(
         writer,
         extractor,
         enabled,
-        &tokio::sync::Mutex::new(()),
+        &tokio::sync::RwLock::new(()),
         &Mutex::new(None),
+        false,
     )
     .await
 }
@@ -96,10 +97,14 @@ async fn tick_with_scheduler(
     writer: &SqliteWriter,
     extractor: &dyn Extractor,
     enabled: bool,
-    slot: &tokio::sync::Mutex<()>,
+    slot: &tokio::sync::RwLock<()>,
     background: &Mutex<Option<Arc<RunCancellation>>>,
+    honor_foreground: bool,
 ) -> Result<bool, String> {
-    let Ok(_slot) = slot.try_lock() else {
+    if honor_foreground && super::scheduler::foreground_requested() {
+        return Ok(false);
+    }
+    let Ok(_slot) = slot.try_write() else {
         return Ok(false);
     };
     let now = super::now();
@@ -114,24 +119,23 @@ async fn tick_with_scheduler(
     *background
         .lock()
         .map_err(|_| "personal-scheduler-unavailable")? = Some(cancel.clone());
+    if honor_foreground && super::scheduler::foreground_requested() {
+        cancel.cancel();
+    }
     let result = run(writer, extractor, &job, cancel.clone()).await;
     *background
         .lock()
         .map_err(|_| "personal-scheduler-unavailable")? = None;
     if let Err(error) = result {
-        writer.write(|c|{c.execute("UPDATE personal_generations SET output_allowed=0,status='interrupted',cancellation='sent-unconfirmed' WHERE purpose IN ('personal_state_extract','world-extraction') AND status IN ('prepared','running')",[]).map_err(database_error)?;Ok(())})?;
-        writer.write(|c| {
+        writer.transact(|c| {
+            c.execute("UPDATE personal_generations SET output_allowed=0,status='interrupted',cancellation='sent-unconfirmed' WHERE purpose IN ('personal_state_extract','world-extraction') AND status IN ('prepared','running')", []).map_err(database_error)?;
             c.execute("UPDATE personal_registrations SET pins=0,desired='deleted' WHERE incarnation IN (SELECT incarnation FROM personal_cleanup WHERE stage!='complete')", []).map_err(database_error)?;
             jobs::failed(
                 c,
                 &job,
                 super::now(),
                 cancel.is_cancelled() || error == "personal-job-fence",
-                if cancel.is_cancelled() {
-                    "foreground-abort"
-                } else {
-                    "extraction-failed"
-                },
+                error_code(&error, cancel.is_cancelled()),
             )
         })?;
         return Err(error);
@@ -147,16 +151,56 @@ pub fn spawn(writer: std::sync::Weak<SqliteWriter>) {
             let Some(writer) = writer.upgrade() else {
                 break;
             };
-            let needed=super::super::control_plane::memory_enabled() || writer.read_serialized(|c|c.query_row("SELECT EXISTS(SELECT 1 FROM personal_remote_operations WHERE state!='cleaned')",[],|r|r.get::<_,bool>(0)).map_err(crate::database_error)).unwrap_or(false);
-            if !needed {
+            let recovered = writer.write(|c| {
+                let tx = c.transaction().map_err(database_error)?;
+                jobs::recover_expired(&tx, super::now())?;
+                jobs::refill(&tx)?;
+                tx.commit().map_err(database_error)
+            });
+            if recovered.is_err() {
                 continue;
             }
-            if let Ok(adapter) = super::managed::Adapter::configured(writer.clone()).await {
-                let _ = adapter.cleanup().await;
-                if super::super::control_plane::memory_enabled()
-                    && adapter.product.as_ref().is_some_and(|p| p.can_generate)
-                {
-                    let _ = tick(&writer, &adapter, true).await;
+            let enabled = super::super::control_plane::memory_enabled();
+            let admission =
+                writer.read_serialized(|c| super::maintenance::admission(c, super::now(), enabled));
+            let Ok(needed) = admission else { continue };
+            if !needed || generation_slot_busy() {
+                continue;
+            }
+            if super::local_binding::LocalBinding::load().is_err() {
+                let cleanup_needed = writer.read_serialized(|c| c.query_row("SELECT EXISTS(SELECT 1 FROM personal_remote_operations WHERE state!='cleaned')",[],|r|r.get::<_,bool>(0)).map_err(database_error));
+                if !matches!(cleanup_needed, Ok(true)) {
+                    let _ = writer.write(|c| {
+                        super::maintenance::record(c, super::now(), "local-binding-unverified")
+                    });
+                    continue;
+                }
+            }
+            match super::managed::Adapter::configured(writer.clone()).await {
+                Ok(adapter) => {
+                    let result: Result<&str, String> = async {
+                        adapter.cleanup().await?;
+                        if enabled && adapter.product.as_ref().is_some_and(|p| p.can_generate) {
+                            tick(&writer, &adapter, true).await?;
+                            Ok("ready")
+                        } else {
+                            Ok("capability-unavailable")
+                        }
+                    }
+                    .await;
+                    let code = result.unwrap_or("execution-unavailable");
+                    let _ = writer.write(|c| super::maintenance::record(c, super::now(), code));
+                }
+                Err(error) => {
+                    let code = if matches!(
+                        error.as_str(),
+                        "personal-local-binding-unverified" | "personal-local-binding-mismatch"
+                    ) {
+                        "local-binding-unverified"
+                    } else {
+                        "connection-unavailable"
+                    };
+                    let _ = writer.write(|c| super::maintenance::record(c, super::now(), code));
                 }
             }
         }
@@ -166,3 +210,45 @@ pub fn spawn(writer: std::sync::Weak<SqliteWriter>) {
 #[path = "worker_run.rs"]
 mod execution;
 use execution::run;
+
+fn error_code(error: &str, cancelled: bool) -> &'static str {
+    if cancelled
+        || matches!(
+            error,
+            "personal-job-fence" | "personal-foreground-abort" | "personal-generation-cancelled"
+        )
+    {
+        return "foreground-abort";
+    }
+    if matches!(
+        error,
+        "context-transport"
+            | "personal-generation-timeout"
+            | "personal-extraction-timeout"
+            | "world-extraction-timeout"
+            | "personal-remote-stop-pending"
+            | "personal-attempt-unconfirmed"
+            | "personal-connection-unavailable"
+            | "personal-capability-unavailable"
+    ) || error
+        .strip_prefix("context-http-")
+        .and_then(|v| v.parse::<u16>().ok())
+        .is_some_and(|status| status == 429 || status >= 500)
+    {
+        return "transient-unavailable";
+    }
+    if error == "world-scope-unresolved" {
+        return "scope-unresolved-held";
+    }
+    if matches!(
+        error,
+        "world-limit"
+            | "world-extraction-budget"
+            | "personal-input-byte-budget"
+            | "personal-extraction-budget"
+            | "personal-finalization-budget"
+    ) {
+        return "evidence-budget-held";
+    }
+    "extraction-invalid"
+}

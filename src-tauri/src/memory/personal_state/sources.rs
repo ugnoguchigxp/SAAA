@@ -117,3 +117,6 @@ pub fn finalize(c: &Connection, full: &SourceRef) -> Result<(), String> {
     c.execute("UPDATE personal_source_refs SET metadata=json_set(metadata,'$.finalized',json('true')) WHERE json_extract(metadata,'$.key.id')=?1 AND json_extract(metadata,'$.key.version')=?2 AND json_extract(metadata,'$.key.end')<=?3",params![full.key.id,full.key.version,full.key.end]).map_err(database_error)?;
     Ok(())
 }
+
+mod world_context;
+pub use world_context::world_context;

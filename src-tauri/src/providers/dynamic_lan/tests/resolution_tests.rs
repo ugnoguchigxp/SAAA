@@ -232,7 +232,7 @@ async fn resolves_claimed_openai_settings_and_releases_the_connection() {
         presentation_mode: "visual".into(),
     };
     let authorization = format!("Bearer {}", connection.api_key().unwrap());
-    let result = crate::providers::chat_completions::run(
+    let result = crate::providers::chat_completions::run_with_options(
         connection.endpoint(),
         Some(&authorization),
         connection.model(),
@@ -248,6 +248,11 @@ async fn resolves_claimed_openai_settings_and_releases_the_connection() {
             context_sources: &[],
             context_omissions: &[],
             output_persistence: None,
+        },
+        crate::providers::chat_completions::RequestMode::Stream,
+        &saaa_larm_session::http_api::LlmOptions {
+            tools: false,
+            ..Default::default()
         },
     )
     .await
@@ -378,7 +383,7 @@ async fn wr_t13_real_allocation_refreshes_source_frame_and_releases() {
         presentation_mode: "visual".into(),
     };
     let authorization = format!("Bearer {}", connection.api_key().unwrap());
-    let result = crate::providers::chat_completions::run(
+    let result = crate::providers::chat_completions::run_with_options(
         connection.endpoint(),
         Some(&authorization),
         connection.model(),
@@ -398,6 +403,11 @@ async fn wr_t13_real_allocation_refreshes_source_frame_and_releases() {
                 session_id: &harness.session,
                 world: harness.composed.world.as_ref(),
             }),
+        },
+        crate::providers::chat_completions::RequestMode::Stream,
+        &saaa_larm_session::http_api::LlmOptions {
+            tools: false,
+            ..Default::default()
         },
     )
     .await

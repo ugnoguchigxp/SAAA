@@ -18,7 +18,7 @@ pub async fn extract(
         .map_err(|_| "personal-extraction-source")?;
     let ledger = a.writer.read_serialized(super::store::load)?;
     let sources = sources::select(&ledger, &source, &input, world)?;
-    let request = json!({"model":a.certification.model,"messages":[{"role":"system","content":instruction},{"role":"user","content":super::encode(&json!({"current":input["current"],"source_ref":source.key,"request_scope":input["request_scope"],"instructionAuthority":"none"}))?}],"max_tokens":2000,"temperature":0,"stream":false});
+    let request = json!({"model":a.certification.model,"messages":[{"role":"system","content":instruction},{"role":"user","content":super::encode(&json!({"current":input["current"],"source_ref":source.key,"context_sources":input["context_sources"],"request_scope":input["request_scope"],"instructionAuthority":"none"}))?}],"max_tokens":2000,"temperature":0,"stream":false});
     let id = crate::new_id("generation");
     let m = generation::Manifest {
         generation_id: id.clone(),

@@ -10,6 +10,9 @@ pub(super) fn request(job: &Job, source_id: &str) -> Option<String> {
     }
 }
 
+mod knowledge;
+pub(super) use knowledge::knowledge_request;
+
 pub(super) fn rebase(
     connection: &Connection,
     job: &Job,

@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS personal_scope (
  id TEXT PRIMARY KEY CHECK(id='primary'), principal TEXT NOT NULL UNIQUE,
  revision INTEGER NOT NULL DEFAULT 0, input_epoch INTEGER NOT NULL DEFAULT 0,
  policy_revision INTEGER NOT NULL DEFAULT 1, recovery_ready INTEGER NOT NULL DEFAULT 1,
+ world_turn INTEGER NOT NULL DEFAULT 0,
  last_foreground_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS personal_sources (
@@ -26,7 +27,7 @@ CREATE TABLE IF NOT EXISTS personal_patches (id TEXT PRIMARY KEY,digest TEXT NOT
 CREATE TABLE IF NOT EXISTS personal_projection (assertion_id TEXT PRIMARY KEY,status TEXT NOT NULL,revision INTEGER NOT NULL,evaluated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS personal_jobs (
  id INTEGER PRIMARY KEY AUTOINCREMENT,source_sequence INTEGER NOT NULL UNIQUE,epoch INTEGER NOT NULL,
- scope_key TEXT,claim_scope_epoch INTEGER,
+ scope_key TEXT,claim_scope_epoch INTEGER, stage TEXT NOT NULL DEFAULT 'continuity',retry_count INTEGER NOT NULL DEFAULT 0,
  status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed','blocked')),
  lease_generation INTEGER NOT NULL DEFAULT 0, lease_until INTEGER,
  attempts INTEGER NOT NULL DEFAULT 0,abort_count INTEGER NOT NULL DEFAULT 0,
@@ -75,7 +76,7 @@ BEGIN
  INSERT INTO personal_sources(message_id,version,role,bytes,recorded_at)
  VALUES(NEW.id,COALESCE((SELECT MAX(version)+1 FROM personal_sources WHERE message_id=NEW.id),1),NEW.role,length(CAST(NEW.content AS BLOB)),CAST(NEW.created_at AS INTEGER));
  UPDATE personal_scope SET input_epoch=input_epoch+1,last_foreground_at=CAST(NEW.created_at AS INTEGER);
- INSERT INTO personal_jobs(source_sequence,epoch,status) VALUES(last_insert_rowid(),(SELECT input_epoch FROM personal_scope),'queued');
+ INSERT INTO personal_jobs(source_sequence,epoch,status) SELECT last_insert_rowid(),(SELECT input_epoch FROM personal_scope),'queued' WHERE (SELECT count(*) FROM personal_jobs WHERE status IN ('queued','running'))<1024;
 END;
 CREATE TRIGGER IF NOT EXISTS personal_source_no_resurrection BEFORE INSERT ON conversation_messages
 WHEN EXISTS(SELECT 1 FROM personal_tombstones WHERE source_id=NEW.id)
@@ -86,7 +87,7 @@ BEGIN
  UPDATE personal_sources SET available=0 WHERE message_id=OLD.id;
  INSERT INTO personal_sources(message_id,version,role,bytes,recorded_at) VALUES(NEW.id,(SELECT MAX(version)+1 FROM personal_sources WHERE message_id=OLD.id),NEW.role,length(CAST(NEW.content AS BLOB)),CAST(unixepoch('subsec')*1000 AS INTEGER));
  UPDATE personal_scope SET input_epoch=input_epoch+1;
- INSERT INTO personal_jobs(source_sequence,epoch,status) VALUES(last_insert_rowid(),(SELECT input_epoch FROM personal_scope),'queued');
+ INSERT INTO personal_jobs(source_sequence,epoch,status) SELECT last_insert_rowid(),(SELECT input_epoch FROM personal_scope),'queued' WHERE (SELECT count(*) FROM personal_jobs WHERE status IN ('queued','running'))<1024;
  UPDATE personal_generations SET output_allowed=0,cancellation='requested' WHERE id IN (SELECT generation_id FROM personal_generation_inputs WHERE source_id=OLD.id);
 END;
 CREATE TRIGGER IF NOT EXISTS personal_source_delete BEFORE DELETE ON conversation_messages
@@ -126,3 +127,14 @@ BEGIN
  UPDATE personal_patches SET digest='';
  DELETE FROM personal_projection;
 END;
+
+-- Single bounded diagnostic row, updated through the application's SqliteWriter.
+CREATE TABLE IF NOT EXISTS personal_maintenance (
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+ reason TEXT NOT NULL DEFAULT 'not-started',
+ failures INTEGER NOT NULL DEFAULT 0,
+ next_attempt_at INTEGER NOT NULL DEFAULT 0,
+ updated_at INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO personal_maintenance(id) VALUES(1);

@@ -1,3 +1,4 @@
+import { MemoryMaintenance } from "./MemoryMaintenance";
 import {
   createColumnHelper,
   rowSortingFeature,
@@ -32,11 +33,14 @@ function displayValue(value: unknown): string {
 export function MemoryPage({
   onOpenRecord,
   onCorrect,
+  onAsk,
 }: {
   onOpenRecord: (sourceId: string) => void;
   onCorrect: (item: PersonalStateItem) => void;
+  onAsk?: (question: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const [view, setView] = useState<"state" | "world">("state");
   const [snapshot, setSnapshot] = useState<PersonalStateSnapshot | null>(null);
   const [sourcePage, setSourcePage] = useState<PersonalSourcePage | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -55,9 +59,12 @@ export function MemoryPage({
       setSnapshot(nextSnapshot);
       setSourcePage(nextSources);
       setSelectedId((current) =>
-        current && nextSnapshot.items.some((item) => item.id === current)
+        current &&
+        (view === "world" ? nextSnapshot.worldItems : nextSnapshot.items).some(
+          (item) => item.id === current,
+        )
           ? current
-          : (nextSnapshot.items[0]?.id ?? null),
+          : ((view === "world" ? nextSnapshot.worldItems : nextSnapshot.items)[0]?.id ?? null),
       );
       setError("");
     } catch (cause) {
@@ -65,11 +72,23 @@ export function MemoryPage({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [view]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const setEnabled = async (enabled: boolean) => {
+    setLoading(true);
+    try {
+      setSnapshot(await personalStateApi.setEnabled(enabled));
+      setError("");
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const columns = useMemo(
     () =>
@@ -98,12 +117,13 @@ export function MemoryPage({
   const table = useTable({
     features: memoryTableFeatures,
     columns,
-    data: snapshot?.items ?? [],
+    data: (view === "world" ? snapshot?.worldItems : snapshot?.items) ?? [],
     state: { sorting },
     onSortingChange: setSorting,
     enableMultiSort: false,
   });
-  const selected = snapshot?.items.find((item) => item.id === selectedId) ?? null;
+  const visibleItems = (view === "world" ? snapshot?.worldItems : snapshot?.items) ?? [];
+  const selected = visibleItems.find((item) => item.id === selectedId) ?? null;
   const sourceById = useMemo(
     () => new Map((sourcePage?.sources ?? []).map((source) => [source.id, source])),
     [sourcePage],
@@ -117,9 +137,10 @@ export function MemoryPage({
       setSnapshot(next);
       setSourcePage(await personalStateApi.sources());
       setSelectedId((current) =>
-        current && next.items.some((item) => item.id === current)
+        current &&
+        (view === "world" ? next.worldItems : next.items).some((item) => item.id === current)
           ? current
-          : (next.items[0]?.id ?? null),
+          : ((view === "world" ? next.worldItems : next.items)[0]?.id ?? null),
       );
       setError("");
     } catch (cause) {
@@ -162,26 +183,28 @@ export function MemoryPage({
       </div>
       <div className="memory-layout">
         <div className="memory-main">
-          {snapshot &&
-          (!snapshot.enabled || !snapshot.contractReady || snapshot.pendingCount > 0) ? (
-            <div className="workspace-notices" role="status">
-              {!snapshot.enabled ? <span>{t("memoryPage.disabled")}</span> : null}
-              {!snapshot.contractReady ? <span>{t("memoryPage.contractPending")}</span> : null}
-              {snapshot.pendingCount > 0 ? (
-                <span>{t("memoryPage.pending", { count: snapshot.pendingCount })}</span>
-              ) : null}
-            </div>
-          ) : null}
+          <MemoryMaintenance
+            view={view}
+            onViewChange={(next) => {
+              setView(next);
+              setSelectedId(null);
+            }}
+            snapshot={snapshot}
+            loading={loading}
+            onSetEnabled={setEnabled}
+            onAsk={onAsk}
+            setError={setError}
+          />
           {error ? (
             <p className="workspace-error" role="alert">
               {error}
             </p>
           ) : null}
           {loading ? <p className="workspace-empty">{t("common.loading")}</p> : null}
-          {!loading && snapshot?.items.length === 0 ? (
+          {!loading && visibleItems.length === 0 ? (
             <p className="workspace-empty">{t("memoryPage.empty")}</p>
           ) : null}
-          {snapshot && snapshot.items.length > 0 ? (
+          {snapshot && visibleItems.length > 0 ? (
             <div className="workspace-table-scroll" tabIndex={0}>
               <table className="workspace-table memory-table">
                 <thead>

@@ -5,16 +5,7 @@ pub(super) fn select(
     input: &Value,
     world: bool,
 ) -> Result<Vec<SourceRef>, String> {
-    let mut sources = vec![source.clone()];
-    if let Some(pending) = input["current"]["pending"].as_array() {
-        for entry in pending {
-            let s: SourceRef = serde_json::from_value(entry["source"].clone())
-                .map_err(|_| "personal-base-source")?;
-            if !sources.contains(&s) {
-                sources.push(s);
-            }
-        }
-    }
+    let mut sources = context::initial(source, input, world)?;
     for assertion in ledger.assertions.values() {
         if world {
             if assertion.access.task_request.as_deref() != input["request_scope"].as_str()
@@ -36,3 +27,6 @@ pub(super) fn select(
     }
     Ok(sources)
 }
+
+#[path = "product_extract_sources/context.rs"]
+mod context;

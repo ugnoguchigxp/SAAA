@@ -1,3 +1,4 @@
+import { jaMemoryPage } from "./jaMemoryPage";
 import { uiJapanese } from "../../features/chat/ui/translations";
 
 export const jaCore = {
@@ -51,22 +52,7 @@ export const jaCore = {
     ttsDictionary: "TTS辞書",
     settings: "設定",
   },
-  memoryPage: {
-    columns: { content: "内容", kind: "種類", status: "状態", sources: "根拠" },
-    disabled: "メモリ抽出は停止中です。",
-    contractPending: "メモリ接続の確認が必要です。",
-    pending: "未反映 {{count}}件",
-    empty: "記録されたメモリはありません。",
-    detailLabel: "メモリの詳細",
-    correct: "会話で訂正する",
-    sources: "根拠",
-    noSources: "確認できる根拠はありません。",
-    openRecord: "記録を開く",
-    forget: "忘れる",
-    forgetConfirm:
-      "この原文と、そこから作られた状態を忘れます。この操作は元に戻せません。続けますか？",
-    select: "項目を選択すると詳細を表示します。",
-  },
+  memoryPage: jaMemoryPage,
   workPage: {
     tabsLabel: "仕事の表示",
     queue: "キュー",

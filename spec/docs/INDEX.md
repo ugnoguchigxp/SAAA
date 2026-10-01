@@ -38,6 +38,8 @@
 
 | ファイル名 | 分類 | 一行要約 | 最終更新日 | 備考 |
 | --- | --- | --- | --- | --- |
+| [contextstill-world-evidence-contract-request.md](contextstill-world-evidence-contract-request.md) | 進行中 | ContextStill永続根拠APIの実装依頼・結合受入条件 | 2026-10-01 | 未送信、外部実装待ち |
+| [saaa-world-continuous-maintenance-implementation-plan.md](saaa-world-continuous-maintenance-implementation-plan.md) | 進行中 | 会話・Episodeを根拠にLocalLLM限定でWorldを継続構築・更新する計画 | 2026-10-01 | SAAA内の独立実装・隔離検証済み。外部契約・実機受入は残る |
 | `butler-conversation-runtime-implementation-plan.md` | 進行中 | 複数発言・実行中入力・柔軟なツール利用を持つ会話ランタイム改修計画 | 2026-09-23 | 実装前の計画 |
 | `project-health-improvement-plan.md` | 進行中 | リポジトリ健全性改善の現行タスク計画 | 2026-09-23 | アクティブな計画のため未移動（タスク6対象外） |
 | `personal-state-architecture-roadmap.md` | 進行中 | Personal State 全体ロードマップ | 2026-09-17 | 実装中・実機受入待ちの記載あり |

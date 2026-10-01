@@ -2,7 +2,10 @@ use rusqlite::{params, Connection};
 
 /// Additive v17 migration. Raw text remains in conversation_messages only.
 pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
+    c.execute_batch("DROP TRIGGER IF EXISTS personal_source_insert; DROP TRIGGER IF EXISTS personal_source_edit;")?;
     c.execute_batch(include_str!("schema.sql"))?;
+    add_column(c, "personal_scope", "world_turn", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column(c, "personal_maintenance", "enabled", "INTEGER NOT NULL DEFAULT 0")?;
     // World DDL and the forget trigger must exist before recover/rebuild runs.
     c.execute_batch(include_str!("world/schema.sql"))?;
     add_column(
@@ -11,6 +14,8 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
         "projection_version",
         "INTEGER NOT NULL DEFAULT 1",
     )?;
+    add_column(c, "personal_jobs", "retry_count", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column(c, "personal_jobs", "stage", "TEXT NOT NULL DEFAULT 'continuity'")?;
     add_column(c, "personal_jobs", "scope_key", "TEXT")?;
     add_column(c, "personal_jobs", "claim_scope_epoch", "INTEGER")?;
     add_column(c, "personal_generations", "context_generation_id", "TEXT")?;
@@ -34,7 +39,7 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     }
     // The initial import is metadata-only; none of this history is marked processed.
     c.execute("INSERT OR IGNORE INTO personal_sources(message_id,version,role,bytes,recorded_at) SELECT m.id,1,m.role,length(CAST(m.content AS BLOB)),CAST(m.created_at AS INTEGER) FROM conversation_messages m WHERE m.conversation_id=?1 AND m.role IN ('user','assistant','transcript') ORDER BY m.rowid", [crate::PRIMARY_CONVERSATION_ID])?;
-    c.execute("INSERT OR IGNORE INTO personal_jobs(source_sequence,epoch,status) SELECT sequence,(SELECT input_epoch FROM personal_scope WHERE id='primary'),'queued' FROM personal_sources WHERE available=1", [])?;
+    super::jobs::refill(c).map_err(rusqlite::Error::InvalidParameterName)?;
     c.execute("UPDATE personal_jobs SET status='queued',lease_until=NULL,lease_generation=lease_generation+1,result_code='lease-expired' WHERE status='running' AND lease_until<=?1", params![crate::now_iso().parse::<i64>().unwrap_or(0)])?;
     c.execute("UPDATE personal_registrations SET pins=0,desired='deleted' WHERE incarnation IN (SELECT incarnation FROM personal_cleanup WHERE stage!='complete')", [])?;
     // A ready view must never survive process restart as a reusable capability.

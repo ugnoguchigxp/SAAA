@@ -24,10 +24,20 @@ pub struct VersionedPatchInput<'a> {
     pub now: i64,
 }
 
-fn is_project_scope(value: &str) -> bool {
+pub fn is_knowledge_scope(value: &str, principal: &str) -> bool {
     value
         .strip_prefix("project:")
         .is_some_and(|id| !id.is_empty())
+        || value
+            .strip_prefix("user:")
+            .is_some_and(|id| !id.is_empty() && id == principal)
+}
+
+fn objective_scope_matches(input: &VersionedPatchInput<'_>, objective: &Assertion) -> bool {
+    objective.access.task_request.as_deref() == Some(input.project_scope)
+        || (input.project_scope == format!("user:{}", input.ledger.principal)
+            && objective.access.principal == input.ledger.principal
+            && objective.access.task_request.is_none())
 }
 
 #[derive(Clone)]
@@ -115,7 +125,7 @@ fn planned_status(input: &VersionedPatchInput<'_>, id: &str) -> Status {
 }
 
 pub fn validate_versioned_patch(input: &VersionedPatchInput<'_>) -> Result<(), WorldError> {
-    if !is_project_scope(input.project_scope) {
+    if !is_knowledge_scope(input.project_scope, &input.ledger.principal) {
         return Err(WorldError::ScopeDenied);
     }
     let world_assertions: Vec<&Assertion> = input
@@ -237,7 +247,7 @@ fn validate_entity(
         {
             return Err(WorldError::InvalidReference);
         }
-        if objective.access.task_request.as_deref() != Some(input.project_scope) {
+        if !objective_scope_matches(input, objective) {
             return Err(WorldError::ScopeDenied);
         }
         if !assertion.depends_on.contains(objective_id) {
@@ -541,7 +551,7 @@ fn validate_focus(
         {
             return Err(WorldError::InvalidReference);
         }
-        if objective.access.task_request.as_deref() != Some(input.project_scope) {
+        if !objective_scope_matches(input, objective) {
             return Err(WorldError::ScopeDenied);
         }
         if !assertion.depends_on.contains(objective_id) {
@@ -741,4 +751,17 @@ fn enforce_capacity(input: &VersionedPatchInput<'_>, new: &[&Assertion]) -> Resu
         return Err(WorldError::Limit);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod knowledge_scope_tests {
+    use super::is_knowledge_scope;
+    #[test]
+    fn world_maintenance_user_scope_requires_exact_owner() {
+        assert!(is_knowledge_scope("user:alice", "alice"));
+        assert!(!is_knowledge_scope("user:bob", "alice"));
+        assert!(!is_knowledge_scope("user:", ""));
+        assert!(!is_knowledge_scope("alice", "alice"));
+        assert!(is_knowledge_scope("project:p", "alice"));
+    }
 }

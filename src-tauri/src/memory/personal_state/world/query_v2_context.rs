@@ -31,7 +31,10 @@ fn authorize_input(input: &ActivateInputV2<'_>) -> Result<(), String> {
     {
         return Err("world-scope-denied".into());
     }
-    if input.project_scope.is_empty() || !input.project_scope.starts_with("project:") {
+    if !saaa_personal_state_core::world::validation_v2::is_knowledge_scope(
+        input.project_scope,
+        access.principal,
+    ) {
         return Err("world-scope-denied".into());
     }
     if input.seeds.is_empty() {
