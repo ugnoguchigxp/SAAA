@@ -1,16 +1,25 @@
-use rusqlite::{params, Connection};
+#[cfg(test)]
+use rusqlite::params;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+use tauri::Emitter;
 
+mod contracts;
 #[path = "tts_dictionary/custom_matcher.rs"]
 mod custom_matcher;
+mod proposals;
+pub(crate) mod service;
+pub(crate) mod tools;
+pub(crate) use contracts::{validate, Entry, ExpectedEntry};
 pub(crate) use custom_matcher::CompiledDictionary;
 
-use crate::{database_error, now_iso, AppState, ModelProviderSettings, RunCancellation};
+use crate::{now_iso, AppState, ModelProviderSettings, RunCancellation};
 
 #[derive(Default)]
 pub(crate) struct DictionaryCache {
     inner: Mutex<CacheState>,
+    pub(crate) proposals: proposals::Proposals,
 }
 
 #[derive(Default)]
@@ -48,8 +57,13 @@ impl DictionaryCache {
         Ok(loaded)
     }
 
+    #[cfg(test)]
     fn publish(&self, entries: Vec<Entry>) {
-        let snapshot = Arc::new(compile(entries));
+        self.publish_compiled(compile(entries));
+    }
+
+    pub(crate) fn publish_compiled(&self, dictionary: CompiledDictionary) {
+        let snapshot = Arc::new(dictionary);
         let mut state = self
             .inner
             .lock()
@@ -57,13 +71,6 @@ impl DictionaryCache {
         state.revision = state.revision.wrapping_add(1);
         state.snapshot = Some(snapshot);
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Entry {
-    pub(crate) written: String,
-    pub(crate) spoken: String,
 }
 
 #[derive(Serialize)]
@@ -86,6 +93,7 @@ pub(crate) struct SaveInput {
     original: Option<String>,
     preset_override: Option<String>,
     entry: Entry,
+    expected: ExpectedEntry,
 }
 
 #[derive(Deserialize)]
@@ -98,35 +106,8 @@ pub(crate) struct PreviewInput {
     raw: bool,
 }
 
-fn validate(entry: &Entry) -> Result<(), String> {
-    if entry.written.trim() != entry.written
-        || entry.spoken.trim() != entry.spoken
-        || entry.written.is_empty()
-        || entry.written.len() > 200
-        || entry.spoken.len() > 400
-        || entry.written.chars().any(char::is_control)
-        || entry.spoken.chars().any(char::is_control)
-    {
-        return Err("表記または読み方が不正です。".into());
-    }
-    Ok(())
-}
-
 pub(crate) fn list(connection: &Connection) -> Result<Vec<Entry>, String> {
-    let mut statement = connection
-        .prepare("SELECT written, spoken FROM tts_dictionary ORDER BY written")
-        .map_err(database_error)?;
-    let result = statement
-        .query_map([], |row| {
-            Ok(Entry {
-                written: row.get(0)?,
-                spoken: row.get(1)?,
-            })
-        })
-        .map_err(database_error)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(database_error);
-    result
+    service::list(connection)
 }
 
 pub(crate) fn apply(text: &str, entries: &[Entry]) -> String {
@@ -173,16 +154,9 @@ pub(crate) fn lookup_tts_dictionary_entry(
     if written.len() > 200 || written.chars().any(char::is_control) {
         return Err("表記が長すぎるか、不正です。".into());
     }
-    let custom = state.sqlite_readers.read(|connection| {
-        let mut statement = connection
-            .prepare("SELECT spoken FROM tts_dictionary WHERE written=?1")
-            .map_err(database_error)?;
-        let mut rows = statement.query(params![written]).map_err(database_error)?;
-        rows.next()
-            .map_err(database_error)?
-            .map(|row| row.get::<_, String>(0).map_err(database_error))
-            .transpose()
-    })?;
+    let custom = state
+        .sqlite_readers
+        .read(|connection| service::lookup(connection, &written))?;
     if let Some(spoken) = custom {
         return Ok(Some(ExistingEntry {
             source: "custom",
@@ -194,52 +168,50 @@ pub(crate) fn lookup_tts_dictionary_entry(
 
 #[tauri::command]
 pub(crate) fn save_tts_dictionary_entry(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     input: SaveInput,
 ) -> Result<Vec<Entry>, String> {
-    validate(&input.entry)?;
-    state.sqlite_writer.write(|connection| {
-        let transaction = connection.transaction().map_err(database_error)?;
-        if input.original.as_deref() != Some(input.entry.written.as_str()) {
-            let existing: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM tts_dictionary WHERE written=?1)",
-                params![input.entry.written], |row| row.get(0),
-            ).map_err(database_error)?;
-            if existing { return Err("その表記はすでに登録されています。".into()); }
+    let (entries, changed) = state.sqlite_writer.write(|connection| {
+        let mutation = service::save(
+            connection,
+            input.original.as_deref(),
+            &input.entry,
+            &input.expected,
+            &now_iso(),
+            |_| Ok(()),
+        )?;
+        let changed = mutation.dictionary.is_some();
+        if let Some(dictionary) = mutation.dictionary {
+            state.tts_dictionary_cache.publish_compiled(dictionary);
         }
-        if let Some(original) = input.original.as_deref() {
-            if original != input.entry.written {
-                transaction.execute("DELETE FROM tts_dictionary WHERE written=?1", params![original]).map_err(database_error)?;
-            }
-        }
-        transaction.execute(
-            "INSERT INTO tts_dictionary(written, spoken, updated_at) VALUES(?1, ?2, ?3)
-             ON CONFLICT(written) DO UPDATE SET spoken=excluded.spoken, updated_at=excluded.updated_at",
-            params![input.entry.written, input.entry.spoken, now_iso()],
-        ).map_err(database_error)?;
-        transaction.commit().map_err(database_error)?;
-        let entries = list(connection)?;
-        state.tts_dictionary_cache.publish(entries.clone());
-        Ok(entries)
-    })
+        Ok((mutation.entries, changed))
+    })?;
+    if changed {
+        let _ = app.emit("tts-dictionary-changed", ());
+    }
+    Ok(entries)
 }
 
 #[tauri::command]
 pub(crate) fn delete_tts_dictionary_entry(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     written: String,
+    expected: ExpectedEntry,
 ) -> Result<Vec<Entry>, String> {
-    state.sqlite_writer.write(|connection| {
-        connection
-            .execute(
-                "DELETE FROM tts_dictionary WHERE written=?1",
-                params![written],
-            )
-            .map_err(database_error)?;
-        let entries = list(connection)?;
-        state.tts_dictionary_cache.publish(entries.clone());
-        Ok(entries)
-    })
+    let (entries, changed) = state.sqlite_writer.write(|connection| {
+        let mutation = service::delete(connection, &written, &expected)?;
+        let changed = mutation.dictionary.is_some();
+        if let Some(dictionary) = mutation.dictionary {
+            state.tts_dictionary_cache.publish_compiled(dictionary);
+        }
+        Ok((mutation.entries, changed))
+    })?;
+    if changed {
+        let _ = app.emit("tts-dictionary-changed", ());
+    }
+    Ok(entries)
 }
 
 #[tauri::command]
@@ -400,14 +372,25 @@ mod tests {
     fn cached_snapshot_changes_only_when_published() {
         let connection = Connection::open_in_memory().expect("memory database");
         crate::persistence::schema::initialize_database(&connection).expect("schema");
-        let writer = Arc::new(crate::persistence::SqliteWriter::from_connection(connection));
+        let writer = Arc::new(crate::persistence::SqliteWriter::from_connection(
+            connection,
+        ));
         let readers = crate::persistence::SqliteReaders::serialized(writer);
         let cache = DictionaryCache::default();
         let first = cache.snapshot(&readers).expect("initial snapshot");
         assert_eq!(first.apply("今日"), "今日");
-        cache.publish(vec![Entry { written: "今日".into(), spoken: "きょう".into() }]);
+        cache.publish(vec![Entry {
+            written: "今日".into(),
+            spoken: "きょう".into(),
+        }]);
         assert_eq!(first.apply("今日"), "今日");
-        assert_eq!(cache.snapshot(&readers).expect("updated snapshot").apply("今日"), "きょう");
+        assert_eq!(
+            cache
+                .snapshot(&readers)
+                .expect("updated snapshot")
+                .apply("今日"),
+            "きょう"
+        );
     }
 
     #[test]

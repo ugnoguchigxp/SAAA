@@ -12,9 +12,9 @@
 
 関連文書:
 
-- [Personal AI Concept](saaa-personal-ai-concept.md)
-- [Capability / Tool Runtime Concept](saaa-capability-tool-runtime-concept.md)
-- [Adaptive Learning and Selective Memory Concept](saaa-adaptive-learning-memory-concept.html)
+- [Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)
+- [Capability / Tool Runtime Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)
+- [Adaptive Learning and Selective Memory Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)
 - [Personal State Architecture Roadmap](personal-state-architecture-roadmap.md)
 - [Personal State P1](personal-state-phase-1-plan.md)
 

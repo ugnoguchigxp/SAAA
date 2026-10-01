@@ -2,7 +2,7 @@
 
 作成日: 2026-09-20。状態: 次段の実装計画。コードは本計画の作成では変更しない。
 
-上位は[コンセプト](saaa-personal-world-model-concept.md)、前段は[M2計画](saaa-personal-world-model-m2-plan.md)。実装担当は本書、[固定契約](saaa-personal-world-model-m3-execution-contract.md)、[作業カード](saaa-personal-world-model-m3-work-cards.md)をセットで使う。
+上位は[コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)、前段は[M2計画](saaa-personal-world-model-m2-plan.md)。実装担当は本書、[固定契約](saaa-personal-world-model-m3-execution-contract.md)、[作業カード](saaa-personal-world-model-m3-work-cards.md)をセットで使う。
 
 ## 1. 次に完成させるもの
 

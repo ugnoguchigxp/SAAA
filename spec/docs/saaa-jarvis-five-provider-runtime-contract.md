@@ -1,9 +1,11 @@
 # SAAA：5 ProviderのRuntime契約
 
+> 2026-10-01 更新: Qwen 2Bによる受付・応対と5 Provider構成はユーザー決定により廃案。この文書は当時の契約案・計画・調査の履歴であり、現行の実装指示や復元の根拠にはしない。現在の方針は[会話コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)を参照。
+
 作成・改訂日: 2026-09-26  
 状態: 設計案。今回の改訂ではRuntime・Provider設定を変更していない。
 
-[コンセプト・受入基準](saaa-jarvis-five-provider-concept.md)に基づく実装予定の契約。発声許可の規則と遅延目標はコンセプトを参照する。[現在の実装状況](saaa-jarvis-five-provider-implementation-status.md)と区別し、以下を実装済みと解釈しない。
+[コンセプト・受入基準](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)に基づく実装予定の契約。発声許可の規則と遅延目標はコンセプトを参照する。[現在の実装状況](saaa-jarvis-five-provider-implementation-status.md)と区別し、以下を実装済みと解釈しない。
 
 ## 1. 入力更新・思考キュー・メッセージ配送
 

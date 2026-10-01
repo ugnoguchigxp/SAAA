@@ -13,7 +13,7 @@ pub const EXTRACTION_INSTRUCTION: &str = r#"Extract only state supported by the 
 
 #[cfg(test)]
 pub use super::scheduler::occupy_for_test;
-pub use super::scheduler::{blocking_generation, foreground, generation_slot_busy, interrupt};
+pub use super::scheduler::{blocking_generation, foreground, generation_slot_busy};
 use super::scheduler::{BACKGROUND, SLOT};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -107,14 +107,34 @@ async fn tick_with_scheduler(
     let Ok(_slot) = slot.try_write() else {
         return Ok(false);
     };
+    let review_turn = writer.read_serialized(|c| {
+        c.query_row(
+            "SELECT dispatch_turn%4=3 FROM personal_review_settings",
+            [],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(database_error)
+    })?;
+    if review_turn && review_tick(writer, extractor, enabled, background, honor_foreground).await? {
+        return Ok(true);
+    }
     let now = super::now();
     let job = writer.write(|c| {
         let tx = c.transaction().map_err(database_error)?;
         let j = jobs::claim(&tx, now, enabled)?;
+        if j.is_some() {
+            tx.execute(
+                "UPDATE personal_review_settings SET dispatch_turn=dispatch_turn+1",
+                [],
+            )
+            .map_err(database_error)?;
+        }
         tx.commit().map_err(database_error)?;
         Ok(j)
     })?;
-    let Some(job) = job else { return Ok(false) };
+    let Some(job) = job else {
+        return review_tick(writer, extractor, enabled, background, honor_foreground).await;
+    };
     let cancel = Arc::new(RunCancellation::default());
     *background
         .lock()
@@ -154,6 +174,7 @@ pub fn spawn(writer: std::sync::Weak<SqliteWriter>) {
             let recovered = writer.write(|c| {
                 let tx = c.transaction().map_err(database_error)?;
                 jobs::recover_expired(&tx, super::now())?;
+                jobs::refill_reviews(&tx)?;
                 jobs::refill(&tx)?;
                 tx.commit().map_err(database_error)
             });
@@ -252,3 +273,15 @@ fn error_code(error: &str, cancelled: bool) -> &'static str {
     }
     "extraction-invalid"
 }
+
+#[path = "worker/explicit.rs"]
+pub mod explicit;
+
+pub fn interrupt() {
+    super::scheduler::interrupt();
+    explicit::interrupt();
+}
+
+#[path = "worker/review.rs"]
+mod review;
+use review::tick as review_tick;

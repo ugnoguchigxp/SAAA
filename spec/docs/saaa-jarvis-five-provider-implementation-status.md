@@ -1,11 +1,13 @@
 # SAAA：5 Providerの実装状況と根拠
 
+> 2026-10-01 更新: Qwen 2Bによる受付・応対と5 Provider構成はユーザー決定により廃案。この文書は当時の契約案・計画・調査の履歴であり、現行の実装指示や復元の根拠にはしない。現在の方針は[会話コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)を参照。
+
 作成・改訂日: 2026-09-26  
 状態: J1の観測実装とJ0のLARM実機調査を実施中。Provider設定は変更していない。
 
-[コンセプト・受入基準](saaa-jarvis-five-provider-concept.md)と[Runtime契約](saaa-jarvis-five-provider-runtime-contract.md)を支える部分調査の記録。
+[コンセプト・受入基準](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)と[Runtime契約](saaa-jarvis-five-provider-runtime-contract.md)を支える部分調査の記録。
 
-今回のユーザー方針を、[Personal AI Concept](.archived/saaa-personal-ai-concept.md)の共通Runtime・記憶・状況理解の原則に沿って具体化する。ローカルのHEAD `cf031f8835a232459e560672c5635d887c16ad7d` と、調査時に存在した未コミット変更を含む作業ツリーを確認した。特にQwen即応、接続準備、診断には作業中の変更があるため、以下はリリース済み機能一覧ではない。
+今回のユーザー方針を、[Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)の共通Runtime・記憶・状況理解の原則に沿って具体化する。ローカルのHEAD `cf031f8835a232459e560672c5635d887c16ad7d` と、調査時に存在した未コミット変更を含む作業ツリーを確認した。特にQwen即応、接続準備、診断には作業中の変更があるため、以下はリリース済み機能一覧ではない。
 
 「現状」はコードで確認した内容、「目標」「提案」は今後の設計である。後続のJ0調査では保存済みのHarness接続先とprofileを読み、LARM APIで一時Agent Connectionを確保して5 Providerのclaimを確認した。claimed backchannelとornithへの同時生成も1回確認した。詳細は[J0証跡](../evidence/jarvis-five-provider/2026-09-26-j0-feasibility.md)を参照する。保存済み設定の変更、実マイク・スピーカーの動作確認、p95計測は行っていない。モデル名称はcatalogとclaimに表示された値を記録し、外部の性能値や製品仕様は仮定しない。
 

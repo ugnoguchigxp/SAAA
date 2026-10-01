@@ -8,7 +8,7 @@
 
 完成時、ユーザーが「この仕事では外部送信しない」「先ほどの採用は取り消し」と伝えた後、長い会話、話題切替、再起動、モデル変更を挟んでも、その条件に反する実行へ進まない。必要な条件だけでもモデルに収まらない場合は、条件を落とさず、対象を絞るための説明を返す。
 
-上位は [Personal AI Concept](saaa-personal-ai-concept.md) §5.1・§6・§15。[共通Runtime計画](context-memory-unified-runtime-implementation-plan.md)を継承する。本書は新しいMemory正本を作らず、既存投影の必須性と送信契約を完成させる後続計画である。
+上位は [Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) §5.1・§6・§15。[共通Runtime計画](context-memory-unified-runtime-implementation-plan.md)を継承する。本書は新しいMemory正本を作らず、既存投影の必須性と送信契約を完成させる後続計画である。
 
 ## 2. 四計画の依存と所有境界
 

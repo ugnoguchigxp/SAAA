@@ -17,7 +17,7 @@ pub(super) struct Completion {
     pub(super) done: bool,
     tools: BTreeMap<u64, Tool>,
     pub(super) usage: Option<crate::runtime::context::usage::ProviderUsage>,
-    response_model: Option<String>,
+    pub(super) response_model: Option<String>,
     reasoning_started: bool,
     tool_started: bool,
 }
@@ -59,8 +59,10 @@ impl Completion {
             .get("choices")
             .and_then(Value::as_array)
             .ok_or(Failure::Protocol)?;
-        if choices.is_empty() && value.get("usage").is_some_and(Value::is_object) {
+        if value.get("usage").is_some_and(Value::is_object) {
             self.usage = Some(crate::runtime::context::usage::parse_openai_usage(&value));
+        }
+        if choices.is_empty() && self.usage.is_some() {
             return Ok(String::new());
         }
         if choices.len() != 1 || self.finish.is_some() {
@@ -213,6 +215,15 @@ mod progress_tests {
             .unwrap();
         assert!(empty.provider_progressed());
         assert!(empty.content.is_empty());
+    }
+
+    #[test]
+    fn usage_attached_to_content_retains_zero_cache_without_emitting_it() {
+        let mut completion = Completion::default();
+        let delta=completion.absorb(r#"{"model":"actual","usage":{"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":0}},"choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}"#,"alias").unwrap();
+        assert_eq!(delta, "answer");
+        assert_eq!(completion.usage.unwrap().cache_read_tokens, Some(0));
+        assert_eq!(completion.response_model.as_deref(), Some("actual"));
     }
 
     #[test]

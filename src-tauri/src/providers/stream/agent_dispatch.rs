@@ -37,6 +37,10 @@ pub(crate) fn available_agent_tools(
             .is_some_and(|persistence| persistence.state.context_still_recall.is_configured());
     let mut definitions =
         agent_tools::agent_tool_definitions(include_conversation, include_typed_memory, false);
+    if output_persistence.is_some() && calls_this_attempt < 12 && crate::memory::personal_state::worker::explicit::requested(&input.content) {
+        definitions.push(crate::memory::personal_state::worker::explicit::definition());
+    }
+    definitions.extend(output_persistence.into_iter().flat_map(|_| crate::tts_dictionary::tools::definitions()));
     let mut direct = None;
     definitions.extend(crate::records::tools::definitions());
     if calls_this_attempt < 12 {
@@ -138,6 +142,9 @@ pub(crate) async fn execute_agent_tool(
 ) -> String {
     // A `gc_` name is only ever executed from the snapshot that offered it; it never falls
     // through to recall or another tool.
+    if crate::tts_dictionary::tools::NAMES.contains(&call.name.as_str()) {
+        return crate::tts_dictionary::tools::execute(output_persistence.map(|p| p.state), input, &call.name, &call.arguments, run_cancellation);
+    }
     if call.name.starts_with(TOOL_PREFIX) {
         // M2A direct path: the host attaches the same actor context the discovery backend does.
         let actor = output_persistence.and_then(|persistence| {
@@ -188,6 +195,9 @@ pub(crate) async fn execute_agent_tool(
             input,
             call,
         );
+    }
+    if call.name == crate::memory::personal_state::worker::explicit::TOOL {
+        return crate::memory::personal_state::worker::explicit::execute(output_persistence.map(|p|p.state),input,&call.arguments,timeout,run_cancellation).await;
     }
     if call.name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME {
         return crate::voice_behavior::execute_tool_for_state(

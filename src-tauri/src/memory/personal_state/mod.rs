@@ -1,4 +1,3 @@
-//! Durable Personal State owned by the existing SQLite writer.
 mod codec;
 pub mod commands;
 pub mod contract;
@@ -15,6 +14,7 @@ pub(crate) mod output;
 pub mod projection;
 #[cfg(test)]
 mod registration;
+pub(crate) mod retrospective;
 mod scheduler;
 pub mod schema;
 pub mod sources;

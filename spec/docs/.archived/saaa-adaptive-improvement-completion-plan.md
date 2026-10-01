@@ -27,7 +27,7 @@
 
 完成条件はdatasetやshadow artifactの生成ではなく、**同じ条件で次の実際の行動が改善されること**。モデル選択だけでなくTool、有限の実行手順、通知方法の四領域を対象にする。基盤LLMのfine-tuning、任意のagent graph生成、無断の実トラフィック探索は導入しない。
 
-上位は [Personal AI Concept](saaa-personal-ai-concept.md) §12〜15、[Adaptive Learning Concept](saaa-adaptive-learning-memory-concept.html)。[Role Routing学習契約](saaa-role-routing-learning-contract.md)のL0/L5/L6にあるshadowまでの制限を、本書で限定的なproduction適用まで拡張する。L1/L2のラベル区別、L7の削除、権限・Scope境界は維持する。旧執事フェーズのRole Routing凍結は同フェーズ内の制約であり、本書は完了後の別フェーズとする。
+上位は [Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) §12〜15、[Adaptive Learning Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)。[Role Routing学習契約](saaa-role-routing-learning-contract.md)のL0/L5/L6にあるshadowまでの制限を、本書で限定的なproduction適用まで拡張する。L1/L2のラベル区別、L7の削除、権限・Scope境界は維持する。旧執事フェーズのRole Routing凍結は同フェーズ内の制約であり、本書は完了後の別フェーズとする。
 
 ## 2. 前提と現行実装
 

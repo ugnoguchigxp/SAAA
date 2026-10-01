@@ -157,6 +157,14 @@ pub(super) async fn prepare(
     {
         return Err("personal-measurement-binding".into());
     }
+    super::retrospective::token_budget(
+        &manifest.run_id,
+        measured["baseInputTokens"]
+            .as_u64()
+            .ok_or("personal-measurement-binding")?,
+        capability.output_reserve_tokens,
+        capability.safety_margin_tokens,
+    )?;
     receipt(adapter, &measurement_id, &measured)?;
     if !registrations.is_empty() {
         let id = crate::new_id("view");
@@ -184,6 +192,12 @@ pub(super) async fn prepare(
                 return Err(error);
             }
         };
+        super::retrospective::token_budget(
+            &manifest.run_id,
+            view.token_count,
+            capability.output_reserve_tokens,
+            capability.safety_margin_tokens,
+        )?;
         if view.schema_version != 1
             || view.allocation_id != capability.allocation_id
             || view.runtime != capability.runtime

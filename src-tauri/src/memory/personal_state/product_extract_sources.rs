@@ -8,6 +8,15 @@ pub(super) fn select(
     let mut sources = context::initial(source, input, world)?;
     for assertion in ledger.assertions.values() {
         if world {
+            if input["retrospective"] == true
+                && !input["current"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|entry| entry["id"].as_str() == Some(assertion.id.as_str()))
+            {
+                continue;
+            }
             if assertion.access.task_request.as_deref() != input["request_scope"].as_str()
                 || !(assertion.kind.is_world()
                     || assertion.kind == saaa_personal_state_core::Kind::Objective)

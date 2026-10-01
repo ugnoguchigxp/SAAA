@@ -52,7 +52,7 @@ SAAAがユーザーの目的を受け取り、piへ実装を依頼し、成果�
 
 [Personal Stateロードマップ](personal-state-architecture-roadmap.md)の「Runtime状態の正本を重複させない」「外部agentへContext Packを渡す」を継承する。[P1計画](personal-state-phase-1-plan.md)のTaskInput / TaskUpdateと、task/run ID、request revision、source refsを合わせる。P1の完成を待たずにAdapterを試せるよう、Personal State投影を任意の入力portにする。20M KVはSAAAの判断用Contextであり、piへの共有・全量転送は行わない。
 
-[現行全体計画](plan.html)はMission PilotをNightWorkersへ委譲している。本計画は、そのうちpi接続を選んだMissionについてSAAAが依頼・評価・次actionを所有する新しい経路の提案である。二つのPilotが同じMissionを同時に制御しない。実装開始時に全体計画の外部責務とMVP 5の記述を本経路と整合させる。NightWorkers経路の削除や全面移行は含めない。
+[現行全体計画](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)はMission PilotをNightWorkersへ委譲している。本計画は、そのうちpi接続を選んだMissionについてSAAAが依頼・評価・次actionを所有する新しい経路の提案である。二つのPilotが同じMissionを同時に制御しない。実装開始時に全体計画の外部責務とMVP 5の記述を本経路と整合させる。NightWorkers経路の削除や全面移行は含めない。
 
 ### 現行実装から再利用するものと追加するもの
 

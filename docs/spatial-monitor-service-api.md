@@ -143,6 +143,6 @@ ContextStillの既存キュー台帳・イベントを正本にする。現行�
 
 ## 現行実装の参照
 
-- SAAAの[俯瞰モニター構想](spatial-monitor-concept.md)
+- SAAAの[俯瞰モニター構想](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)
 - SAAAの[LARM接続URL制約](../src-tauri/src/providers/dynamic_lan/urls.rs)と[自己診断の区別](../src-tauri/src/diagnosis/README.md)
 - ContextStillの既存経路: `../../contextStill/api/modules/queue/queue.routes.ts`、`../../contextStill/api/modules/overview/overview.routes.ts`、`../../contextStill/api/middleware/security-intelligence-auth.ts`

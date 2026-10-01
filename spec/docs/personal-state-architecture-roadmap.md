@@ -156,7 +156,7 @@ p50/p95は受付音声、27B first token、最終応答、抽出待ちに分け�
 
 ## 12. 既存文書・実装との関係
 
-[Personal AI Concept](saaa-personal-ai-concept.md)のVisionと共通Runtime契約、[Adaptive Learning and Selective Memory Concept](saaa-adaptive-learning-memory-concept.html)の選択境界、[Capability / Tool Runtime Concept](saaa-capability-tool-runtime-concept.md)のTool候補契約、[実装前評価](continuity-world-model-direction.md)の独立コア方針を継承する。[MVP 3](mvp-3-memory-architecture-implementation-plan.html)からSessionless、Rawの単一正本、既存recall、ContextStillの責務、default OFFを継承する。
+[Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)のVisionと共通Runtime契約、[Adaptive Learning and Selective Memory Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)の選択境界、[Capability / Tool Runtime Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)のTool候補契約、[実装前評価](continuity-world-model-direction.md)の独立コア方針を継承する。[MVP 3](mvp-3-memory-architecture-implementation-plan.html)からSessionless、Rawの単一正本、既存recall、ContextStillの責務、default OFFを継承する。
 
 未実装のworking state/capsule/idle更新は本書とP1を優先する。working stateを直接更新する以前の案は、変更履歴からのprojectionへ置き換える。LARM snapshotとSAAAのcurrent projectionを同じsnapshotという語で混同しない。
 

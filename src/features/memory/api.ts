@@ -29,7 +29,13 @@ export const personalStateSnapshotSchema = z
     items: z.array(memoryItemSchema),
     worldItems: z.array(memoryItemSchema).default([]),
     cleanup: z.array(
-      z.object({ incarnation: z.string(), stage: z.string(), reason: z.string() }).passthrough(),
+      z
+        .object({
+          incarnation: z.string(),
+          stage: z.string(),
+          reason: z.string(),
+        })
+        .passthrough(),
     ),
   })
   .passthrough();
@@ -46,7 +52,9 @@ export const personalStateApi = {
       await invoke<unknown>("set_personal_state_enabled", { enabled }),
     ),
   snapshot: async () =>
-    personalStateSnapshotSchema.parse(await invoke<unknown>("personal_state_snapshot")),
+    personalStateSnapshotSchema.parse(
+      await invoke<unknown>("personal_state_snapshot"),
+    ),
   sources: async (afterSequence = 0) =>
     personalSourcePageSchema.parse(
       await invoke<unknown>("personal_source_page", { afterSequence }),

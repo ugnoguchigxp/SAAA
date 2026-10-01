@@ -11,9 +11,11 @@ pub fn admission(c: &Connection, now: i64, enabled: bool) -> Result<bool, String
            (?2 AND s.recovery_ready=1 AND ?1-s.last_foreground_at>=30000
             AND NOT EXISTS(SELECT 1 FROM runtime_runs WHERE status='running')
             AND NOT EXISTS(SELECT 1 FROM personal_jobs WHERE status='running')
+            AND NOT EXISTS(SELECT 1 FROM personal_review_work WHERE status='running')
             AND NOT EXISTS(SELECT 1 FROM personal_generations WHERE cancellation='sent-unconfirmed')
-            AND EXISTS(SELECT 1 FROM personal_jobs j JOIN personal_sources p ON p.sequence=j.source_sequence
-                       WHERE j.status='queued' AND j.next_attempt_at<=?1 AND p.available=1)))
+            AND (EXISTS(SELECT 1 FROM personal_jobs j JOIN personal_sources p ON p.sequence=j.source_sequence
+                       WHERE j.status='queued' AND j.next_attempt_at<=?1 AND p.available=1)
+                 OR ((SELECT mode FROM personal_review_settings)!='off' AND EXISTS(SELECT 1 FROM personal_review_work WHERE status='queued' AND next_attempt_at<=?1)))))
          FROM personal_maintenance m CROSS JOIN personal_scope s WHERE m.id=1",
         params![now, enabled], |r| r.get(0),
     ).map_err(database_error)
@@ -45,6 +47,7 @@ pub fn status(c: &Connection) -> Result<Value, String> {
     let (queued,running,failed,held,world): (u64,u64,u64,u64,u64) = c.query_row("SELECT COALESCE(sum(status='queued'),0),COALESCE(sum(status='running'),0),COALESCE(sum(status='failed'),0),COALESCE(sum(status='blocked'),0),COALESCE(sum(status IN ('queued','running') AND stage='world'),0) FROM personal_jobs", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(database_error)?;
     let deferred: u64 = c.query_row("SELECT count(*) FROM personal_sources p LEFT JOIN personal_jobs j ON j.source_sequence=p.sequence WHERE p.available=1 AND j.id IS NULL", [], |r| r.get(0)).map_err(database_error)?;
     result["work"] = json!({"queued":queued,"running":running,"failed":failed,"held":held,"worldPending":world,"deferred":deferred});
+    result["retrospective"] = super::retrospective::status(c)?;
     result["externalEvidence"] = json!({"state":"blocked_dependency","contract":"world_evidence_v1","reason":"contextstill-evidence-contract-unverified"});
     Ok(result)
 }
@@ -58,6 +61,9 @@ mod tests {
              CREATE TABLE runtime_runs(status TEXT);
              CREATE TABLE personal_remote_operations(state TEXT);").unwrap();
         c.execute_batch(include_str!("schema.sql")).unwrap();
+        c.execute_batch("CREATE TABLE context_scopes(scope_key TEXT,state TEXT); CREATE TABLE context_scope_epochs(scope_key TEXT,epoch INTEGER);").unwrap();
+        c.execute_batch(include_str!("retrospective/schema.sql"))
+            .unwrap();
         c.execute(
             "INSERT INTO personal_scope(id,principal) VALUES('primary','test')",
             [],

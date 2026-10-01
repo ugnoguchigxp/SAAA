@@ -38,3 +38,21 @@ async fn asr_ornith_tool_saved_answer_tts_reaches_terminal_queue_states() {
     assert_eq!(authentication["reconnected"], true);
     assert_eq!(authentication["llmCalls"], 2);
 }
+
+#[test]
+fn dictionary_tools_enforce_scope_confirmation_conflict_cancellation_and_warm_cache() {
+    let report = saaa_lib::conversation_queue_e2e::verify_tts_dictionary_tools()
+        .expect("dictionary tool contract");
+    assert_eq!(report["cases"], 15);
+    assert_eq!(report["warmCacheWithoutDictionaryTable"], true);
+}
+
+#[tokio::test]
+#[ignore = "real configured LARM model; isolated dictionary; requires SAAA_LARM_CONTROL_URL and LARM_API_TOKEN"]
+async fn live_model_pronunciation_corrections_and_confirmation() {
+    let report = saaa_lib::conversation_queue_e2e::run_live_tts_dictionary()
+        .await
+        .expect("live dictionary acceptance");
+    println!("{report}");
+    assert_eq!(report["cases"].as_array().unwrap().len(), 9);
+}

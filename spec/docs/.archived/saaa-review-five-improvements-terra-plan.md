@@ -4,7 +4,7 @@
 
 ## 1. 目的と適用範囲
 
-「理解した制約の下で仕事を続け、根拠ある成果を届け、経験を次の判断へ反映する」という [Personal AI Concept](saaa-personal-ai-concept.md) に近づける。今回の5点について、本書を追加実装・受入の正本とする。既存の [委任仕事計画](saaa-delegated-work-completion-plan.md)、[委任残件計画](saaa-delegated-work-repair-terra-plan.md)、[World供給計画](saaa-world-delivery-completion-plan.md)、[適応改善計画](saaa-adaptive-improvement-completion-plan.md) の権限・Scope・忘却・予算契約は継承する。過去のカードの完了記録は、新しい受入条件の達成を意味しない。
+「理解した制約の下で仕事を続け、根拠ある成果を届け、経験を次の判断へ反映する」という [Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) に近づける。今回の5点について、本書を追加実装・受入の正本とする。既存の [委任仕事計画](saaa-delegated-work-completion-plan.md)、[委任残件計画](saaa-delegated-work-repair-terra-plan.md)、[World供給計画](saaa-world-delivery-completion-plan.md)、[適応改善計画](saaa-adaptive-improvement-completion-plan.md) の権限・Scope・忘却・予算契約は継承する。過去のカードの完了記録は、新しい受入条件の達成を意味しない。
 
 | 改善 | 現状の具体的な不足 | この計画の完成状態 |
 | --- | --- | --- |

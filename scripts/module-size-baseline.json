@@ -13,6 +13,10 @@
       "total": 21,
       "production": 21
     },
+    "scripts/conversation-context-report.ts": {
+      "total": 90,
+      "production": 90
+    },
     "scripts/conversation-quality-eval.ts": {
       "total": 384,
       "production": 384
@@ -420,6 +424,30 @@
     "src-tauri/src/conversation_queue_e2e/cancellation.rs": {
       "total": 142,
       "production": 142
+    },
+    "src-tauri/src/conversation_queue_e2e/context_live.rs": {
+      "total": 104,
+      "production": 104
+    },
+    "src-tauri/src/conversation_queue_e2e/context_trial.rs": {
+      "total": 293,
+      "production": 293
+    },
+    "src-tauri/src/conversation_queue_e2e/dictionary_live.rs": {
+      "total": 88,
+      "production": 88
+    },
+    "src-tauri/src/conversation_queue_e2e/dictionary.rs": {
+      "total": 235,
+      "production": 235
+    },
+    "src-tauri/src/conversation_queue_e2e/scenario.rs": {
+      "total": 443,
+      "production": 443
+    },
+    "src-tauri/src/conversation_queue_e2e/server.rs": {
+      "total": 270,
+      "production": 270
     },
     "src-tauri/src/credentials.rs": {
       "total": 248,
@@ -861,6 +889,14 @@
       "total": 7,
       "production": 7
     },
+    "src-tauri/src/media_generation/ipc_tests.rs": {
+      "total": 53,
+      "production": 53
+    },
+    "src-tauri/src/media_generation/mod.rs": {
+      "total": 263,
+      "production": 242
+    },
     "src-tauri/src/memory/context_still_recall.rs": {
       "total": 1284,
       "production": 712
@@ -977,9 +1013,17 @@
       "total": 63,
       "production": 63
     },
+    "src-tauri/src/memory/personal_state/jobs/claim.rs": {
+      "total": 25,
+      "production": 25
+    },
     "src-tauri/src/memory/personal_state/jobs/lifecycle.rs": {
       "total": 48,
       "production": 48
+    },
+    "src-tauri/src/memory/personal_state/jobs/review.rs": {
+      "total": 91,
+      "production": 91
     },
     "src-tauri/src/memory/personal_state/journal.rs": {
       "total": 184,
@@ -1061,6 +1105,34 @@
       "total": 102,
       "production": 102
     },
+    "src-tauri/src/memory/personal_state/retrospective.rs": {
+      "total": 64,
+      "production": 64
+    },
+    "src-tauri/src/memory/personal_state/retrospective/commands.rs": {
+      "total": 32,
+      "production": 32
+    },
+    "src-tauri/src/memory/personal_state/retrospective/commands/dispatch.rs": {
+      "total": 13,
+      "production": 13
+    },
+    "src-tauri/src/memory/personal_state/retrospective/execution.rs": {
+      "total": 231,
+      "production": 231
+    },
+    "src-tauri/src/memory/personal_state/retrospective/projection.rs": {
+      "total": 27,
+      "production": 27
+    },
+    "src-tauri/src/memory/personal_state/retrospective/tests.rs": {
+      "total": 393,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/retrospective/window.rs": {
+      "total": 114,
+      "production": 114
+    },
     "src-tauri/src/memory/personal_state/scheduler.rs": {
       "total": 34,
       "production": 34
@@ -1068,6 +1140,10 @@
     "src-tauri/src/memory/personal_state/scheduler/foreground.rs": {
       "total": 38,
       "production": 38
+    },
+    "src-tauri/src/memory/personal_state/schema_columns.rs": {
+      "total": 59,
+      "production": 59
     },
     "src-tauri/src/memory/personal_state/schema.rs": {
       "total": 70,
@@ -1124,6 +1200,22 @@
     "src-tauri/src/memory/personal_state/worker.rs": {
       "total": 353,
       "production": 353
+    },
+    "src-tauri/src/memory/personal_state/worker/explicit_execute.rs": {
+      "total": 109,
+      "production": 109
+    },
+    "src-tauri/src/memory/personal_state/worker/explicit_tests.rs": {
+      "total": 361,
+      "production": 0
+    },
+    "src-tauri/src/memory/personal_state/worker/explicit.rs": {
+      "total": 224,
+      "production": 224
+    },
+    "src-tauri/src/memory/personal_state/worker/review.rs": {
+      "total": 34,
+      "production": 34
     },
     "src-tauri/src/memory/personal_state/world/evidence_eligibility.rs": {
       "total": 132,
@@ -1625,6 +1717,10 @@
       "total": 209,
       "production": 209
     },
+    "src-tauri/src/providers/chat_completions/json_response.rs": {
+      "total": 75,
+      "production": 75
+    },
     "src-tauri/src/providers/chat_completions/json_tool_tests.rs": {
       "total": 71,
       "production": 71
@@ -1633,6 +1729,10 @@
       "total": 747,
       "production": 747
     },
+    "src-tauri/src/providers/chat_completions/observation.rs": {
+      "total": 124,
+      "production": 124
+    },
     "src-tauri/src/providers/chat_completions/response_helpers.rs": {
       "total": 48,
       "production": 48
@@ -1640,6 +1740,10 @@
     "src-tauri/src/providers/chat_completions/sse.rs": {
       "total": 72,
       "production": 56
+    },
+    "src-tauri/src/providers/chat_completions/stream_response.rs": {
+      "total": 82,
+      "production": 82
     },
     "src-tauri/src/providers/chat_completions/test_helpers.rs": {
       "total": 44,
@@ -1720,6 +1824,14 @@
     "src-tauri/src/providers/dynamic_lan/profile_catalog.rs": {
       "total": 105,
       "production": 42
+    },
+    "src-tauri/src/providers/dynamic_lan/profile_contract.rs": {
+      "total": 71,
+      "production": 71
+    },
+    "src-tauri/src/providers/dynamic_lan/tests/cold_services.rs": {
+      "total": 43,
+      "production": 43
     },
     "src-tauri/src/providers/dynamic_lan/tests/fixtures_and_contracts.rs": {
       "total": 486,
@@ -2561,6 +2673,30 @@
       "total": 153,
       "production": 153
     },
+    "src-tauri/src/runtime/conversation_check.rs": {
+      "total": 1382,
+      "production": 1382
+    },
+    "src-tauri/src/runtime/conversation_check/context_compiler_tests.rs": {
+      "total": 123,
+      "production": 123
+    },
+    "src-tauri/src/runtime/conversation_check/context_compiler.rs": {
+      "total": 207,
+      "production": 207
+    },
+    "src-tauri/src/runtime/conversation_check/context_metrics.rs": {
+      "total": 160,
+      "production": 160
+    },
+    "src-tauri/src/runtime/conversation_check/queue_answer_stream.rs": {
+      "total": 255,
+      "production": 209
+    },
+    "src-tauri/src/runtime/conversation_check/queue_context.rs": {
+      "total": 199,
+      "production": 199
+    },
     "src-tauri/src/runtime/conversation_check/queue_input_state.rs": {
       "total": 43,
       "production": 43
@@ -2569,9 +2705,17 @@
       "total": 925,
       "production": 925
     },
+    "src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs": {
+      "total": 425,
+      "production": 425
+    },
     "src-tauri/src/runtime/conversation_check/queue_runtime/speech.rs": {
       "total": 94,
       "production": 94
+    },
+    "src-tauri/src/runtime/conversation_check/queue_tools.rs": {
+      "total": 104,
+      "production": 104
     },
     "src-tauri/src/runtime/conversation_codex_dispatch.rs": {
       "total": 210,
@@ -3569,6 +3713,42 @@
       "total": 530,
       "production": 398
     },
+    "src-tauri/src/tts_dictionary.rs": {
+      "total": 410,
+      "production": 312
+    },
+    "src-tauri/src/tts_dictionary/contracts.rs": {
+      "total": 30,
+      "production": 30
+    },
+    "src-tauri/src/tts_dictionary/custom_matcher.rs": {
+      "total": 104,
+      "production": 70
+    },
+    "src-tauri/src/tts_dictionary/preset_matcher.rs": {
+      "total": 132,
+      "production": 132
+    },
+    "src-tauri/src/tts_dictionary/proposals.rs": {
+      "total": 165,
+      "production": 165
+    },
+    "src-tauri/src/tts_dictionary/service.rs": {
+      "total": 123,
+      "production": 123
+    },
+    "src-tauri/src/tts_dictionary/tool_definitions.rs": {
+      "total": 15,
+      "production": 15
+    },
+    "src-tauri/src/tts_dictionary/tools.rs": {
+      "total": 227,
+      "production": 227
+    },
+    "src-tauri/src/tts_dictionary/verification.rs": {
+      "total": 211,
+      "production": 211
+    },
     "src-tauri/src/util.rs": {
       "total": 37,
       "production": 37
@@ -4057,6 +4237,10 @@
       "total": 44,
       "production": 44
     },
+    "src/features/chat/ConversationCheckPage.tsx": {
+      "total": 539,
+      "production": 539
+    },
     "src/features/chat/conversationIssueCoordinator.ts": {
       "total": 17,
       "production": 17
@@ -4297,9 +4481,25 @@
       "total": 78,
       "production": 78
     },
+    "src/features/media/mediaApi.ts": {
+      "total": 108,
+      "production": 108
+    },
+    "src/features/media/mediaGeneration.css": {
+      "total": 9,
+      "production": 9
+    },
+    "src/features/media/MediaGenerationPanel.tsx": {
+      "total": 179,
+      "production": 179
+    },
     "src/features/memory/api.ts": {
       "total": 62,
       "production": 62
+    },
+    "src/features/memory/MaintenanceNotices.tsx": {
+      "total": 30,
+      "production": 30
     },
     "src/features/memory/maintenanceSchema.ts": {
       "total": 21,
@@ -4313,9 +4513,21 @@
       "total": 302,
       "production": 302
     },
+    "src/features/memory/reviewApi.ts": {
+      "total": 32,
+      "production": 32
+    },
+    "src/features/memory/reviewSourceLabelsSchema.ts": {
+      "total": 5,
+      "production": 5
+    },
     "src/features/memory/sourcePageSchema.ts": {
       "total": 16,
       "production": 16
+    },
+    "src/features/memory/WorldReviewMaintenance.tsx": {
+      "total": 101,
+      "production": 101
     },
     "src/features/records/RecordsPage.tsx": {
       "total": 322,
@@ -4445,6 +4657,18 @@
       "total": 47,
       "production": 47
     },
+    "src/features/ttsDictionary/ttsDictionaryPage.css": {
+      "total": 187,
+      "production": 187
+    },
+    "src/features/ttsDictionary/TtsDictionaryPage.tsx": {
+      "total": 380,
+      "production": 380
+    },
+    "src/features/ttsDictionary/useTtsDictionarySync.ts": {
+      "total": 62,
+      "production": 62
+    },
     "src/features/voice/ambientNativeVoiceCapture.ts": {
       "total": 50,
       "production": 50
@@ -4557,6 +4781,10 @@
       "total": 293,
       "production": 293
     },
+    "src/i18n/locales/enWorldReview.ts": {
+      "total": 30,
+      "production": 30
+    },
     "src/i18n/locales/ja.ts": {
       "total": 741,
       "production": 741
@@ -4584,6 +4812,10 @@
     "src/i18n/locales/jaVoice.ts": {
       "total": 290,
       "production": 290
+    },
+    "src/i18n/locales/jaWorldReview.ts": {
+      "total": 22,
+      "production": 22
     },
     "src/i18n/presentation.ts": {
       "total": 292,
@@ -4945,9 +5177,17 @@
       "total": 56,
       "production": 56
     },
+    "tests/conversation-context-report.test.ts": {
+      "total": 56,
+      "production": 56
+    },
     "tests/conversation-quality-eval.test.ts": {
       "total": 154,
       "production": 154
+    },
+    "tests/conversation-queue-page.test.tsx": {
+      "total": 235,
+      "production": 235
     },
     "tests/conversation-session.test.ts": {
       "total": 39,
@@ -5104,6 +5344,10 @@
     "tests/markdown-mermaid-limits.test.ts": {
       "total": 24,
       "production": 24
+    },
+    "tests/media-generation.test.tsx": {
+      "total": 261,
+      "production": 261
     },
     "tests/mermaid-sanitizer.test.ts": {
       "total": 65,
@@ -5285,6 +5529,10 @@
       "total": 30,
       "production": 30
     },
+    "tests/tts-dictionary-page.test.tsx": {
+      "total": 286,
+      "production": 286
+    },
     "tests/ui-presentation-i18n.test.ts": {
       "total": 94,
       "production": 94
@@ -5385,6 +5633,10 @@
       "total": 13,
       "production": 13
     },
+    "tests/world-retrospective.test.tsx": {
+      "total": 102,
+      "production": 102
+    },
     "tests/world-route-matrix-requests.test.ts": {
       "total": 12,
       "production": 12
@@ -5400,46 +5652,6 @@
     "tests/world-scope.test.ts": {
       "total": 26,
       "production": 26
-    },
-    "src-tauri/src/media_generation/mod.rs": {
-      "total": 263,
-      "production": 242
-    },
-    "src-tauri/src/media_generation/ipc_tests.rs": {
-      "total": 53,
-      "production": 53
-    },
-    "src/features/media/mediaApi.ts": {
-      "total": 108,
-      "production": 108
-    },
-    "src/features/media/MediaGenerationPanel.tsx": {
-      "total": 179,
-      "production": 179
-    },
-    "src/features/media/mediaGeneration.css": {
-      "total": 9,
-      "production": 9
-    },
-    "tests/media-generation.test.tsx": {
-      "total": 261,
-      "production": 261
-    },
-    "src-tauri/src/providers/dynamic_lan/profile_contract.rs": {
-      "total": 71,
-      "production": 71
-    },
-    "src-tauri/src/providers/dynamic_lan/tests/cold_services.rs": {
-      "total": 43,
-      "production": 43
-    },
-    "src/features/chat/ConversationCheckPage.tsx": {
-      "total": 539,
-      "production": 539
-    },
-    "tests/conversation-queue-page.test.tsx": {
-      "total": 235,
-      "production": 235
     }
   }
 }

@@ -2,7 +2,7 @@
 
 作成日: 2026-09-20。状態: 次フェーズの優先順位と実行契約。コードは本計画の作成では変更しない。
 
-上位は[Personal AI Concept](saaa-personal-ai-concept.md) §4・§5.1・§16、段階gateは[Personal Stateロードマップ](personal-state-architecture-roadmap.md) §11。Worldの接続は既存[M3A計画](saaa-personal-world-model-m3-plan.md)を正本とする。最小循環の詳細は[最小執事循環計画](saaa-minimal-loop-plan.md)。作業カードは[本フェーズ作業カード](saaa-steward-loop-phase-work-cards.md)。
+上位は[Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) §4・§5.1・§16、段階gateは[Personal Stateロードマップ](personal-state-architecture-roadmap.md) §11。Worldの接続は既存[M3A計画](saaa-personal-world-model-m3-plan.md)を正本とする。最小循環の詳細は[最小執事循環計画](saaa-minimal-loop-plan.md)。作業カードは[本フェーズ作業カード](saaa-steward-loop-phase-work-cards.md)。
 
 ## 1. いま成立していないこと
 

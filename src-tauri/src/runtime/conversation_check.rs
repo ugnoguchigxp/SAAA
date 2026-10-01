@@ -1,6 +1,12 @@
 //! Conversation-screen turn path: finalized ASR text, Ornith answer and TTS.
 //! Continuous partial-ASR routing and the durable work queue remain separate runtime work.
+#[path = "conversation_check/context_compiler.rs"]
+mod context_compiler;
+#[path = "conversation_check/context_metrics.rs"]
+mod context_metrics;
 pub(crate) mod queue_runtime;
+#[path = "conversation_check/queue_tools.rs"]
+mod queue_tools;
 #[path = "conversation_check/streaming_speech.rs"]
 mod streaming_speech;
 pub(crate) fn spawn_queue_workers<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
@@ -129,6 +135,7 @@ fn asr_session() -> &'static tokio::sync::Mutex<Option<CachedAsrSession>> {
 
 #[cfg(feature = "conversation-queue-e2e")]
 pub(crate) async fn reset_fixture_asr_session() {
+    context_metrics::clear();
     if let Some(cached) = asr_session().lock().await.take() {
         let _ = cached.session.close().await;
     }
@@ -657,8 +664,11 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
     *ACTIVE_SPEECH_CANCEL
         .get_or_init(|| std::sync::Mutex::new(None))
         .lock()
-        .map_err(|_| "音声の取消し状態を取得できません。")? =
-        Some((input_id.to_string(), SpeechPlaybackKind::Answer, cancellation.clone()));
+        .map_err(|_| "音声の取消し状態を取得できません。")? = Some((
+        input_id.to_string(),
+        SpeechPlaybackKind::Answer,
+        cancellation.clone(),
+    ));
     let _active_speech = ActiveSpeechGuard;
     if let Some(job) = speech_job {
         let current = state.sqlite_readers.read(|connection| {
@@ -878,21 +888,29 @@ pub(crate) async fn submit_conversation_text(
     report_stage(&on_stage, "ornith");
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
     loop {
-        let outcome = state.sqlite_readers.read(|connection| {
-            let answer = connection.query_row(
+        let outcome =
+            state.sqlite_readers.read(|connection| {
+                let answer = connection.query_row(
                 "SELECT content FROM conversation_messages WHERE id=?1 AND conversation_id=?2",
                 params![format!("reply_{}", input.input_id), PRIMARY_CONVERSATION_ID],
                 |row| row.get::<_, String>(0),
             ).optional().map_err(database_error)?;
-            let status = connection.query_row(
-                "SELECT status,error_message FROM runtime_runs WHERE id=?1",
-                [format!("run_{}", input.input_id)],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
-            ).optional().map_err(database_error)?;
-            Ok((answer, status))
-        })?;
+                let status = connection
+                    .query_row(
+                        "SELECT status,error_message FROM runtime_runs WHERE id=?1",
+                        [format!("run_{}", input.input_id)],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                    )
+                    .optional()
+                    .map_err(database_error)?;
+                Ok((answer, status))
+            })?;
         if let Some(content) = outcome.0 {
-            return Ok(SubmitResult { content, model: "Ornith 1.5".into(), provider_label: "LARM llm".into() });
+            return Ok(SubmitResult {
+                content,
+                model: "Ornith 1.5".into(),
+                provider_label: "LARM llm".into(),
+            });
         }
         if let Some((status, error)) = outcome.1 {
             if status == "failed" || status == "cancelled" {
@@ -947,7 +965,8 @@ async fn complete_larm_role_with_events(
     text: &str,
     timeout_ms: u64,
     audit: &ConversationAudit,
-    instruction: &str,
+    context_step: &context_compiler::ContextStep<'_>,
+    metrics: &context_metrics::RequestMetrics,
     on_delta: Option<&dyn crate::runtime::event_hub::RuntimeEventSender>,
     cancellation: Option<Arc<RunCancellation>>,
 ) -> Result<(String, String), String> {
@@ -980,16 +999,30 @@ async fn complete_larm_role_with_events(
         let budget = lease
             .request_budget(std::time::Duration::from_millis(request_timeout_ms))
             .map_err(str::to_string)?;
-        let advertised = provider.context_window.ok_or("LARMのコンテキスト上限がありません。")?;
+        let advertised = provider
+            .context_window
+            .ok_or("LARMのコンテキスト上限がありません。")?;
         // Bytes are a conservative upper bound for input tokens across the supported UTF-8
         // content. Keep the existing provider budget as an additional local ceiling.
-        let capacity = crate::runtime::context::broker::ProviderInputBudget::openai_compatible()
+        let mut input_budget =
+            crate::runtime::context::broker::ProviderInputBudget::openai_compatible();
+        if context_step.mode == context_compiler::PrefixMode::Stable {
+            // Offered definitions are already included in the exact message array.
+            input_budget = input_budget.with_tool_schema_reserve_bytes(0);
+        }
+        let capacity = input_budget
             .usable_context_bytes()
             .min((advertised.max_input_tokens() as usize).saturating_sub(2_048));
         // The input budget already reserves this output space. Do not shrink it for
         // tool follow-ups: a concise-answer instruction is not a token limit.
         let max_output_tokens = advertised.output_reserve_tokens.min(u32::MAX as u64) as u32;
-        let fitted = fit_role_history(instruction, recent, text, capacity)?;
+        let metrics = metrics.for_provider(provider.base_url.as_str());
+        let compiled = context_step
+            .compile(recent, text, capacity)
+            .inspect_err(|_| {
+                metrics.invalidated();
+            })?;
+        metrics.compiled(compiled.omitted);
         let authorization = zeroize::Zeroizing::new(format!("Bearer {}", provider.token()));
         let options = saaa_larm_session::http_api::LlmOptions {
             tools: false,
@@ -1016,11 +1049,12 @@ async fn complete_larm_role_with_events(
             max_output_tokens,
             Some(&options),
             true,
-            Some(instruction),
-            &fitted,
+            Some(&compiled.instruction),
+            &compiled.recent,
             Some((audit, role)),
             on_delta,
             cancellation,
+            Some(&metrics),
         )
         .await?;
         audit.text("provider", "conversation-ornith-output", &content);
@@ -1035,6 +1069,15 @@ async fn complete_larm_role_with_events(
             == crate::providers::stream::ProviderFailureKind::Authentication
                 .public_message()
                 .as_str()
+            || matches!(
+                error.as_str(),
+                "larm_authentication_failed"
+                    | "larm_session_closed"
+                    | "larm_session_unavailable"
+                    | "larm_expired"
+                    | "larm_provider_terminal"
+                    | "larm_connection_idle_released"
+            )
     }) {
         // Evict only this rejected session; an overlapping ASR reconnect may
         // already have installed a new one. Existing leases finish normally.
@@ -1090,16 +1133,17 @@ async fn connect_larm(
         providers.harness.larm_profile.as_deref(),
     );
     let (_stop, receiver) = tokio::sync::watch::channel(false);
-    let connection = saaa_larm_session::Session::connect_with_profile_credential_key_phase_and_providers(
-        &providers.harness.address,
-        preference,
-        token,
-        format!("saaa-conversation-check-{}", uuid::Uuid::new_v4().simple()),
-        receiver,
-        None,
-        Some(vec!["tts", "asr", "llm", "embedding"]),
-    )
-    .await;
+    let connection =
+        saaa_larm_session::Session::connect_with_profile_credential_key_phase_and_providers(
+            &providers.harness.address,
+            preference,
+            token,
+            format!("saaa-conversation-check-{}", uuid::Uuid::new_v4().simple()),
+            receiver,
+            None,
+            Some(vec!["tts", "asr", "llm", "embedding"]),
+        )
+        .await;
     let session = match connection {
         Ok(session) => session,
         Err(error) => {
@@ -1140,6 +1184,7 @@ pub(crate) async fn complete_http(
         None,
         None,
         None,
+        None,
     )
     .await
 }
@@ -1159,6 +1204,7 @@ async fn complete_http_with_instruction(
     audit: Option<(&ConversationAudit, &str)>,
     on_delta: Option<&dyn crate::runtime::event_hub::RuntimeEventSender>,
     cancellation: Option<Arc<RunCancellation>>,
+    observation: Option<&dyn crate::providers::chat_completions::observation::ObservationSink>,
 ) -> Result<String, String> {
     let input = StartTurnInput {
         run_id: format!("check_{}", uuid::Uuid::new_v4().simple()),
@@ -1221,7 +1267,7 @@ async fn complete_http_with_instruction(
     } else {
         crate::providers::chat_completions::RequestMode::JsonProbe
     };
-    let mut result = crate::providers::chat_completions::run_with_proxy_policy(
+    let mut result = crate::providers::chat_completions::run_observed(
         endpoint,
         authorization,
         model,
@@ -1231,6 +1277,7 @@ async fn complete_http_with_instruction(
         mode,
         &options,
         no_proxy,
+        observation,
     )
     .await;
     // Some configured Chat Completions servers reject SSE. Preserve the existing
@@ -1246,7 +1293,7 @@ async fn complete_http_with_instruction(
             })
         )
     {
-        result = crate::providers::chat_completions::run_with_proxy_policy(
+        result = crate::providers::chat_completions::run_observed(
             endpoint,
             authorization,
             model,
@@ -1256,6 +1303,7 @@ async fn complete_http_with_instruction(
             crate::providers::chat_completions::RequestMode::JsonProbe,
             &options,
             no_proxy,
+            observation,
         )
         .await;
         if let (Ok(content), Some(on_delta)) = (&result, on_delta) {
@@ -1330,5 +1378,4 @@ mod jarvis_tests {
         )];
         assert!(fit_role_history("固定ポリシー", &required, "今の依頼", 150).is_err());
     }
-
 }

@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 mod chunks;
+mod json_response;
+pub(crate) mod observation;
 mod sse;
 mod stream_response;
 
@@ -52,6 +54,34 @@ pub(crate) async fn run_with_proxy_policy(
     options: &saaa_larm_session::http_api::LlmOptions,
     no_proxy: bool,
 ) -> Result<String, ProviderAttemptError> {
+    run_observed(
+        endpoint,
+        authorization,
+        model,
+        history,
+        timeout_ms,
+        context,
+        mode,
+        options,
+        no_proxy,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_observed(
+    endpoint: &str,
+    authorization: Option<&str>,
+    model: &str,
+    history: &[ConversationMessage],
+    timeout_ms: u64,
+    context: ModelStreamContext<'_>,
+    mode: RequestMode,
+    options: &saaa_larm_session::http_api::LlmOptions,
+    no_proxy: bool,
+    observation: Option<&dyn observation::ObservationSink>,
+) -> Result<String, ProviderAttemptError> {
     use ProviderFailureKind as Failure;
     if context.cancellation.is_cancelled() {
         return Err(ProviderAttemptError::Cancelled {
@@ -94,69 +124,24 @@ pub(crate) async fn run_with_proxy_policy(
     let client = client_builder
         .build()
         .map_err(|_| ProviderAttemptError::failed(Failure::Internal, false))?;
+    let mut attempt = observation::Attempt::new(observation, &body);
+    if observation.is_some() && body.to_string().len() > 96_000 {
+        let result = Err(ProviderAttemptError::failed(
+            Failure::RequestTooLarge,
+            false,
+        ));
+        attempt.finish(&result);
+        return result;
+    }
     let mut request = client.post(url).json(&body);
     if let Some(authorization) = authorization {
         request = request.header(reqwest::header::AUTHORIZATION, authorization);
     }
-    if mode == RequestMode::Stream {
-        return stream_response::run(request, model, timeout_ms, context).await;
-    }
-    let cancellation = context.cancellation.clone();
-    let response = tokio::select! {
-        biased;
-        _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled { output_started: false }),
-        result = tokio::time::timeout(Duration::from_millis(timeout_ms), async {
-            let mut response = request.send().await.map_err(|_| Failure::Network)?;
-            if !response.status().is_success() {
-                return Err(super::http::status_failure(response.status().as_u16()));
-            }
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(|_| Failure::ResponseInterrupted)? {
-                if bytes.len().saturating_add(chunk.len()) > 2 * 1024 * 1024 {
-                    return Err(Failure::RequestTooLarge);
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            serde_json::from_slice::<Value>(&bytes).map_err(|_| Failure::Protocol)
-        }) => result.map_err(|_| ProviderAttemptError::failed(Failure::Timeout, false))?
-            .map_err(|kind| ProviderAttemptError::failed_with_detail(
-                kind, false, (kind == Failure::Protocol).then_some("invalid-chat-json"),
-            ))?,
+    let result = if mode == RequestMode::Stream {
+        stream_response::run(request, model, timeout_ms, context, &mut attempt).await
+    } else {
+        json_response::run(request, timeout_ms, context, &mut attempt).await
     };
-    let choice = response["choices"]
-        .as_array()
-        .and_then(|choices| (choices.len() == 1).then(|| &choices[0]))
-        .ok_or_else(|| {
-            ProviderAttemptError::failed_with_detail(
-                Failure::Protocol,
-                false,
-                Some("invalid-chat-choices"),
-            )
-        })?;
-    if choice["finish_reason"] != "stop" {
-        return Err(ProviderAttemptError::failed_with_detail(
-            Failure::Protocol,
-            false,
-            Some("chat-finish-reason-not-stop"),
-        ));
-    }
-    if !choice["message"]["tool_calls"].is_null() {
-        return Err(ProviderAttemptError::failed_with_detail(
-            Failure::Protocol,
-            false,
-            Some("unexpected-chat-tool-call"),
-        ));
-    }
-    let content = choice["message"]["content"]
-        .as_str()
-        .filter(|text| !text.trim().is_empty())
-        .ok_or_else(|| {
-            ProviderAttemptError::failed_with_detail(
-                Failure::Protocol,
-                false,
-                Some("missing-chat-content"),
-            )
-        })?
-        .to_string();
-    Ok(content)
+    attempt.finish(&result);
+    result
 }

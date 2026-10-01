@@ -3,7 +3,7 @@
 作成日: 2026-09-19  
 状態: 実装着手用の計画。コード・DB変更は未実施。  
 対象: WM-M1「構造化された関係モデルの永続化と照会」  
-上位文書: [Personal World Model Concept](../../docs/saaa-personal-world-model-concept.md)
+上位文書: [Personal World Model Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)
 
 ## 1. 今回の到達点
 

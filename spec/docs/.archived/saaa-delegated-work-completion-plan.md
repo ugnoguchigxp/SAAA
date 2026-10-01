@@ -26,7 +26,7 @@
 
 目的は「決まった言葉で始め、次に話しかけるまで結果が届かない限定ループ」を、明示委任の範囲で続く仕事へ完成させること。ユーザーが自然文で調査・テスト確認を任せ、別の話題へ移っても実行が継続し、完了や判断待ちが適切なタイミングで一度届けられる。撤回後は新規操作しない。再起動で実施済み操作を繰り返さない。
 
-上位は [Personal AI Concept](saaa-personal-ai-concept.md) §3・§4・§9・§15。[最小執事循環](saaa-minimal-loop-plan.md)と[Butler Schedule](saaa-butler-schedule-ledger-plan.md)の後続。本書は固定トリガ・一件制限・次turn依存を明示的に更新する計画であり、旧計画の「このStepでは見送る」を最終制約として引き継がない。
+上位は [Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) §3・§4・§9・§15。[最小執事循環](saaa-minimal-loop-plan.md)と[Butler Schedule](saaa-butler-schedule-ledger-plan.md)の後続。本書は固定トリガ・一件制限・次turn依存を明示的に更新する計画であり、旧計画の「このStepでは見送る」を最終制約として引き継がない。
 
 対象は既存のCoding/Pi実行先と登録済みCapabilityによる調査・検証仕事。任意アプリ操作や無制限の自動修正を追加せず、能力や委任が足りない仕事は具体的な判断待ちへ移す。未知の仕事を何でも完遂することを完了条件にしない。
 

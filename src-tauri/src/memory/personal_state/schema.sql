@@ -76,7 +76,7 @@ BEGIN
  INSERT INTO personal_sources(message_id,version,role,bytes,recorded_at)
  VALUES(NEW.id,COALESCE((SELECT MAX(version)+1 FROM personal_sources WHERE message_id=NEW.id),1),NEW.role,length(CAST(NEW.content AS BLOB)),CAST(NEW.created_at AS INTEGER));
  UPDATE personal_scope SET input_epoch=input_epoch+1,last_foreground_at=CAST(NEW.created_at AS INTEGER);
- INSERT INTO personal_jobs(source_sequence,epoch,status) SELECT last_insert_rowid(),(SELECT input_epoch FROM personal_scope),'queued' WHERE (SELECT count(*) FROM personal_jobs WHERE status IN ('queued','running'))<1024;
+ INSERT INTO personal_jobs(source_sequence,epoch,status) SELECT last_insert_rowid(),(SELECT input_epoch FROM personal_scope),'queued' WHERE ((SELECT count(*) FROM personal_jobs WHERE status IN ('queued','running'))+(SELECT count(*) FROM personal_review_work WHERE status IN ('queued','running','preview')))<1024;
 END;
 CREATE TRIGGER IF NOT EXISTS personal_source_no_resurrection BEFORE INSERT ON conversation_messages
 WHEN EXISTS(SELECT 1 FROM personal_tombstones WHERE source_id=NEW.id)
@@ -87,7 +87,7 @@ BEGIN
  UPDATE personal_sources SET available=0 WHERE message_id=OLD.id;
  INSERT INTO personal_sources(message_id,version,role,bytes,recorded_at) VALUES(NEW.id,(SELECT MAX(version)+1 FROM personal_sources WHERE message_id=OLD.id),NEW.role,length(CAST(NEW.content AS BLOB)),CAST(unixepoch('subsec')*1000 AS INTEGER));
  UPDATE personal_scope SET input_epoch=input_epoch+1;
- INSERT INTO personal_jobs(source_sequence,epoch,status) SELECT last_insert_rowid(),(SELECT input_epoch FROM personal_scope),'queued' WHERE (SELECT count(*) FROM personal_jobs WHERE status IN ('queued','running'))<1024;
+ INSERT INTO personal_jobs(source_sequence,epoch,status) SELECT last_insert_rowid(),(SELECT input_epoch FROM personal_scope),'queued' WHERE ((SELECT count(*) FROM personal_jobs WHERE status IN ('queued','running'))+(SELECT count(*) FROM personal_review_work WHERE status IN ('queued','running','preview')))<1024;
  UPDATE personal_generations SET output_allowed=0,cancellation='requested' WHERE id IN (SELECT generation_id FROM personal_generation_inputs WHERE source_id=OLD.id);
 END;
 CREATE TRIGGER IF NOT EXISTS personal_source_delete BEFORE DELETE ON conversation_messages

@@ -6,7 +6,7 @@
 
 ## 1. 目的とこの計画の使い方
 
-[全経路への投入計画](saaa-world-delivery-completion-plan.md) §0の実装不足を解消する。上位仕様は [World Model Concept](saaa-personal-world-model-concept.md)。五要素の既存graphを維持し、Situation・委任仕事・期限の正本を同じFrameから参照できるようにする。次に自然文からの候補作成、全Providerへの投入、現在状態の回答検証、UI表示を接続する。
+[全経路への投入計画](saaa-world-delivery-completion-plan.md) §0の実装不足を解消する。上位仕様は [World Model Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)。五要素の既存graphを維持し、Situation・委任仕事・期限の正本を同じFrameから参照できるようにする。次に自然文からの候補作成、全Providerへの投入、現在状態の回答検証、UI表示を接続する。
 
 本書は既存実装の作り直しを指示しない。M4A/G1のgraph・失効検査・通信runner、MCP v2の厳格handshake、Codexのmetadata receiptは再利用する。TTL延長、Worldの削除だけ、hostカードへの全面置換で完了扱いにしない。
 

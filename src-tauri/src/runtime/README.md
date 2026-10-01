@@ -8,4 +8,4 @@ For Ornith, `queue_context.rs` loads the bounded conversation and Personal State
 
 The old `.s11tnext/conversation-respond.txt` SystemContext belongs to the removed generic conversation executor. One conversation job now runs Ornith's reasoning, tool decisions, and final answer under one SystemContext. Tool results stay in evidence messages so they cannot become the current user instruction. Startup migrates unfinished legacy jobs into the conversation lane without starting the old model lanes.
 
-Design direction: [five-provider concept](../../../spec/docs/saaa-jarvis-five-provider-concept.md) and [runtime contract](../../../spec/docs/saaa-jarvis-five-provider-runtime-contract.md). These are target contracts, not claims that every behavior is implemented.
+Design direction: [five-provider concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) and [runtime contract](../../../spec/docs/saaa-jarvis-five-provider-runtime-contract.md). These are target contracts, not claims that every behavior is implemented.

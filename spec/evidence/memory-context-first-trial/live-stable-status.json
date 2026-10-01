@@ -1,0 +1,10 @@
+{
+  "mode": "stable",
+  "requestedTurns": 20,
+  "completedTurns": 8,
+  "status": "failed",
+  "error": "trial live-context-9: Ornithの行動結果がJSON契約に合いません。",
+  "physicalAudioVerified": false,
+  "toolData": "fixed fixture; model is real",
+  "recordSource": "2026-10-01 actual live run; reconstructed from test failure log"
+}

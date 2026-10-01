@@ -2,7 +2,7 @@
 
 作成日: 2026-09-21。状態: 実装計画。M4A完了報告を前提とするが、着手時に証拠を確認する。
 
-上位は[World Modelコンセプト](saaa-personal-world-model-concept.md)。前段は[M3B](saaa-personal-world-model-m3b-plan.md)と[M4A](saaa-personal-world-model-m4a-plan.md)。本書のG1は機能名であり、旧計画の検証ゲート番号とは別。自然文から永続知識を抽出するM3Cとは区別する。
+上位は[World Modelコンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)。前段は[M3B](saaa-personal-world-model-m3b-plan.md)と[M4A](saaa-personal-world-model-m4a-plan.md)。本書のG1は機能名であり、旧計画の検証ゲート番号とは別。自然文から永続知識を抽出するM3Cとは区別する。
 
 ## 1. 今回完成させる体験
 

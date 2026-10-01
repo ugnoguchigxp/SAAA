@@ -166,6 +166,11 @@ pub(crate) fn commit_with_sources(
                 if let saaa_personal_state_core::world::versioned::WorldView::Relation(old) =
                     existing[&prior.payload_ref].view(&prior.semantic_key)
                 {
+                    // A different extraction patch of the same original quotes is not new support.
+                    if cited_sources(candidate, source, context_sources)?.is_subset(&prior.evidence)
+                    {
+                        continue;
+                    }
                     let mut merged = old.payload;
                     if let WorldPayloadV2::Relation(proposed) = &p {
                         for stance in &proposed.evidence_stances {
@@ -364,7 +369,13 @@ pub(crate) fn commit_with_sources(
         input_dependencies: dependencies,
     };
     store::commit(c, &patch, &context, &payloads)?;
-    super::super::extracted_outcomes::commit(c, extraction, source, project, fence, now)
+    super::super::extracted_outcomes::commit(c, extraction, source, project, fence, now)?;
+    c.execute(
+        "INSERT OR IGNORE INTO personal_world_source_receipts VALUES(?1,?2,?3)",
+        rusqlite::params![project, source.key.id, source.key.version],
+    )
+    .map_err(crate::database_error)?;
+    Ok(())
 }
 
 fn cited_sources(

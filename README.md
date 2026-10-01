@@ -12,7 +12,7 @@ SAAA is a desktop runtime for a personal AI that understands ongoing work, retai
 
 The core experience is continuity: a request becomes tracked work; its context and authority survive beyond the immediate exchange; results return to the task ledger and can be delivered when the user's situation permits. Text and voice provide the conversational interface, while the runtime manages the state, execution, and delivery behind it.
 
-This repository is actively implementing that system. It already contains the memory and context pipeline, WorldFrame composition, tool discovery and execution, delegated-work ledger and report pump, and role-routing executor. Support depends on the configured providers, execution profiles, and enabled services. The full vision and its design principles are described in the [Personal AI Concept](spec/docs/saaa-personal-ai-concept.md); outstanding integration work is described below.
+This repository is actively implementing that system. It already contains the memory and context pipeline, WorldFrame composition, tool discovery and execution, delegated-work ledger and report pump, and role-routing executor. Support depends on the configured providers, execution profiles, and enabled services. The full vision and its design principles are described in the [Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5); outstanding integration work is described below.
 
 ## The runtime loop
 
@@ -85,7 +85,7 @@ Frames have size limits, validity windows, source references, and stamps used to
 
 The UI exposes the active scope. A task's status is read from its owner rather than independently maintained in the graph. Graph queries currently enter through a limited set of explicit question forms; broader conversational phrasing and ambiguous-reference resolution are part of the current improvement plan. The graph provides recorded relationships, not proof that every causal hypothesis is true.
 
-Implementation: [`world/`](src-tauri/src/memory/personal_state/world/), [`WorldFrame integration`](src-tauri/src/runtime/context/world/). Design: [Personal World Model](spec/docs/saaa-personal-world-model-concept.md).
+Implementation: [`world/`](src-tauri/src/memory/personal_state/world/), [`WorldFrame integration`](src-tauri/src/runtime/context/world/). Design: [Personal World Model](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5).
 
 ## Tool and capability system
 
@@ -103,7 +103,7 @@ External MCP servers connect through the Streamable HTTP integration. SAAA can a
 
 The generated-capability subsystem implements generation, build/package, verification, inspection, publication, invocation, and retirement. It retains capability revisions and runs Wasm through a separate host process with contract and resource checks. Generation and execution depend on explicitly configured providers, build tools, and runtime bundles; a generated description alone is not an executable capability.
 
-See the [Capability / Tool Runtime Concept](spec/docs/saaa-capability-tool-runtime-concept.md), [tool-selection implementation guide](spec/docs/saaa-tool-selection-d0-d3-implementation-guide.md), and [L-Lang capability guide](spec/docs/saaa-llang-dynamic-capability-implementation-guide.md).
+See the [Capability / Tool Runtime Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5), [tool-selection implementation guide](spec/docs/saaa-tool-selection-d0-d3-implementation-guide.md), and [L-Lang capability guide](spec/docs/saaa-llang-dynamic-capability-implementation-guide.md).
 
 ## Role-based model routing
 
@@ -305,13 +305,9 @@ Use isolated data and a new report directory. Smoke success demonstrates startup
 
 ## Documentation
 
-- [Personal AI Concept](spec/docs/saaa-personal-ai-concept.md): the current product vision and shared-runtime principles
-- [Capability / Tool Runtime](spec/docs/saaa-capability-tool-runtime-concept.md): capability discovery and execution responsibilities
+- [SAAAの全体コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5): コンセプトの唯一の正本。方針変更と項目別ステータスはこのPageで管理します。
 - [Personal State architecture](spec/docs/personal-state-architecture-roadmap.md): durable continuity and memory
-- [Personal World Model](spec/docs/saaa-personal-world-model-concept.md): entities, relations, evidence, and current understanding
 - [Role-routing execution contract](spec/docs/saaa-role-routing-execution-contract.md): actors, recipes, budgets, and revisions
-- [Adaptive Learning and Memory](spec/docs/saaa-adaptive-learning-memory-concept.html): feedback and selective memory
-- [Interface / Artifact Runtime](spec/docs/saaa-interface-artifact-runtime-concept.md): interactive outputs and artifacts
 - [Current improvement plan](spec/docs/saaa-review-five-improvements-terra-plan.md): integration work and acceptance conditions
 - [Design document index](spec/docs/README.html): detailed plans, runbooks, and evidence
 

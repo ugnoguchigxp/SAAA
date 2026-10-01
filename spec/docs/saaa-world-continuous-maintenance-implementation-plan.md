@@ -370,7 +370,7 @@ Phaseごとの成果物は、変更対象一覧、実装済み/接続済み/実�
 
 ## 12. 参照文書と優先関係
 
-- [五要素Worldコンセプト](.archived/saaa-personal-world-model-concept.md): 意味モデル・正本・非目標を継承する。archived配置は完了証明ではない。
+- [五要素Worldコンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5): 意味モデル・正本・非目標を継承する。archived配置は完了証明ではない。
 - [World v2実行契約](.archived/saaa-personal-world-model-v2-execution-contract.md): 型、条件、証拠、結果再評価の互換性を確認する。
 - [Context/records/memory設計](context-window-records-memory-design.md): records、Scope、忘却、Context予算を継承する。外部結果のrecord化を初回範囲外とした記述は、本計画P3の明示追加範囲とする。
 - [Personal Stateロードマップ](personal-state-architecture-roadmap.md): assertion/transition、Objective、復旧の正本を継承する。

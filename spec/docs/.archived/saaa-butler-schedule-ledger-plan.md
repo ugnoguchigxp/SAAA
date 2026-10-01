@@ -4,7 +4,7 @@
 
 前提: 発火の権限は Goal / Delegation / Task に依存する。時刻の到来を権限にしない。保留は Situation TTS hold（`speech_holds_tts`）に依存する。Meeting 製品セッションは削除済みであり、本計画の Hold は scene=`MEETING` かつ IGNORE/OBSERVE の Situation ゲートだけを使う。
 
-上位は[Personal AI Concept](saaa-personal-ai-concept.md) §4（循環の契機に「期限」「定期確認」を含む）と §9（委任）。前提となる並行作業は World Model M3A/M3B、Situation の TTS 抑止、最小Task循環（Goal / Delegation / Task Runtime の最初の実体）。実装担当は本書と[作業カード](saaa-butler-schedule-ledger-work-cards.md)をセットで使う。
+上位は[Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) §4（循環の契機に「期限」「定期確認」を含む）と §9（委任）。前提となる並行作業は World Model M3A/M3B、Situation の TTS 抑止、最小Task循環（Goal / Delegation / Task Runtime の最初の実体）。実装担当は本書と[作業カード](saaa-butler-schedule-ledger-work-cards.md)をセットで使う。
 
 ## 0. 現在の実装状況
 

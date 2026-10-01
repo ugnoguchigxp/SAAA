@@ -1,38 +1,28 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import "./ttsDictionaryPage.css";
+import { useTtsDictionarySync, type DictionaryEntry as Entry } from "./useTtsDictionarySync";
 
-type Entry = { written: string; spoken: string };
-type Draft = Entry & { original: string | null };
-const NEW_ROW = "__new__";
+type Draft = Entry & { original: string | null; expectedSpoken: string | null };
+const NEW_ROW = "\0new";
 const PAGE_SIZE = 90;
 
 export function TtsDictionaryPage() {
-  const [entries, setEntries] = useState<Entry[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [focusedReading, setFocusedReading] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const { entries, reload } = useTtsDictionarySync(setError);
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
   const [busy, setBusy] = useState(false);
   const newInput = useRef<HTMLInputElement>(null);
   const pending = useRef(false);
   const saveTail = useRef<Promise<void>>(Promise.resolve());
-
-  useEffect(() => {
-    let active = true;
-    void invoke<Entry[]>("list_tts_dictionary")
-      .then((items) => {
-        if (active) setEntries(items);
-      })
-      .catch((cause) => {
-        if (active) setError(String(cause));
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (adding) newInput.current?.focus();
@@ -42,6 +32,7 @@ export function TtsDictionaryPage() {
     return (
       drafts[key] ?? {
         original: entry?.written ?? null,
+        expectedSpoken: entry?.spoken ?? null,
         written: entry?.written ?? "",
         spoken: entry?.spoken ?? "",
       }
@@ -54,8 +45,8 @@ export function TtsDictionaryPage() {
     setError("");
   }
 
-  async function save(key: string, entry?: Entry) {
-    const draft = drafts[key];
+  async function save(key: string, _entry?: Entry, applyLatest = false) {
+    const draft = draftsRef.current[key];
     if (!draft) return;
     const written = draft.written.trim();
     const spoken = draft.spoken.trim();
@@ -68,7 +59,12 @@ export function TtsDictionaryPage() {
       setError(`「${written}」は登録済みです。`);
       return;
     }
-    if (draft.original === written && entry?.spoken === spoken) {
+    const current = entriesRef.current.find((item) => item.written === draft.original);
+    if (!applyLatest && draft.expectedSpoken !== (current?.spoken ?? null)) {
+      setError(`「${draft.original ?? written}」が変更されています。行の操作で解決してください。`);
+      return;
+    }
+    if (draft.original === written && current?.spoken === spoken) {
       setDrafts((previous) => {
         const next = { ...previous };
         delete next[key];
@@ -85,13 +81,22 @@ export function TtsDictionaryPage() {
     pending.current = true;
     setBusy(true);
     try {
-      const saved = await invoke<Entry[]>("save_tts_dictionary_entry", {
-        input: { original: draft.original, presetOverride: null, entry: { written, spoken } },
+      await invoke<Entry[]>("save_tts_dictionary_entry", {
+        input: {
+          original: draft.original,
+          presetOverride: null,
+          entry: { written, spoken },
+          expected: { spoken: applyLatest ? (current?.spoken ?? null) : draft.expectedSpoken },
+        },
       });
-      setEntries(saved);
+      await reload();
       setDrafts((previous) => {
         const next = { ...previous };
+        const latest = next[key];
         delete next[key];
+        if (latest && latest !== draft) {
+          next[written] = { ...latest, original: written, expectedSpoken: spoken };
+        }
         return next;
       });
       if (key === NEW_ROW) setAdding(false);
@@ -99,6 +104,7 @@ export function TtsDictionaryPage() {
       setError("");
     } catch (cause) {
       setError(String(cause));
+      await reload().catch(() => {});
     } finally {
       pending.current = false;
       setBusy(false);
@@ -111,7 +117,11 @@ export function TtsDictionaryPage() {
     pending.current = true;
     setBusy(true);
     try {
-      setEntries(await invoke<Entry[]>("delete_tts_dictionary_entry", { written: entry.written }));
+      await invoke<Entry[]>("delete_tts_dictionary_entry", {
+        written: entry.written,
+        expected: { spoken: entry.spoken },
+      });
+      await reload();
       setDrafts((previous) => {
         const next = { ...previous };
         delete next[entry.written];
@@ -121,6 +131,7 @@ export function TtsDictionaryPage() {
       setError("");
     } catch (cause) {
       setError(String(cause));
+      await reload().catch(() => {});
     } finally {
       pending.current = false;
       setBusy(false);
@@ -150,14 +161,23 @@ export function TtsDictionaryPage() {
     }
   }
 
-  const filtered = entries.filter((entry) =>
-    `${entry.written} ${entry.spoken}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
-  );
-  const rows: Array<{ key: string; entry?: Entry }> = filtered.map((entry) => ({
+  const candidates = entries.map((entry) => ({
     key: entry.written,
-    entry,
+    entry: entry as Entry | undefined,
   }));
-  if (adding && !search) rows.push({ key: NEW_ROW });
+  for (const key of Object.keys(drafts)) {
+    if (key !== NEW_ROW && !entries.some((entry) => entry.written === key)) {
+      candidates.push({ key, entry: undefined });
+    }
+  }
+  const rows = candidates.filter(({ key, entry }) => {
+    const draft = draftFor(key, entry);
+    return `${entry?.written ?? ""} ${entry?.spoken ?? ""} ${draft.written} ${draft.spoken}`
+      .toLocaleLowerCase()
+      .includes(search.toLocaleLowerCase());
+  });
+  const filtered = rows;
+  if (adding && !search) rows.push({ key: NEW_ROW, entry: undefined });
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
   const visibleRows = rows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
@@ -223,12 +243,14 @@ export function TtsDictionaryPage() {
             <tbody>
               {visibleRows.slice(index * perTable, (index + 1) * perTable).map(({ key, entry }) => {
                 const draft = draftFor(key, entry);
+                const conflict = !!drafts[key] && draft.expectedSpoken !== (entry?.spoken ?? null);
+                const label = entry?.written ?? draft.original ?? "新規";
                 return (
                   <tr key={key}>
                     <td>
                       <input
                         ref={key === NEW_ROW ? newInput : undefined}
-                        aria-label={`${entry?.written ?? "新規"}の文字`}
+                        aria-label={`${label}の文字`}
                         value={draft.written}
                         maxLength={200}
                         onFocus={() => setFocusedReading(null)}
@@ -250,7 +272,7 @@ export function TtsDictionaryPage() {
                     </td>
                     <td>
                       <input
-                        aria-label={`${entry?.written ?? "新規"}の読み方`}
+                        aria-label={`${label}の読み方`}
                         value={draft.spoken}
                         maxLength={400}
                         onFocus={() => setFocusedReading(key)}
@@ -266,21 +288,53 @@ export function TtsDictionaryPage() {
                           if (event.key === "Enter") event.currentTarget.blur();
                         }}
                       />
+                      {conflict && (
+                        <div className="tts-dictionary-conflict" role="alert">
+                          <span>
+                            {entry
+                              ? `現在の読み: ${entry.spoken || "（読み飛ばし）"}`
+                              : "この登録は削除されています"}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() =>
+                              setDrafts((previous) => {
+                                const next = { ...previous };
+                                delete next[key];
+                                return next;
+                              })
+                            }
+                          >
+                            最新を使う
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => void save(key, entry, true)}
+                          >
+                            編集を適用
+                          </button>
+                        </div>
+                      )}
                     </td>
                     <td>
                       <button
                         type="button"
-                        aria-label={`${entry?.written ?? "新規行"}を削除`}
+                        aria-label={`${key === NEW_ROW ? "新規行" : label}を削除`}
                         disabled={busy}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => {
                           if (entry) void remove(entry);
                           else {
-                            setAdding(false);
+                            if (key === NEW_ROW) setAdding(false);
+                            if (focusedReading === key) setFocusedReading(null);
                             setError("");
                             setDrafts((previous) => {
                               const next = { ...previous };
-                              delete next[NEW_ROW];
+                              delete next[key];
                               return next;
                             });
                           }

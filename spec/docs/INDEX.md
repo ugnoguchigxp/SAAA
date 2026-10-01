@@ -1,5 +1,7 @@
 # spec/docs 索引
 
+コンセプトの唯一の正本は[SAAAの全体コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)です。統合済みの旧コンセプト9文書は2026年10月1日に削除し、原資料はPage内の控えに保存しました。以下の実装契約・計画・検証記録と画像は個別の技術資料です。
+
 作成日: 2026-09-23
 目的: `spec/docs` 直下と `.archived/` の文書を正本 / 進行中 / 完了・古い に分類し、現役文書と完了文書を辿れるようにする。
 
@@ -14,15 +16,8 @@
 | --- | --- | --- | --- | --- |
 | `INDEX.md` | 正本 | 本索引（分類表） | 2026-09-23 |  |
 | `README.html` | 正本 | 内部設計書ディレクトリの案内 | 2026-09-21 |  |
-| `plan.html` | 正本 | Concept & Direction の主計画索引 | 2026-08-29 |  |
 | `product-readiness-status.html` | 正本 | 製品準備状況の正本 | 2026-09-21 |  |
 | `product-readiness-acceptance-runbook.html` | 正本 | 実機・配布物の手動受入手順 | 2026-09-17 |  |
-| `saaa-personal-ai-concept.md` | 正本 | Personal AI 上位コンセプト | 2026-09-17 |  |
-| `saaa-capability-tool-runtime-concept.md` | 正本 | Capability/Tool Runtime コンセプト | 2026-09-17 |  |
-| `saaa-adaptive-learning-memory-concept.html` | 正本 | 適応学習・選択的 Memory コンセプト | 2026-09-17 |  |
-| `saaa-interface-artifact-runtime-concept.md` | 正本 | Interface/Artifact Runtime コンセプト | 2026-09-17 |  |
-| `saaa-llang-dynamic-capability-concept.md` | 正本 | L-Lang 動的能力コンセプト | 2026-09-20 |  |
-| `saaa-personal-world-model-concept.md` | 正本 | Personal World Model（五要素）コンセプト | 2026-09-20 |  |
 | `context-window-records-memory-design.md` | 正本 | Context/records/memory 統合の現行設計 | 2026-09-22 |  |
 | `larm-http-api-review.md` | 正本 | LARM HTTP/設定の現行参照 | 2026-09-22 |  |
 | `saaa-ui-concept-v1.png` | 正本 | UI コンセプト画像 | 2026-08-29 |  |
@@ -40,6 +35,7 @@
 | --- | --- | --- | --- | --- |
 | [contextstill-world-evidence-contract-request.md](contextstill-world-evidence-contract-request.md) | 進行中 | ContextStill永続根拠APIの実装依頼・結合受入条件 | 2026-10-01 | 未送信、外部実装待ち |
 | [saaa-world-continuous-maintenance-implementation-plan.md](saaa-world-continuous-maintenance-implementation-plan.md) | 進行中 | 会話・Episodeを根拠にLocalLLM限定でWorldを継続構築・更新する計画 | 2026-10-01 | SAAA内の独立実装・隔離検証済み。外部契約・実機受入は残る |
+| [saaa-world-retrospective-selection-implementation-plan.md](saaa-world-retrospective-selection-implementation-plan.md) | 進行中 | 過去の会話から条件・訂正を確認しWorld候補を選定する有限Jobの計画 | 2026-10-01 | SAAA内の直列Job・候補選定・限定適用を実装。実機・外部受入は残る |
 | `butler-conversation-runtime-implementation-plan.md` | 進行中 | 複数発言・実行中入力・柔軟なツール利用を持つ会話ランタイム改修計画 | 2026-09-23 | 実装前の計画 |
 | `project-health-improvement-plan.md` | 進行中 | リポジトリ健全性改善の現行タスク計画 | 2026-09-23 | アクティブな計画のため未移動（タスク6対象外） |
 | `personal-state-architecture-roadmap.md` | 進行中 | Personal State 全体ロードマップ | 2026-09-17 | 実装中・実機受入待ちの記載あり |

@@ -9,7 +9,10 @@ pub async fn extract(
     cancel: Arc<RunCancellation>,
 ) -> Result<String, String> {
     let world = input["purpose"] == "world-extraction";
-    let instruction = if world {
+    let review_instruction = super::retrospective::instruction();
+    let instruction = if world && input["retrospective"] == true {
+        review_instruction.as_str()
+    } else if world {
         super::world::extraction::INSTRUCTION
     } else {
         worker::EXTRACTION_INSTRUCTION
@@ -23,7 +26,14 @@ pub async fn extract(
     let m = generation::Manifest {
         generation_id: id.clone(),
         attempt_id: crate::new_id("attempt"),
-        run_id: format!("extract-{id}"),
+        run_id: format!(
+            "{}-{id}",
+            if input["retrospective"] == true {
+                "world-review"
+            } else {
+                "extract"
+            }
+        ),
         request_revision: 1,
         input_epoch: ledger.input_epoch,
         policy_revision: ledger.policy_revision,

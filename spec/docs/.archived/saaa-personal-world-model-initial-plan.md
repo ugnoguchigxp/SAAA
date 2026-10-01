@@ -2,7 +2,7 @@
 
 作成日: 2026-09-19。改訂日: 2026-09-20。
 
-状態: 実装担当へ渡す改訂計画。今回の変更は文書のみ。上位文書は[Personal World Model Concept](saaa-personal-world-model-concept.md)。
+状態: 実装担当へ渡す改訂計画。今回の変更は文書のみ。上位文書は[Personal World Model Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)。
 
 本書は旧WM-M1計画を置き換える。旧計画は `spec/evidence/world-model/m1-plan-original-2026-09-19.md` に保存し、WM-00〜15 / T01〜22の過去記録を読むためだけに使う。W2番号は到達点のまとまりとし、今後の実装指示には詳細カードのD番号を使う。旧計画の「関係型は6種」「confidenceは対象外」を新しい契約へ持ち込まない。
 

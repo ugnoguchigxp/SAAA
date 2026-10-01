@@ -2,7 +2,7 @@
 
 作成日: 2026-09-20。状態: 実装着手用の計画。今回の作業は文書作成と既存試験の確認のみ。
 
-上位: [コンセプト](saaa-personal-world-model-concept.md)。前段: [五要素実装計画](saaa-personal-world-model-initial-plan.md)。実装担当は本書に加え、[M2固定契約](saaa-personal-world-model-m2-execution-contract.md)と[M2詳細カード](saaa-personal-world-model-m2-work-cards.md)を使う。
+上位: [コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)。前段: [五要素実装計画](saaa-personal-world-model-initial-plan.md)。実装担当は本書に加え、[M2固定契約](saaa-personal-world-model-m2-execution-contract.md)と[M2詳細カード](saaa-personal-world-model-m2-work-cards.md)を使う。
 
 
 次段: M2Aの実装報告後は[M3A実装計画](saaa-personal-world-model-m3-plan.md)へ進む。M2Bは外部Source契約の成立を待ち、先に既存FrameのBroker shadow検証を行う。

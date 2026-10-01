@@ -1,7 +1,17 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { act } from "react";
 import { installJsdom } from "./jsdomGlobals";
 import { invokeCalls, invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
+
+let dictionaryChanged: (() => void) | null = null;
+mock.module("@tauri-apps/api/event", () => ({
+  listen: async (name: string, handler: () => void) => {
+    if (name === "tts-dictionary-changed") dictionaryChanged = handler;
+    return () => {
+      if (dictionaryChanged === handler) dictionaryChanged = null;
+    };
+  },
+}));
 
 async function setup(initial: { written: string; spoken: string }[]) {
   const environment = installJsdom();
@@ -14,8 +24,16 @@ async function setup(initial: { written: string; spoken: string }[]) {
     if (command === "list_tts_dictionary") return entries;
     if (command === "save_tts_dictionary_entry") {
       const input = (
-        args as { input: { original: string | null; entry: { written: string; spoken: string } } }
+        args as {
+          input: {
+            original: string | null;
+            expected: { spoken: string | null };
+            entry: { written: string; spoken: string };
+          };
+        }
       ).input;
+      const current = entries.find((item) => item.written === input.original)?.spoken ?? null;
+      if (current !== input.expected.spoken) throw new Error("辞書が変更されています");
       entries = entries
         .filter((item) => item.written !== input.original && item.written !== input.entry.written)
         .concat(input.entry);
@@ -31,6 +49,13 @@ async function setup(initial: { written: string; spoken: string }[]) {
   await act(async () => root.render(<TtsDictionaryPage />));
   return {
     entries: () => entries,
+    replaceWithoutNotification: (items: typeof initial) => {
+      entries = items;
+    },
+    update: async (items: typeof initial) => {
+      entries = items;
+      await act(async () => dictionaryChanged?.());
+    },
     close: async () => {
       await act(async () => root.unmount());
       environment.restore();
@@ -142,6 +167,118 @@ test("shows a bounded number of editable rows for a large dictionary", async () 
         .click(),
     );
     expect(document.querySelectorAll(".tts-dictionary-tables tbody tr")).toHaveLength(30);
+  } finally {
+    await page.close();
+  }
+});
+
+test("refreshes conversation edits and preserves an unsaved cell until conflict is resolved", async () => {
+  const page = await setup([{ written: "今日", spoken: "こんにち" }]);
+  try {
+    const reading = document.querySelector<HTMLInputElement>('[aria-label="今日の読み方"]')!;
+    await act(async () => {
+      reading.focus();
+      change(reading, "キョウ");
+    });
+    await page.update([{ written: "今日", spoken: "きょう" }]);
+    expect(reading.value).toBe("キョウ");
+    expect(document.activeElement).toBe(reading);
+    expect(document.querySelector(".tts-dictionary-conflict")?.textContent).toContain("きょう");
+    await act(async () => reading.blur());
+    expect(invokeCalls.filter((call) => call.command === "save_tts_dictionary_entry")).toHaveLength(
+      0,
+    );
+    await act(async () => {
+      Array.from(document.querySelectorAll<HTMLButtonElement>(".tts-dictionary-conflict button"))
+        .find((button) => button.textContent === "編集を適用")!
+        .click();
+    });
+    expect(page.entries()).toEqual([{ written: "今日", spoken: "キョウ" }]);
+    expect(
+      invokeCalls.find((call) => call.command === "save_tts_dictionary_entry")?.args,
+    ).toMatchObject({ input: { expected: { spoken: "きょう" } } });
+  } finally {
+    await page.close();
+  }
+});
+
+test("accepts the current reading without writing and retains a draft after remote deletion", async () => {
+  const page = await setup([{ written: "今日", spoken: "こんにち" }]);
+  try {
+    const reading = document.querySelector<HTMLInputElement>('[aria-label="今日の読み方"]')!;
+    await act(async () => {
+      reading.focus();
+      change(reading, "キョウ");
+    });
+    await page.update([]);
+    expect(document.querySelector<HTMLInputElement>('[aria-label="今日の読み方"]')?.value).toBe(
+      "キョウ",
+    );
+    expect(document.querySelector(".tts-dictionary-conflict")?.textContent).toContain(
+      "削除されています",
+    );
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>(".tts-dictionary-conflict button")!.click(),
+    );
+    expect(document.querySelector('[aria-label="今日の読み方"]')).toBeNull();
+    expect(invokeCalls.filter((call) => call.command === "save_tts_dictionary_entry")).toHaveLength(
+      0,
+    );
+  } finally {
+    await page.close();
+  }
+});
+
+test("refreshes a saved row from notification without changing the table columns", async () => {
+  const page = await setup([{ written: "今日", spoken: "こんにち" }]);
+  try {
+    await page.update([{ written: "今日", spoken: "きょう" }]);
+    expect(document.querySelector<HTMLInputElement>('[aria-label="今日の読み方"]')?.value).toBe(
+      "きょう",
+    );
+    expect(document.querySelector(".tts-dictionary-conflict")).toBeNull();
+  } finally {
+    await page.close();
+  }
+});
+
+test("keeps a draft when the backend detects a change before a notification arrives", async () => {
+  const page = await setup([{ written: "今日", spoken: "こんにち" }]);
+  try {
+    const reading = document.querySelector<HTMLInputElement>('[aria-label="今日の読み方"]')!;
+    await act(async () => {
+      reading.focus();
+      change(reading, "キョウ");
+    });
+    page.replaceWithoutNotification([{ written: "今日", spoken: "きょう" }]);
+    await act(async () => reading.blur());
+    expect(page.entries()).toEqual([{ written: "今日", spoken: "きょう" }]);
+    expect(document.querySelector<HTMLInputElement>('[aria-label="今日の読み方"]')?.value).toBe(
+      "キョウ",
+    );
+    expect(document.querySelector(".tts-dictionary-conflict")?.textContent).toContain("きょう");
+  } finally {
+    await page.close();
+  }
+});
+
+test("ignores an older refresh that completes after the latest refresh", async () => {
+  const page = await setup([{ written: "今日", spoken: "こんにち" }]);
+  try {
+    const handler = invokeImpl.handler!;
+    const resolve: Array<(entries: { written: string; spoken: string }[]) => void> = [];
+    invokeImpl.handler = (command, args) =>
+      command === "list_tts_dictionary"
+        ? new Promise((done) => resolve.push(done))
+        : handler(command, args);
+    await act(async () => dictionaryChanged?.());
+    await act(async () => dictionaryChanged?.());
+    expect(resolve).toHaveLength(2);
+    await act(async () => resolve[1]!([{ written: "今日", spoken: "キョウ" }]));
+    await act(async () => resolve[0]!([{ written: "今日", spoken: "きょう" }]));
+    expect(document.querySelector<HTMLInputElement>('[aria-label="今日の読み方"]')?.value).toBe(
+      "キョウ",
+    );
   } finally {
     await page.close();
   }

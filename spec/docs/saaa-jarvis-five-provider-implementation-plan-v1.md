@@ -1,11 +1,13 @@
 # SAAA：Jarvis 5 Provider 初回実装計画
 
+> 2026-10-01 更新: Qwen 2Bによる受付・応対と5 Provider構成はユーザー決定により廃案。この文書は当時の契約案・計画・調査の履歴であり、現行の実装指示や復元の根拠にはしない。現在の方針は[会話コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)を参照。
+
 作成日: 2026-09-26  
 状態: J1のdispatcherとRust ASR監査チャネルからの観測接続を実装・回帰確認済み。J0はLARM APIで一時接続を確保しQwenとornithの並行生成を1回、複数行JSON制御レコードから本文へ続く10件の形式試験を確認した。`replyTo`等の項目充足、分類精度、実音声の遅延は未確認。通常入口の切替は未完了。
 
 ## 1. 到達点と最初の着手範囲
 
-[コンセプト](saaa-jarvis-five-provider-concept.md)を、[Runtime契約](saaa-jarvis-five-provider-runtime-contract.md)に従って既存Runtimeへ段階的に実装する。[実装状況・検証手順](saaa-jarvis-five-provider-implementation-status.md)は現状と証跡の参照先とする。本書は作業順序と完了判定を定め、元の契約を緩めない。
+[コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)を、[Runtime契約](saaa-jarvis-five-provider-runtime-contract.md)に従って既存Runtimeへ段階的に実装する。[実装状況・検証手順](saaa-jarvis-five-provider-implementation-status.md)は現状と証跡の参照先とする。本書は作業順序と完了判定を定め、元の契約を緩めない。
 
 最初の音声統合の到達点は、**ornithが仕事Aを処理している間もASRとQwenが依頼Bを受け付け、Bを保存し、両モデルの音声を重ねずに返せること**とする。質問への回答返送、条件変更、停止、再起動時の重複防止まで含める。embeddingの検索接続はその次の独立した実装単位とし、接続診断だけで5 Providerの完成とはしない。
 

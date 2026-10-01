@@ -1,7 +1,9 @@
+import { retrospectiveSchema } from "./reviewApi";
 import { z } from "zod";
 
 export const maintenanceSchema = z
   .object({
+    retrospective: retrospectiveSchema.optional(),
     reason: z.string(),
     failures: z.number(),
     nextAttemptAt: z.number(),

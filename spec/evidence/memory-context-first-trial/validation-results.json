@@ -1,0 +1,231 @@
+{
+  "date": "2026-10-01",
+  "records": [
+    {
+      "check": "context and queue E2E",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-accepted-e2e.log",
+      "sha256": "c7f641e930e82d6d34a525b6c59c1f94938676ff5c1ec82c8ba3778ac95f3b8a",
+      "summaries": [
+        "test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.99s",
+        "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 12.92s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s"
+      ]
+    },
+    {
+      "check": "Memory ON",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-accepted-memory-on.log",
+      "sha256": "23fc96dbba4405237c2529487996daabb71cc130ad7ed7bc112b1ffed5edb1d3",
+      "summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.71s"
+      ]
+    },
+    {
+      "check": "runtime unit",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-accepted-unit.log",
+      "sha256": "0bb1bd3968db900306ce83cbf15cae4e0fdf92c106e3ee3e159c5375cf1b1d7e",
+      "summaries": [
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1721 filtered out; finished in 0.08s"
+      ]
+    },
+    {
+      "check": "fixture after lint cleanup",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-fixture-lint-final.log",
+      "sha256": "6e3dc5a57da88f22687c9b40a9b6af8736e761e8535170c28345655284916232",
+      "summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.96s"
+      ]
+    },
+    {
+      "check": "transport chunks",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-chunks.log",
+      "sha256": "a89c45219cf2b50433c10dfa0e1bb607ae3475549033ba0c61777824f7104453",
+      "summaries": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1726 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "check": "context projection",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-memory-regression.log",
+      "sha256": "767c04fe19493061f75649bc427b476d5f3fd735f7a8723a2201826262b7ca2e",
+      "summaries": [
+        "test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1708 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "check": "queue and speech contracts",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-contracts.log",
+      "sha256": "eb5676a5fcf4f98e6112ecffb66a6ef81afffbe72523c6cbff3b362906a7deeb",
+      "summaries": [
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s"
+      ]
+    },
+    {
+      "check": "frontend ASR and report",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-frontend-final.log",
+      "sha256": "8d72663c97533c4e1a17f6c6008506d1c3f9ea343d28241517fb7cfbf70d3c26",
+      "summaries": [
+        " 20 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "check": "dictionary UI",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-dictionary-ui.log",
+      "sha256": "e981e6f7f95934ae8d438ef25bc44d07e46b07ecdb9933342acdb2792f9e8a68",
+      "summaries": [
+        " 10 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "check": "queue UI isolated",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-ui-isolated.log",
+      "sha256": "e9f176ac9a2a742f71690a8237fe1c36cd087acc7748ec0dc0b13c27c492373f",
+      "summaries": [
+        " 1 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "check": "report tests",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-report-final.log",
+      "sha256": "18ae3489dd94a3a8631cd308d817e624c64cf5346d5a21d356cafa31cb4240ec",
+      "summaries": [
+        " 2 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "check": "typecheck",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-typecheck.log",
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "summaries": []
+    },
+    {
+      "check": "IPC",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-ipc.log",
+      "sha256": "220ef6dde1d9f631d6d1f3bf2780e74746f365bf02f0a965b297f3b72e5e699b",
+      "summaries": [
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "check": "frontend build",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-build-frontend.log",
+      "sha256": "098e638a7bc3f2e5bdb9e411a747dbe4e7d9349b0cf9cb9e900a7e0e89791db4",
+      "summaries": []
+    },
+    {
+      "check": "desktop final stable",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-desktop-final.log",
+      "sha256": "4028cb7f2486a126d57e531641d12490542e0d4b88c844795aed409cc5ee3735",
+      "summaries": [
+        "Desktop smoke passed: packaged frontend reported IPC ready."
+      ]
+    },
+    {
+      "check": "Clippy lib",
+      "result": "build pass; other existing warnings remain",
+      "sourceLog": "/tmp/saaa-memory-context-clippy-no-new.log",
+      "sha256": "8340612248b51b8139e52c2ee119aa990e8f86b4a7c2c034f7d71f24adfd54eb",
+      "summaries": []
+    },
+    {
+      "check": "target rustfmt",
+      "result": "pass",
+      "sourceLog": "/tmp/saaa-memory-context-target-fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "summaries": []
+    },
+    {
+      "check": "full gate",
+      "result": "fail at existing size gate after core tests",
+      "sourceLog": "/tmp/saaa-memory-context-full-gate.log",
+      "sha256": "f3be79c047829e12b53e9390d10d1d0851b3237ba54b958ee99e838148b72b80",
+      "summaries": [
+        "test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+        "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "check": "size gate",
+      "result": "fail; other baseline mismatches",
+      "sourceLog": "/tmp/saaa-memory-context-size-final.log",
+      "sha256": "77e89e5ac3bb694e1c60454e5d2da61a8b08cbec0bbb677cbdde36be0ed628ad",
+      "summaries": []
+    },
+    {
+      "check": "all-target Clippy",
+      "result": "fail; world_maintenance_contract build",
+      "sourceLog": "/tmp/saaa-memory-context-clippy.log",
+      "sha256": "a5fb6f47461eb0d9f8c0e503fad3678274bb6230e05be94831a87ab2b28f330f",
+      "summaries": []
+    },
+    {
+      "check": "quality",
+      "result": "fail; world_maintenance_contract build",
+      "sourceLog": "/tmp/saaa-memory-context-quality.log",
+      "sha256": "262e3d84dd6cdd41c8521a2c5a281ff771a2e825def0942979ed07dd078e934e",
+      "summaries": []
+    },
+    {
+      "check": "quality lib",
+      "result": "1 pass,1 fail; removed legacy path",
+      "sourceLog": "/tmp/saaa-memory-context-quality-lib.log",
+      "sha256": "07d8b5ee305691e35b976c185b14073e699d458c93e184dd599256fb2a7e6b63",
+      "summaries": [
+        "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1729 filtered out; finished in 0.11s"
+      ]
+    },
+    {
+      "check": "all Rust fmt",
+      "result": "fail; other work has differences",
+      "sourceLog": "/tmp/saaa-memory-context-fmt.log",
+      "sha256": "137edaee1f678c8b2bdf720319672a4fc1a3f55e0ea59eac7251bc1bbdc7029e",
+      "summaries": []
+    },
+    {
+      "check": "live legacy",
+      "result": "fail on turn15",
+      "sourceLog": "/tmp/saaa-memory-context-live-recovery.log",
+      "sha256": "afae339363922c2eaa3ddc378cfc4450aad89f78424046d612b61a89189a6cdb",
+      "summaries": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 490.07s"
+      ]
+    },
+    {
+      "check": "live stable",
+      "result": "fail on turn9",
+      "sourceLog": "/tmp/saaa-memory-context-live-stable.log",
+      "sha256": "60540aa595e2dd717a94c5854b5e15496be8c5193354bd4febb637a3f6fd9c1d",
+      "summaries": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 267.47s"
+      ]
+    }
+  ]
+}

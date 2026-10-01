@@ -1,0 +1,10 @@
+{
+  "mode": "legacy",
+  "requestedTurns": 20,
+  "completedTurns": 14,
+  "status": "failed",
+  "error": "trial live-context-15: Ornithの行動結果がJSON契約に合いません。",
+  "physicalAudioVerified": false,
+  "toolData": "fixed fixture; model is real",
+  "recordSource": "2026-10-01 actual live run; reconstructed from test failure log"
+}

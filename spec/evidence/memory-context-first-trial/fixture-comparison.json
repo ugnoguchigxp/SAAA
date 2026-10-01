@@ -1,0 +1,37 @@
+{
+  "measurement": "complete-message byte signatures; cache requires provider usage; timings are exploratory",
+  "results": [
+    {
+      "mode": "legacy",
+      "logicalRequests": 68,
+      "httpAttempts": 69,
+      "missingReceipts": 0,
+      "fixedPrefixes": 68,
+      "usageProvided": 2,
+      "cacheUsageMissing": 68,
+      "cacheExplicitZero": 1,
+      "pairedUsageSamples": 1,
+      "cacheReadRatio": 0,
+      "unsuccessfulAttempts": 8,
+      "sseFirstContentMedianMs": 1,
+      "firstVisibleMedianMs": 3,
+      "completedMedianMs": 2
+    },
+    {
+      "mode": "stable",
+      "logicalRequests": 68,
+      "httpAttempts": 69,
+      "missingReceipts": 0,
+      "fixedPrefixes": 1,
+      "usageProvided": 2,
+      "cacheUsageMissing": 68,
+      "cacheExplicitZero": 1,
+      "pairedUsageSamples": 1,
+      "cacheReadRatio": 0,
+      "unsuccessfulAttempts": 8,
+      "sseFirstContentMedianMs": 1,
+      "firstVisibleMedianMs": 3,
+      "completedMedianMs": 2
+    }
+  ]
+}

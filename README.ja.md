@@ -12,7 +12,7 @@ SAAAは、ユーザーの仕事と状況を理解し、目標や制約を覚え�
 
 中心にあるのは、依頼と理解の継続性です。依頼を追跡可能な仕事へ変え、その場のやり取りが終わった後も背景と委任範囲を保持する。結果は仕事の台帳へ戻し、ユーザーの状況に応じて届ける。テキストと音声はその窓口となり、背後の状態管理・実行・配送をランタイムが担います。
 
-このリポジトリでは、そのシステムを実装しています。メモリーとContextの供給、WorldFrameの構成、ツール探索と実行、委任仕事の台帳と報告処理、ロールルーティングの実行器がすでに存在します。利用できる範囲は、設定したProvider、実行プロファイル、有効なサービスによって異なります。目指す体験と設計原則は[Personal AI Concept](spec/docs/saaa-personal-ai-concept.md)、現在の接続・改善課題は本書の後半で説明しています。
+このリポジトリでは、そのシステムを実装しています。メモリーとContextの供給、WorldFrameの構成、ツール探索と実行、委任仕事の台帳と報告処理、ロールルーティングの実行器がすでに存在します。利用できる範囲は、設定したProvider、実行プロファイル、有効なサービスによって異なります。目指す体験と設計原則は[Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)、現在の接続・改善課題は本書の後半で説明しています。
 
 ## 中核となる循環
 
@@ -85,7 +85,7 @@ Frameには容量上限、有効期間、出典参照、変化を検知するsta
 
 画面では現在のScopeを選べます。仕事の進捗は管理元から読み出し、グラフ側で独立に更新しません。グラフを質問する入口は現在、明示的な定型文が中心です。自然な言い換えや曖昧な指示語の解決は改善計画に含まれています。また、関係が記録されていることと、因果仮説が証明されたことは区別します。
 
-実装: [`world/`](src-tauri/src/memory/personal_state/world/)、[`WorldFrameの供給`](src-tauri/src/runtime/context/world/)。設計: [Personal World Model](spec/docs/saaa-personal-world-model-concept.md)。
+実装: [`world/`](src-tauri/src/memory/personal_state/world/)、[`WorldFrameの供給`](src-tauri/src/runtime/context/world/)。設計: [Personal World Model](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)。
 
 ## ツールシステムとCapability
 
@@ -103,7 +103,7 @@ SAAAは、能力を探す処理、契約を読む処理、実行する処理を�
 
 生成Capabilityには、生成、buildとpackage化、検証、inspection、公開、実行、廃止の処理があります。能力の版を保持し、Wasmは契約と資源上限を検査する別host processで動かします。生成と実行にはProvider、build tool、runtime bundleの設定が必要です。能力の説明文が生成できただけでは、実行可能な状態にはなりません。
 
-詳細は[Capability / Tool Runtime Concept](spec/docs/saaa-capability-tool-runtime-concept.md)、[ツール選択の実装ガイド](spec/docs/saaa-tool-selection-d0-d3-implementation-guide.md)、[L-Lang能力の実装ガイド](spec/docs/saaa-llang-dynamic-capability-implementation-guide.md)を参照してください。
+詳細は[Capability / Tool Runtime Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)、[ツール選択の実装ガイド](spec/docs/saaa-tool-selection-d0-d3-implementation-guide.md)、[L-Lang能力の実装ガイド](spec/docs/saaa-llang-dynamic-capability-implementation-guide.md)を参照してください。
 
 ## ロールルーティング
 
@@ -301,13 +301,9 @@ bun run readiness:verify --report-dir /absolute/path/to/new-report-directory
 
 ## ドキュメント
 
-- [Personal AI Concept](spec/docs/saaa-personal-ai-concept.md): 現在の製品Visionと共通runtimeの原則
-- [Capability / Tool Runtime](spec/docs/saaa-capability-tool-runtime-concept.md): 能力の探索と実行の責任分担
+- [SAAAの全体コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5): コンセプトの唯一の正本。方針変更と項目別ステータスはこのPageで管理します。
 - [Personal State architecture](spec/docs/personal-state-architecture-roadmap.md): 永続的な継続性とメモリー
-- [Personal World Model](spec/docs/saaa-personal-world-model-concept.md): 実体、関係、根拠、現在の理解
 - [ロールルーティング実行契約](spec/docs/saaa-role-routing-execution-contract.md): Actor、recipe、予算、版管理
-- [Adaptive Learning and Memory](spec/docs/saaa-adaptive-learning-memory-concept.html): Feedbackと選択的な記憶
-- [Interface / Artifact Runtime](spec/docs/saaa-interface-artifact-runtime-concept.md): 対話的な出力と成果物
 - [現在の改善計画](spec/docs/saaa-review-five-improvements-terra-plan.md): 接続課題と完了条件
 - [設計文書一覧](spec/docs/README.html): 詳細計画、手順書、証跡
 

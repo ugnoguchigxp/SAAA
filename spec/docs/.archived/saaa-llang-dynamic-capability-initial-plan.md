@@ -4,7 +4,7 @@
 
 作成日: 2026-09-19  
 状態: 初期計画案 v0.2 / 実装未着手  
-基準: [動的能力コンセプト](saaa-llang-dynamic-capability-concept.md)
+基準: [動的能力コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)
 
 実装担当者は[詳細実装手順・契約・試験仕様](saaa-llang-dynamic-capability-implementation-guide.md)を併読する。本書は目的と段階を示し、詳細手順書は作業順、ファイル、内部API、状態遷移、失敗時の処理を定める。実装上の具体的な判断は詳細手順書を優先する。最初の依頼範囲はM0/M1のままであり、後続段階を一括実装する指示ではない。
 

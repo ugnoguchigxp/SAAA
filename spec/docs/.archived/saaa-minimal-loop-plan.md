@@ -2,7 +2,7 @@
 
 作成日: 2026-09-20。状態: Step 4 の実装計画。コードは本計画の作成では変更しない。
 
-前提は Step 3 完了記録（`spec/evidence/situation/tts-gate-results.md` 引き渡し）。上位は [執事循環フェーズ](saaa-steward-loop-phase-plan.md) §8 と [Personal AI Concept](saaa-personal-ai-concept.md) §9・§16。カードは本書 §8（10枚、ML-00〜09）。
+前提は Step 3 完了記録（`spec/evidence/situation/tts-gate-results.md` 引き渡し）。上位は [執事循環フェーズ](saaa-steward-loop-phase-plan.md) §8 と [Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) §9・§16。カードは本書 §8（10枚、ML-00〜09）。
 
 この Step は、観測→黙る／話す→任された一件が続く、という縦糸の最後の実体である。M3C・Butler・M4 は計画があるが、前提が揃うまで **見送り中**（禁止ではない）。Role Routing は本フェーズ着手禁止。詳細は [フェーズ計画](saaa-steward-loop-phase-plan.md) §8。
 

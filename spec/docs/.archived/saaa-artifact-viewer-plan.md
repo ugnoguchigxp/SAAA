@@ -4,7 +4,7 @@
 
 前提: 執事に「ブログ記事を事前に書いてもらう」体験を live の一日で成立させる。記事は複数本を同時に開いて読み比べられ、改訂が追える。画像同梱・エクスポート・リモート画像・KaTeX は本計画の範囲外（§8）。
 
-上位は[Personal AI Concept](saaa-personal-ai-concept.md) §9（委任の成果物）と [Generative Inline UI 実装](generative-inline-ui-implementation.html)。本計画は既存の Generative UI（`@openuidev/react-lang` 0.2.15、`src-tauri/src/generative_ui/`、`src/features/chat/ui/`）を**拡張**するもので、並行する新しい成果物ストアは作らない。
+上位は[Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) §9（委任の成果物）と [Generative Inline UI 実装](generative-inline-ui-implementation.html)。本計画は既存の Generative UI（`@openuidev/react-lang` 0.2.15、`src-tauri/src/generative_ui/`、`src/features/chat/ui/`）を**拡張**するもので、並行する新しい成果物ストアは作らない。
 
 ## 0. 現在の実装状況
 

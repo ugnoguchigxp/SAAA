@@ -9,6 +9,7 @@ pub(super) async fn run(
     model: &str,
     timeout_ms: u64,
     context: ModelStreamContext<'_>,
+    attempt: &mut super::observation::Attempt<'_>,
 ) -> Result<String, ProviderAttemptError> {
     let cancellation = context.cancellation.clone();
     let mut output_started = false;
@@ -43,9 +44,11 @@ pub(super) async fn run(
             let Some(next) = next else { break };
             let bytes = next.map_err(|_| ProviderAttemptError::failed(Failure::ResponseInterrupted, output_started))?;
             for event in decoder.push(&bytes).map_err(|kind| ProviderAttemptError::failed(kind, output_started))? {
-                let delta = completion.absorb(&event, model)
-                    .map_err(|kind| ProviderAttemptError::failed(kind, output_started))?;
+                let absorbed = completion.absorb(&event, model);
+                attempt.response(completion.response_model.as_deref(), completion.usage.as_ref());
+                let delta = absorbed.map_err(|kind| ProviderAttemptError::failed(kind, output_started))?;
                 if !delta.is_empty() {
+                    attempt.content();
                     if !output_started {
                         if let Some(persistence) = context.output_persistence {
                             persistence.mark_started().map_err(|_| ProviderAttemptError::failed(Failure::Internal, false))?;

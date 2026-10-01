@@ -78,7 +78,7 @@ Terra残件計画T00〜T24のコードとoffline受入は完了した。共通Fr
 
 全経路で同じ文章を生成する保証ではない。同じScope、必須条件、現在状態の根拠が、各adapterの実際の入力へ届き、不明・失効・取消を同じ規則で扱うことが完成条件である。単に `world_free_history` を取り除くだけでは完了しない。
 
-上位は [Personal AI Concept](saaa-personal-ai-concept.md) §4・§5・§8、[World Model Concept](saaa-personal-world-model-concept.md)。[M3B計画](saaa-personal-world-model-m3b-plan.md)の限定投入・未接続を解消する後続計画。M3Bの「再生成0」は当時の段階制約であり、本書では新しいgeneration/attemptごとに送信直前のframeを構成する。ただし失効したframeのTTLを書き換えて復活させない。
+上位は [Personal AI Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5) §4・§5・§8、[World Model Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)。[M3B計画](saaa-personal-world-model-m3b-plan.md)の限定投入・未接続を解消する後続計画。M3Bの「再生成0」は当時の段階制約であり、本書では新しいgeneration/attemptごとに送信直前のframeを構成する。ただし失効したframeのTTLを書き換えて復活させない。
 
 ## 2. 依存と担当範囲
 

@@ -2,7 +2,7 @@
 
 作成日: 2026-09-22。状態: **評価用 Go（3 OS live は評価者判断で対象外）**。
 
-上位方針は [SAAA Interface / Artifact Runtime Concept](saaa-interface-artifact-runtime-concept.md)、表示面は [Artifact Viewer 実装計画](saaa-artifact-viewer-plan.md) に従う。本計画は、Artifact Workspace の右側パネルでローカル HTML / CSS / JavaScript 成果物を対話的に確認できるようにする。任意サイトを閲覧する汎用ブラウザーは作らない。
+上位方針は [SAAA Interface / Artifact Runtime Concept](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)、表示面は [Artifact Viewer 実装計画](saaa-artifact-viewer-plan.md) に従う。本計画は、Artifact Workspace の右側パネルでローカル HTML / CSS / JavaScript 成果物を対話的に確認できるようにする。任意サイトを閲覧する汎用ブラウザーは作らない。
 
 ## 0. 結論と導入判断
 
