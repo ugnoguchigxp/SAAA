@@ -104,6 +104,8 @@ impl DynamicLanConnection {
                 selector: id.clone(),
                 catalog_revision: None,
                 catalog_models: None,
+                catalog_services: Vec::new(),
+                catalog_contracts: Default::default(),
                 id,
                 capability: String::new(),
                 model: String::new(),

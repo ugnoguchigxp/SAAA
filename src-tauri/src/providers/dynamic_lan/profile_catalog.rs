@@ -15,6 +15,8 @@ pub(super) struct AgentProfileCatalog {
 pub(super) struct CatalogAgentProfile {
     pub id: String,
     pub providers: Vec<CatalogProvider>,
+    #[serde(default)]
+    pub services: Vec<saaa_larm_session::catalog::CatalogService>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -46,7 +46,7 @@ impl Fake {
                 .lock()
                 .unwrap()
                 .as_ref()
-                .map_or(true, |requested| requested.contains(name))
+                .is_none_or(|requested| requested.contains(name))
         })
     }
     fn state(&self, status: &str) -> Value {
@@ -825,7 +825,7 @@ async fn rejects_duplicate_missing_and_nonlocal_provider_contracts() {
         .unwrap()
         .clone();
     providers.push(llm);
-    assert!(contract::parse(value, "session-1", &contract::required_providers()).is_err());
+    assert!(contract::parse(value, "session-1", &contract::required_providers(), None).is_err());
     let mut value = fake.claim();
     let llm = value["providers"]
         .as_array_mut()
@@ -834,7 +834,7 @@ async fn rejects_duplicate_missing_and_nonlocal_provider_contracts() {
         .find(|provider| provider["name"] == "llm")
         .unwrap();
     llm["baseUrl"] = json!("https://example.com/v1");
-    assert!(contract::parse(value, "session-1", &contract::required_providers()).is_err());
+    assert!(contract::parse(value, "session-1", &contract::required_providers(), None).is_err());
     assert!(local_url(
         &url::Url::parse("http://192.168.0.130:9810").unwrap()
     ));
@@ -934,7 +934,7 @@ async fn claim_requires_the_complete_saaa_provider_set() {
         .unwrap()
         .retain(|p| p["name"] == "llm");
     assert_eq!(
-        contract::parse(value, "session-1", &contract::required_providers()).err(),
+        contract::parse(value, "session-1", &contract::required_providers(), None).err(),
         Some("larm_missing_provider")
     );
     server.abort();
@@ -954,7 +954,7 @@ async fn chat_context_window_is_mandatory_and_validated_but_audio_does_not_requi
         .unwrap()
         .remove("contextWindow");
     assert_eq!(
-        contract::parse(missing, "session-1", &contract::required_providers()).err(),
+        contract::parse(missing, "session-1", &contract::required_providers(), None).err(),
         Some("larm_missing_context_window")
     );
 
@@ -967,7 +967,7 @@ async fn chat_context_window_is_mandatory_and_validated_but_audio_does_not_requi
         .unwrap();
     chat["contextWindow"]["safetyMarginTokens"] = json!(230400);
     assert_eq!(
-        contract::parse(invalid, "session-1", &contract::required_providers()).err(),
+        contract::parse(invalid, "session-1", &contract::required_providers(), None).err(),
         Some("larm_invalid_context_window")
     );
     server.abort();
@@ -976,7 +976,13 @@ async fn chat_context_window_is_mandatory_and_validated_but_audio_does_not_requi
 #[tokio::test]
 async fn embedding_space_is_mandatory_and_validated() {
     let (fake, server) = fixture().await;
-    assert!(contract::parse(fake.claim(), "session-1", &contract::required_providers()).is_ok());
+    assert!(contract::parse(
+        fake.claim(),
+        "session-1",
+        &contract::required_providers(),
+        None
+    )
+    .is_ok());
     let mut wrong_url = fake.claim();
     let embedding = wrong_url["providers"]
         .as_array_mut()
@@ -986,7 +992,13 @@ async fn embedding_space_is_mandatory_and_validated() {
         .unwrap();
     embedding["configuration"]["fields"]["daemonURL"] = json!("http://wrong.example/v1");
     assert_eq!(
-        contract::parse(wrong_url, "session-1", &contract::required_providers()).err(),
+        contract::parse(
+            wrong_url,
+            "session-1",
+            &contract::required_providers(),
+            None
+        )
+        .err(),
         Some("larm_invalid_provider_configuration")
     );
     let mut missing = fake.claim();
@@ -998,7 +1010,7 @@ async fn embedding_space_is_mandatory_and_validated() {
         .unwrap();
     embedding.as_object_mut().unwrap().remove("embeddingSpace");
     assert_eq!(
-        contract::parse(missing, "session-1", &contract::required_providers()).err(),
+        contract::parse(missing, "session-1", &contract::required_providers(), None).err(),
         Some("larm_missing_embedding_space")
     );
 
@@ -1011,7 +1023,7 @@ async fn embedding_space_is_mandatory_and_validated() {
         .unwrap();
     embedding["embeddingSpace"]["dimension"] = json!(0);
     assert_eq!(
-        contract::parse(invalid, "session-1", &contract::required_providers()).err(),
+        contract::parse(invalid, "session-1", &contract::required_providers(), None).err(),
         Some("larm_invalid_embedding_space")
     );
     server.abort();
@@ -1198,7 +1210,7 @@ async fn missing_backchannel_in_catalog_is_rejected() {
 async fn variant_service_mismatch_is_rejected() {
     for (variant, services) in [
         (ProfileVariant::Image, &[][..]),
-        (ProfileVariant::Conversation, &["image"][..]),
+        (ProfileVariant::Music, &["image"][..]),
     ] {
         let (fake, server) = fixture().await;
         *fake.catalog.lock().unwrap() = Some(selector_catalog(variant.selector(), services));
@@ -1285,7 +1297,10 @@ async fn create_response_rejects_missing_duplicate_and_invalid_provider_fields()
     assert!(contract::validate_created(&duplicate, "SAAA", &required, None).is_err());
     let mut not_claimable = original.clone();
     not_claimable["providers"][0]["claimable"] = json!(false);
-    assert_eq!(contract::validate_created(&not_claimable, "SAAA", &required, None), Err("larm_provider_not_claimable"));
+    assert_eq!(
+        contract::validate_created(&not_claimable, "SAAA", &required, None),
+        Err("larm_provider_not_claimable")
+    );
     for (field, value) in [
         ("protocol", json!("invalid")),
         ("endpoint", json!("/invalid")),
@@ -1407,7 +1422,7 @@ async fn backchannel_requires_context_window() {
     fake.omit_backchannel_window.store(true, Ordering::SeqCst);
     let value = fake.claim();
     assert_eq!(
-        contract::parse(value, "session-1", &contract::required_providers()).err(),
+        contract::parse(value, "session-1", &contract::required_providers(), None).err(),
         Some("larm_missing_context_window")
     );
     server.abort();
@@ -1607,5 +1622,85 @@ async fn provider_summary_exposes_models_without_tokens() {
             && provider.context_window.unwrap().max_tokens == GEMMA4_KV_TOKENS
     }));
     session.close().await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn cold_service_discovery_and_warm_connection_never_call_generation_endpoints() {
+    let (fake, server) = fixture().await;
+    let mut response = selector_catalog("SAAA-w-Image", &["image"]);
+    response["profiles"][0]["services"][0]["startupPolicy"] =
+        json!({"minWarmInstances":0,"idleTtlSeconds":120});
+    *fake.catalog.lock().unwrap() = Some(response);
+    let session = connect_variant(&fake, ProfileVariant::Image).await.unwrap();
+    assert!(session.catalog().unwrap().services[0].starts_on_request());
+    assert!(fake
+        .log
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|line| !line.contains("/v1/images/") && !line.contains("/image/health")));
+    session.close().await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn warm_system_one_is_a_provider_separate_from_cold_services() {
+    let (fake, server) = fixture().await;
+    let mut response = selector_catalog("SAAA-w-Image", &["image"]);
+    let providers = response["profiles"][0]["providers"].as_array_mut().unwrap();
+    providers.retain(|provider| provider["name"] != "backchannel");
+    providers.push(json!({"name":"systemone","capability":"system.one","protocol":"larm.system-one.v1","endpoint":"/v1/systemone","model":"laya-system-one"}));
+    *fake.catalog.lock().unwrap() = Some(response);
+    let catalog = crate::catalog::fetch(
+        &reqwest::Client::new(),
+        &url::Url::parse(&fake.base).unwrap(),
+        "test-control-token",
+        "SAAA-w-Image",
+    )
+    .await
+    .unwrap();
+    let names = contract::catalog_providers(&catalog).unwrap();
+    assert_eq!(names.len(), 5);
+    assert!(names.iter().any(|name| name == "systemone"));
+    let mut claim = fake.claim();
+    let providers = claim["providers"].as_array_mut().unwrap();
+    let systemone = providers
+        .iter_mut()
+        .find(|provider| provider["name"] == "backchannel")
+        .unwrap();
+    systemone["name"] = json!("systemone");
+    systemone["protocol"] = json!("larm.system-one.v1");
+    systemone["model"] = json!("laya-system-one");
+    systemone["configuration"]["fields"]["model"] = json!("laya-system-one");
+    let snapshot = contract::parse(claim, "session-1", &names, Some(&catalog)).unwrap();
+    contract::verify_against_catalog(&snapshot, &catalog).unwrap();
+    assert_eq!(
+        snapshot.providers["systemone"].protocol,
+        "larm.system-one.v1"
+    );
+    assert!(!snapshot.providers.contains_key("image"));
+    let mut backchannel_catalog = catalog;
+    let systemone = backchannel_catalog
+        .providers
+        .iter_mut()
+        .find(|provider| provider.name == "systemone")
+        .unwrap();
+    systemone.name = "backchannel".into();
+    let names = contract::catalog_providers(&backchannel_catalog).unwrap();
+    let mut claim = fake.claim();
+    let systemone = claim["providers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|provider| provider["name"] == "backchannel")
+        .unwrap();
+    systemone["protocol"] = json!("larm.system-one.v1");
+    systemone["model"] = json!("laya-system-one");
+    systemone["configuration"]["fields"]["model"] = json!("laya-system-one");
+    systemone.as_object_mut().unwrap().remove("contextWindow");
+    let snapshot = contract::parse(claim, "session-1", &names, Some(&backchannel_catalog)).unwrap();
+    contract::verify_against_catalog(&snapshot, &backchannel_catalog).unwrap();
+    assert!(snapshot.providers["backchannel"].context_window.is_none());
     server.abort();
 }

@@ -5,11 +5,12 @@ mod contract;
 mod error;
 mod http;
 pub mod http_api;
+pub mod media;
 use catalog::CatalogProfile;
 use contract::Snapshot;
 pub use contract::{
-    local_url, required_providers, Capacity, ContextWindow, EmbeddingSpace, Provider, BACKCHANNEL,
-    BASE_PROVIDERS, DEFAULT_SELECTOR, LEGACY_PROFILE_IDS,
+    catalog_providers, local_url, required_providers, validate_services, Capacity, ContextWindow,
+    EmbeddingSpace, Provider, BACKCHANNEL, BASE_PROVIDERS, DEFAULT_SELECTOR, LEGACY_PROFILE_IDS,
 };
 pub use error::ConnectError;
 use serde_json::json;
@@ -98,7 +99,7 @@ pub struct Session {
     id: String,
     profile: String,
     catalog: Option<CatalogProfile>,
-    required: Vec<&'static str>,
+    required: Vec<String>,
     created_models: std::collections::HashMap<String, String>,
     snapshot: Arc<RwLock<Option<Snapshot>>>,
     closed: AtomicBool,
@@ -149,6 +150,10 @@ impl Use {
     }
 }
 impl Session {
+    /// Read-only discovery, including Cold service startup policies.
+    pub fn catalog(&self) -> Option<&catalog::CatalogProfile> {
+        self.catalog.as_ref()
+    }
     /// Credential-free identifier for correlating connection lifecycle events.
     pub fn connection_id(&self) -> &str {
         &self.id
@@ -281,8 +286,7 @@ impl Session {
                 preference,
                 token,
                 idempotency_key,
-                cancellation,
-                abandoned,
+                (cancellation, abandoned),
                 phase,
                 providers,
             )
@@ -308,8 +312,7 @@ impl Session {
         preference: ProfilePreference,
         token: String,
         idempotency_key: String,
-        mut cancellation: watch::Receiver<bool>,
-        mut abandoned: watch::Receiver<bool>,
+        (mut cancellation, mut abandoned): (watch::Receiver<bool>, watch::Receiver<bool>),
         phase: Option<watch::Sender<ConnectionPhase>>,
         providers: Option<Vec<&'static str>>,
     ) -> Result<Arc<Self>, ConnectError> {
@@ -331,7 +334,7 @@ impl Session {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|_| "larm_client_failed")?;
-        let required = match providers.as_ref() {
+        let mut required = match providers.as_ref() {
             Some(names)
                 if !names.is_empty()
                     && names
@@ -340,10 +343,16 @@ impl Session {
                     && names.iter().collect::<std::collections::HashSet<_>>().len()
                         == names.len() =>
             {
-                names.clone()
+                names
+                    .iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>()
             }
             Some(_) => return Err("larm_invalid_provider_subset".into()),
-            None => contract::required_providers(),
+            None => contract::required_providers()
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
         };
         let (profile, catalog) = match &preference {
             ProfilePreference::Explicit(profile) => (profile.clone(), None),
@@ -353,9 +362,12 @@ impl Session {
                     _ = cancelled(&mut abandoned) => return Err("larm_cancelled".into()),
                     result = catalog::fetch(&client, &base, &token, variant.selector()) => result?,
                 };
+                if providers.is_none() {
+                    required = contract::catalog_providers(&profile)
+                        .map_err(|_| "larm_profile_unavailable")?;
+                }
                 let expected = variant.services();
                 if !required.iter().all(|name| profile.provider(name).is_some())
-                    || profile.services.len() != expected.len()
                     || !expected
                         .iter()
                         .all(|name| profile.services.iter().any(|service| service.name == *name))
@@ -619,7 +631,7 @@ impl Session {
             &[200],
         )
         .await?;
-        let snapshot = contract::parse(value, &self.id, &self.required)?;
+        let snapshot = contract::parse(value, &self.id, &self.required, self.catalog.as_ref())?;
         if snapshot
             .providers
             .iter()

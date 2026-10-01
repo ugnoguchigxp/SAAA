@@ -1,0 +1,8 @@
+.media-generation { margin: 0.5rem 1rem; border: 1px solid var(--border-color, #d7d7d7); border-radius: 8px; padding: 0.75rem; }
+.media-generation summary { cursor: pointer; }
+.media-generation form { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.media-generation label { display: flex; align-items: center; gap: 0.5rem; }
+.media-generation textarea { flex: 1 1 18rem; min-width: 0; }
+.media-generation-artifacts { max-height: 24rem; overflow: auto; }
+.media-generation-artifacts img { display: block; max-width: 100%; max-height: 18rem; object-fit: contain; }
+.media-generation-artifacts audio { display: block; max-width: 100%; }

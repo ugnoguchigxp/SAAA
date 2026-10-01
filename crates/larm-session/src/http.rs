@@ -78,7 +78,9 @@ fn classify_error(status: u16, code: &str, message: Option<&str>) -> &'static st
         (409, "connection_idle_released", _) => "larm_connection_idle_released",
         (409, "catalog_revision_mismatch" | "revision_mismatch", _) => "larm_revision_mismatch",
         (409, "idempotency_conflict", _) => "larm_idempotency_conflict",
-        (409, "provider_conflict" | "connection_audience_unavailable", _) => "larm_provider_conflict",
+        (409, "provider_conflict" | "connection_audience_unavailable", _) => {
+            "larm_provider_conflict"
+        }
         (409, _, _) => "larm_conflict",
         (400, "unknown_profile" | "unknown_selector", _) => "larm_unknown_selector",
         (400, _, _) => "larm_invalid_request",

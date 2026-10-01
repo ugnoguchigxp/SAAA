@@ -6,6 +6,7 @@ import {
   useSyncExternalStore,
   type FormEvent,
 } from "react";
+import { MediaGenerationPanel } from "../media/MediaGenerationPanel";
 import { AppIcon } from "../../components/AppIcon";
 import { useArtifactWorkspace } from "./artifacts/ArtifactDrawer";
 import { normalizeAnswerUrl } from "./artifacts/answerUrls";
@@ -38,7 +39,7 @@ import "./conversationCheckPage.css";
 type RouteStage = "dispatch" | "ornith" | "tts" | null;
 const routeNodes = [
   { id: "asr", label: "ASR" },
-  { id: "ornith", label: "Ornith 1.5" },
+  { id: "ornith", label: "会話LLM" },
   { id: "tts", label: "TTS" },
 ] as const;
 
@@ -92,7 +93,7 @@ export function ConversationCheckPage({
     .slice()
     .reverse()
     .find((job) => job.kind === "speech");
-  const lastReplySource = lastSpeech ? "Ornith 1.5" : null;
+  const lastReplySource = lastSpeech ? "会話LLM" : null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const audio = useSyncExternalStore(subscribeConversationAsr, conversationAsrSnapshot);
@@ -116,7 +117,8 @@ export function ConversationCheckPage({
   );
   const transcribing = audio.entries.some((entry) => entry.status === "transcribing");
   const asrActive = audio.phase === "starting" || audio.phase === "recording";
-  const recognizing = asrActive && Boolean(audio.speechDetected || audio.interimText || transcribing);
+  const recognizing =
+    asrActive && Boolean(audio.speechDetected || audio.interimText || transcribing);
   const displayedText = text || audio.interimText;
   const pendingJob = jobs
     .slice()
@@ -128,9 +130,9 @@ export function ConversationCheckPage({
     .find((job) => job.kind === "speech" && job.state === "interrupted");
   const status =
     stage === "dispatch"
-      ? "Ornith 1.5 に接続中"
+      ? "会話LLMに接続中"
       : stage === "ornith"
-        ? "Ornith 1.5 が回答を作成中"
+        ? "会話LLMが回答を作成中"
         : stage === "tts"
           ? "TTS で回答を再生中"
           : pendingJob
@@ -155,10 +157,17 @@ export function ConversationCheckPage({
     setMessages(
       page.messages.filter((message) => message.role === "user" || message.role === "assistant"),
     );
-    setLiveAnswers((current) => Object.fromEntries(Object.entries(current).filter(([inputId]) =>
-      !page.messages.some((message) => message.id === `reply_${inputId}`) &&
-      !snapshot.jobs.some((job) => job.key === inputId && ["failed", "cancelled"].includes(job.state)),
-    )));
+    setLiveAnswers((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(
+          ([inputId]) =>
+            !page.messages.some((message) => message.id === `reply_${inputId}`) &&
+            !snapshot.jobs.some(
+              (job) => job.key === inputId && ["failed", "cancelled"].includes(job.state),
+            ),
+        ),
+      ),
+    );
   }, [conversationId]);
 
   useEffect(() => {
@@ -217,11 +226,16 @@ export function ConversationCheckPage({
         ...current,
         [payload.inputId]: (current[payload.inputId] ?? "") + payload.text,
       }));
-    }).then((stop) => {
-      if (active) unlisten = stop;
-      else stop();
-    }).catch((cause) => setError(String(cause)));
-    return () => { active = false; unlisten?.(); };
+    })
+      .then((stop) => {
+        if (active) unlisten = stop;
+        else stop();
+      })
+      .catch((cause) => setError(String(cause)));
+    return () => {
+      active = false;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -352,9 +366,11 @@ export function ConversationCheckPage({
             return (
               <article key={message.id} className={`conversation-check-message ${message.role}`}>
                 <strong>{message.role === "user" ? "あなた" : agentName}</strong>
-                {message.role === "assistant"
-                  ? <MarkdownView text={displayed.answer} displayMode="inline" />
-                  : <p>{displayed.answer}</p>}
+                {message.role === "assistant" ? (
+                  <MarkdownView text={displayed.answer} displayMode="inline" />
+                ) : (
+                  <p>{displayed.answer}</p>
+                )}
                 {displayed.sources.length > 0 && (
                   <div className="conversation-check-sources" aria-label="出典">
                     {displayed.sources.map((source) => (
@@ -380,14 +396,21 @@ export function ConversationCheckPage({
             );
           })}
           {Object.entries(liveAnswers).map(([inputId, content]) => (
-            <article key={`stream_${inputId}`} className="conversation-check-message assistant streaming">
+            <article
+              key={`stream_${inputId}`}
+              className="conversation-check-message assistant streaming"
+            >
               <strong>{agentName}</strong>
               <MarkdownView text={content} displayMode="inline" />
             </article>
           ))}
           {(stage === "dispatch" || stage === "ornith") && (
             <div className="conversation-thinking" role="status" aria-label="思考中">
-              <div className="llm-thinking-indicator" aria-hidden="true"><span /><span /><span /></div>
+              <div className="llm-thinking-indicator" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
               <span>{status}</span>
             </div>
           )}
@@ -455,6 +478,7 @@ export function ConversationCheckPage({
           </button>
         )}
       </div>
+      <MediaGenerationPanel />
       <form
         className="composer conversation-check-composer"
         onSubmit={(event) => void submit(event)}
@@ -475,7 +499,9 @@ export function ConversationCheckPage({
             role="img"
             aria-label={recognizing ? "音声を認識中" : asrActive ? "音声を待機中" : "マイク停止中"}
           >
-            {Array.from({ length: 7 }, (_, index) => <span key={index} />)}
+            {Array.from({ length: 7 }, (_, index) => (
+              <span key={index} />
+            ))}
           </div>
           <textarea
             rows={1}

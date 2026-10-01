@@ -37,7 +37,7 @@ pub(crate) fn verify_against_catalog(
         if declared.model != claimed.model || declared.protocol != claimed.protocol {
             return Err("larm_catalog_claim_mismatch");
         }
-        if matches!(name.as_str(), "llm" | "backchannel")
+        if claimed.protocol == "openai.chat-completions.v1"
             && declared.context_window != claimed.context_window
         {
             return Err("larm_catalog_claim_mismatch");
@@ -53,6 +53,7 @@ pub(crate) fn accepted_provider(name: &str) -> Option<&'static str> {
         .find(|(candidate, _)| *candidate == name)
         .map(|(_, protocol)| *protocol)
 }
+#[cfg(test)]
 pub(crate) fn expected_endpoint(name: &str) -> Option<&'static str> {
     match name {
         "llm" | "backchannel" => Some("/v1/chat/completions"),
@@ -63,10 +64,62 @@ pub(crate) fn expected_endpoint(name: &str) -> Option<&'static str> {
     }
 }
 
+pub fn catalog_providers(
+    catalog: &crate::catalog::CatalogProfile,
+) -> Result<Vec<String>, &'static str> {
+    if !BASE_PROVIDERS
+        .iter()
+        .all(|(name, _)| catalog.provider(name).is_some())
+        || !(catalog.provider(BACKCHANNEL.0).is_some()
+            || catalog
+                .providers
+                .iter()
+                .any(|provider| provider.protocol == "larm.system-one.v1"))
+    {
+        return Err("larm_missing_provider");
+    }
+    let mut names = std::collections::HashSet::new();
+    for provider in &catalog.providers {
+        if !names.insert(&provider.name)
+            || protocol_endpoint(&provider.protocol).is_none()
+            || (provider.protocol != "larm.system-one.v1"
+                && accepted_provider(&provider.name) != Some(provider.protocol.as_str()))
+        {
+            return Err("larm_invalid_provider");
+        }
+    }
+    Ok(catalog
+        .providers
+        .iter()
+        .map(|provider| provider.name.clone())
+        .collect())
+}
+fn provider_protocol<'a>(
+    name: &str,
+    catalog: Option<&'a crate::catalog::CatalogProfile>,
+) -> Option<&'a str> {
+    match catalog {
+        Some(catalog) => catalog
+            .provider(name)
+            .map(|provider| provider.protocol.as_str()),
+        None => accepted_provider(name),
+    }
+}
+fn protocol_endpoint(protocol: &str) -> Option<&'static str> {
+    match protocol {
+        "openai.chat-completions.v1" => Some("/v1/chat/completions"),
+        "openai.audio-transcriptions.v1" => Some("/v1/audio/transcriptions"),
+        "openai.audio-speech.v1" => Some("/v1/audio/speech"),
+        "larm.embedding.v1" => Some("/v1/embed"),
+        "larm.system-one.v1" => Some("/v1/systemone"),
+        _ => None,
+    }
+}
+
 pub(crate) fn validate_created(
     value: &Value,
     selector: &str,
-    required: &[&str],
+    required: &[impl AsRef<str>],
     catalog: Option<&crate::catalog::CatalogProfile>,
 ) -> Result<(), &'static str> {
     if value["profile"] != selector || string(value, "agentProfile").is_err() {
@@ -85,11 +138,16 @@ pub(crate) fn validate_created(
     let mut seen = std::collections::HashSet::new();
     for provider in raw {
         let name = string(provider, "name")?;
-        if !required.contains(&name) || !seen.insert(name) {
+        if !required.iter().any(|entry| entry.as_ref() == name) || !seen.insert(name) {
             return Err("larm_invalid_provider");
         }
-        if provider["protocol"] != accepted_provider(name).ok_or("larm_invalid_provider")?
-            || provider["endpoint"] != expected_endpoint(name).ok_or("larm_invalid_provider")?
+        if provider["protocol"]
+            != provider_protocol(name, catalog).ok_or("larm_invalid_provider")?
+            || provider["endpoint"]
+                != protocol_endpoint(
+                    provider_protocol(name, catalog).ok_or("larm_invalid_provider")?,
+                )
+                .ok_or("larm_invalid_provider")?
             || string(provider, "model").is_err()
         {
             return Err("larm_invalid_provider");
@@ -106,7 +164,7 @@ pub(crate) fn validate_created(
                 .ok_or("larm_catalog_claim_mismatch")?;
             if provider["model"] != declared.model
                 || provider["protocol"] != declared.protocol
-                || declared.endpoint != expected_endpoint(name).ok_or("larm_invalid_provider")?
+                || provider["endpoint"] != declared.endpoint
             {
                 return Err("larm_catalog_claim_mismatch");
             }
@@ -117,34 +175,33 @@ pub(crate) fn validate_created(
             return Err("larm_catalog_claim_mismatch");
         }
     }
-    let expected_service = match selector {
-        "SAAA-w-Image" => Some((
-            "image",
-            "media.image.generate",
-            "larm.image-generation.v1",
-            "/v1/images/generations",
-        )),
-        "SAAA-w-music" => Some((
-            "music",
-            "media.music.generate",
-            "larm.music-generation.v1",
-            "/v1/music/generations",
-        )),
+    validate_services(value, selector, catalog)?;
+    Ok(())
+}
+pub fn validate_services(
+    value: &Value,
+    selector: &str,
+    catalog: Option<&crate::catalog::CatalogProfile>,
+) -> Result<(), &'static str> {
+    let services = value["services"].as_array().ok_or("larm_invalid_service")?;
+    let capability = match selector {
+        "SAAA-w-Image" => Some(("media.image.generate", "larm.image-generation.v1")),
+        "SAAA-w-music" => Some(("media.music.generate", "larm.music-generation.v1")),
         _ => None,
     };
-    let services = value["services"]
-        .as_array()
-        .ok_or("larm_invalid_contract")?;
-    if services.len() != usize::from(expected_service.is_some()) {
+    if capability.is_some_and(|(capability, protocol)| {
+        !services
+            .iter()
+            .any(|service| service["capability"] == capability && service["protocol"] == protocol)
+    }) {
         return Err("larm_invalid_service");
     }
-    if let Some((name, capability, protocol, endpoint)) = expected_service {
-        let service = &services[0];
-        if service["name"] != name
-            || service["capability"] != capability
-            || service["protocol"] != protocol
-            || service["endpoint"] != endpoint
+    let mut names = std::collections::HashSet::new();
+    for service in services {
+        let name = string(service, "name")?;
+        if !names.insert(name)
             || string(service, "model").is_err()
+            || string(service, "endpoint").is_err()
         {
             return Err("larm_invalid_service");
         }
@@ -154,13 +211,21 @@ pub(crate) fn validate_created(
                 .iter()
                 .find(|entry| entry.name == name)
                 .ok_or("larm_invalid_service")?;
-            if service["model"] != declared.model {
+            if service["model"] != declared.model
+                || service["endpoint"] != declared.endpoint
+                || service["protocol"] != declared.protocol
+                || service["capability"] != declared.capability
+            {
                 return Err("larm_invalid_service");
             }
         }
     }
+    if catalog.is_some_and(|catalog| catalog.services.len() != services.len()) {
+        return Err("larm_invalid_service");
+    }
     Ok(())
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContextWindow {
     pub max_tokens: u64,
@@ -290,7 +355,12 @@ fn embedding_space(raw: &Value) -> Result<EmbeddingSpace, &'static str> {
         .ok_or("larm_invalid_embedding_space")?;
     Ok(EmbeddingSpace { dimension })
 }
-pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapshot, &'static str> {
+pub(crate) fn parse(
+    value: Value,
+    id: &str,
+    required: &[impl AsRef<str>],
+    catalog: Option<&crate::catalog::CatalogProfile>,
+) -> Result<Snapshot, &'static str> {
     if value["id"] != id || value["status"] != "ready" {
         return Err("larm_invalid_claim");
     }
@@ -299,10 +369,10 @@ pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapsho
     let mut providers = HashMap::new();
     for raw in value["providers"].as_array().ok_or("larm_invalid_claim")? {
         let name = string(raw, "name")?;
-        if !required.contains(&name) {
+        if !required.iter().any(|entry| entry.as_ref() == name) {
             return Err("larm_invalid_provider");
         }
-        let Some(protocol) = accepted_provider(name) else {
+        let Some(protocol) = provider_protocol(name, catalog) else {
             continue;
         };
         if providers.contains_key(name) || raw["protocol"] != protocol {
@@ -316,7 +386,7 @@ pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapsho
             .as_u64()
             .filter(|v| *v > 0 && *v <= 600_000)
             .ok_or("larm_invalid_health")?;
-        let context_window = if name == "llm" || name == "backchannel" {
+        let context_window = if protocol == "openai.chat-completions.v1" {
             Some(context_window(raw)?)
         } else {
             None
@@ -357,7 +427,9 @@ pub(crate) fn parse(value: Value, id: &str, required: &[&str]) -> Result<Snapsho
         );
     }
     if providers.len() != required.len()
-        || required.iter().any(|name| !providers.contains_key(*name))
+        || required
+            .iter()
+            .any(|name| !providers.contains_key(name.as_ref()))
     {
         return Err("larm_missing_provider");
     }

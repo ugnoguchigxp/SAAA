@@ -5400,6 +5400,46 @@
     "tests/world-scope.test.ts": {
       "total": 26,
       "production": 26
+    },
+    "src-tauri/src/media_generation/mod.rs": {
+      "total": 263,
+      "production": 242
+    },
+    "src-tauri/src/media_generation/ipc_tests.rs": {
+      "total": 53,
+      "production": 53
+    },
+    "src/features/media/mediaApi.ts": {
+      "total": 108,
+      "production": 108
+    },
+    "src/features/media/MediaGenerationPanel.tsx": {
+      "total": 179,
+      "production": 179
+    },
+    "src/features/media/mediaGeneration.css": {
+      "total": 9,
+      "production": 9
+    },
+    "tests/media-generation.test.tsx": {
+      "total": 261,
+      "production": 261
+    },
+    "src-tauri/src/providers/dynamic_lan/profile_contract.rs": {
+      "total": 71,
+      "production": 71
+    },
+    "src-tauri/src/providers/dynamic_lan/tests/cold_services.rs": {
+      "total": 43,
+      "production": 43
+    },
+    "src/features/chat/ConversationCheckPage.tsx": {
+      "total": 539,
+      "production": 539
+    },
+    "tests/conversation-queue-page.test.tsx": {
+      "total": 235,
+      "production": 235
     }
   }
 }

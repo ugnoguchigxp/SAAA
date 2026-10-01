@@ -2,7 +2,7 @@
 
 macro_rules! saaa_invoke_handler {
     () => {
-        tauri::generate_handler![
+        media_generation::with_handler(tauri::generate_handler![
             memory::personal_state::commands::personal_state_snapshot,
             memory::personal_state::commands::set_personal_state_enabled,
             memory::personal_state::commands::personal_source_page,
@@ -143,7 +143,7 @@ macro_rules! saaa_invoke_handler {
             adaptive_evaluation::evaluation_pair::import_adaptive_evaluation,
             adaptive_evaluation::evaluation_pair::approve_adaptive_artifact,
             adaptive_evaluation::evaluation_pair::activate_adaptive_artifact
-        ]
+        ])
     };
 }
 

@@ -1,3 +1,4 @@
+use super::profile_contract::provider_contract;
 use url::Url;
 
 use super::urls::{url_is_local, url_is_loopback};
@@ -10,16 +11,6 @@ use super::{
 
 fn valid_llm_protocol(value: &str) -> bool {
     value == "openai.chat-completions.v1"
-}
-
-fn provider_contract(name: &str) -> Option<(&'static str, &'static str)> {
-    match name {
-        "llm" | "backchannel" => Some(("openai.chat-completions.v1", "/v1/chat/completions")),
-        "asr" => Some(("openai.audio-transcriptions.v1", "/v1/audio/transcriptions")),
-        "tts" => Some(("openai.audio-speech.v1", "/v1/audio/speech")),
-        "embedding" => Some(("larm.embedding.v1", "/v1/embed")),
-        _ => None,
-    }
 }
 
 pub(crate) fn validate_config_revision(revision: Option<&str>) -> Result<(), DynamicLanError> {
@@ -168,41 +159,22 @@ pub(crate) fn validate_state_shape(
     validate_revision(&state.profile_revision)?;
     validate_revision(&state.audience_revision)?;
     let provider = sole_llm(&state.providers)?;
-    let expected_service = match expected_profile.selector.as_str() {
-        "SAAA-w-Image" => Some((
-            "image",
-            "media.image.generate",
-            "larm.image-generation.v1",
-            "/v1/images/generations",
-        )),
-        "SAAA-w-music" => Some((
-            "music",
-            "media.music.generate",
-            "larm.music-generation.v1",
-            "/v1/music/generations",
-        )),
-        _ => None,
-    };
-    if state.services.len() != usize::from(expected_service.is_some()) {
-        return Err(contract_error(()));
-    }
-    if let Some((name, capability, protocol, endpoint)) = expected_service {
-        let service = &state.services[0];
-        if service["name"] != name
-            || service["capability"] != capability
-            || service["protocol"] != protocol
-            || service["endpoint"] != endpoint
-            || service["model"].as_str().is_none_or(str::is_empty)
-        {
-            return Err(contract_error(()));
-        }
-    }
-    if state.providers.len() != 5 {
+    super::profile_contract::validate_services(state, expected_profile)?;
+    let models = expected_profile.catalog_models.as_ref();
+    let expected_count = models.map_or(5, |models| models.len());
+    // The text adapter requests only llm; legacy daemons may still return the full Warm set.
+    let llm_only = state.providers.len() == 1 && state.providers[0].name == "llm";
+    if !llm_only && state.providers.len() != expected_count {
         return Err(contract_error(()));
     }
     let mut names = std::collections::HashSet::new();
     for entry in &state.providers {
-        let expected = provider_contract(&entry.name).ok_or_else(|| contract_error(()))?;
+        let expected = expected_profile
+            .catalog_contracts
+            .get(&entry.name)
+            .map(|(protocol, endpoint)| (protocol.as_str(), endpoint.as_str()))
+            .or_else(|| provider_contract(&entry.name))
+            .ok_or_else(|| contract_error(()))?;
         if !names.insert(entry.name.as_str())
             || entry.protocol != expected.0
             || entry.endpoint != expected.1
@@ -279,22 +251,7 @@ pub(crate) fn selected_llm_from_catalog(
     if catalog.revision.is_empty() {
         return Err(contract_error(()));
     }
-    let mut catalog_models = std::collections::BTreeMap::new();
-    for entry in &catalog.providers {
-        let expected = provider_contract(&entry.name).ok_or_else(|| contract_error(()))?;
-        if entry.protocol != expected.0
-            || entry.endpoint != expected.1
-            || entry.model.is_empty()
-            || catalog_models
-                .insert(entry.name.clone(), entry.model.clone())
-                .is_some()
-        {
-            return Err(contract_error(()));
-        }
-    }
-    if catalog_models.len() != 5 {
-        return Err(contract_error(()));
-    }
+    let (catalog_models, catalog_contracts) = super::profile_contract::catalog_contracts(catalog)?;
     let mut matching = catalog
         .providers
         .iter()
@@ -328,6 +285,8 @@ pub(crate) fn selected_llm_from_catalog(
         selector: catalog.selector.clone(),
         catalog_revision: Some(catalog.revision.clone()),
         catalog_models: Some(catalog_models),
+        catalog_services: catalog.services.clone(),
+        catalog_contracts,
         id: catalog.id.clone(),
         capability: provider.capability.clone(),
         model: provider.model.clone(),

@@ -141,6 +141,8 @@ fn test_identity(id: &str, created_at: &str, expires_at: &str) -> ConnectionIden
             selector: "SAAA".to_string(),
             catalog_revision: Some("rev-fixture".to_string()),
             catalog_models: None,
+            catalog_services: Vec::new(),
+            catalog_contracts: Default::default(),
             id: PROFILE_ID.to_string(),
             capability: PROFILE_CAPABILITY.to_string(),
             model: LLM_MODEL.to_string(),

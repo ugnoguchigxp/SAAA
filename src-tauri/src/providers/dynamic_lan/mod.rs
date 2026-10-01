@@ -11,6 +11,7 @@ pub(crate) mod credential;
 mod http;
 pub(crate) mod probe;
 mod profile_catalog;
+mod profile_contract;
 mod urls;
 mod validate;
 use auth::*;
@@ -24,6 +25,7 @@ include!("connection_lifecycle.rs");
 include!("connection_runtime.rs");
 #[cfg(test)]
 mod tests {
+    mod cold_services;
     include!("tests/fixtures_and_contracts.rs");
     include!("tests/resolution_tests.rs");
     include!("tests/selector_tests.rs");

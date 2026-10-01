@@ -19,18 +19,42 @@ pub struct CatalogProvider {
     pub context_window: Option<ContextWindow>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CatalogService {
     pub name: String,
     pub capability: String,
     pub protocol: String,
     pub endpoint: String,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_policy: Option<ServiceStartupPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStartupPolicy {
+    pub min_warm_instances: u32,
+    #[serde(flatten)]
+    pub details: serde_json::Map<String, serde_json::Value>,
+}
+
+impl CatalogService {
+    pub fn starts_on_request(&self) -> bool {
+        self.startup_policy
+            .as_ref()
+            .is_some_and(|policy| policy.min_warm_instances == 0)
+    }
 }
 
 impl CatalogProfile {
     pub fn provider(&self, name: &str) -> Option<&CatalogProvider> {
         self.providers.iter().find(|provider| provider.name == name)
+    }
+    pub fn service(&self, capability: &str) -> Option<&CatalogService> {
+        self.services
+            .iter()
+            .find(|service| service.capability == capability)
     }
 }
 
@@ -76,6 +100,13 @@ pub async fn fetch(
         .iter()
         .map(parse_service)
         .collect::<Result<Vec<_>, _>>()?;
+    let mut names = std::collections::HashSet::new();
+    for service in &services {
+        if !names.insert(&service.name) {
+            return Err("larm_catalog_invalid");
+        }
+        public_url(control_base, &service.endpoint)?;
+    }
     Ok(CatalogProfile {
         revision,
         selector: selector.to_string(),
@@ -108,7 +139,32 @@ fn parse_service(value: &serde_json::Value) -> Result<CatalogService, &'static s
         protocol: required_text(value, "protocol")?,
         endpoint: required_text(value, "endpoint")?,
         model: required_text(value, "model")?,
+        startup_policy: value
+            .get("startupPolicy")
+            .map(|policy| {
+                serde_json::from_value(policy.clone()).map_err(|_| "larm_catalog_invalid")
+            })
+            .transpose()?,
     })
+}
+
+/// Control credentials are only sent to the public API's origin, never to a backend port.
+pub fn public_url(base: &url::Url, endpoint: &str) -> Result<url::Url, &'static str> {
+    if endpoint.starts_with("//") || endpoint.is_empty() {
+        return Err("larm_invalid_service_endpoint");
+    }
+    let url = base
+        .join(endpoint)
+        .map_err(|_| "larm_invalid_service_endpoint")?;
+    if url.origin() != base.origin()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("larm_invalid_service_endpoint");
+    }
+    Ok(url)
 }
 
 fn required_text(value: &serde_json::Value, key: &str) -> Result<String, &'static str> {

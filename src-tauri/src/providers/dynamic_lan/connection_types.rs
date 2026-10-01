@@ -70,6 +70,8 @@ struct SelectedLlmProfile {
     selector: String,
     catalog_revision: Option<String>,
     catalog_models: Option<std::collections::BTreeMap<String, String>>,
+    catalog_services: Vec<saaa_larm_session::catalog::CatalogService>,
+    catalog_contracts: std::collections::BTreeMap<String, (String, String)>,
     id: String,
     capability: String,
     model: String,

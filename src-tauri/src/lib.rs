@@ -18,6 +18,8 @@ mod backup;
 mod coding;
 #[path = "runtime/command_registry.rs"]
 mod command_registry;
+#[cfg(feature = "conversation-queue-e2e")]
+pub mod conversation_queue_e2e;
 mod credentials;
 mod database_backup;
 mod diagnosis;
@@ -27,6 +29,7 @@ mod generative_ui;
 #[cfg(feature = "provider-diagnostics")]
 pub mod harness_llm_diagnostic;
 pub mod ipc_contract;
+mod media_generation;
 mod memory;
 mod models;
 mod persistence;
@@ -42,14 +45,12 @@ mod schedule;
 mod situation;
 mod steward;
 mod task_queue;
-mod tts_dictionary;
-#[cfg(feature = "conversation-queue-e2e")]
-pub mod conversation_queue_e2e;
 #[cfg(any(test, feature = "conversation-queue-e2e"))]
 mod test_state;
 #[cfg(any(test, feature = "conversation-queue-e2e"))]
 mod test_support;
 pub mod tool_selection;
+mod tts_dictionary;
 mod util;
 mod voice;
 pub mod voice_asr_contract;
