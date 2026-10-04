@@ -14,6 +14,7 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     CREATE TABLE IF NOT EXISTS coding_origin_bindings(id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES coding_jobs(id), origin_kind TEXT NOT NULL CHECK(origin_kind IN ('user_turn','delegated_event')), origin_id TEXT NOT NULL, operation_digest TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(origin_kind,origin_id,operation_digest), UNIQUE(job_id));
     CREATE TABLE IF NOT EXISTS coding_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES coding_jobs(id), run_id TEXT NOT NULL REFERENCES coding_runs(id), kind TEXT NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS coding_job_events ON coding_events(job_id,sequence);")?;
+    super::terminal::ledger::migrate(c)?;
     c.execute(
         "INSERT OR IGNORE INTO coding_origin_bindings(id,job_id,origin_kind,origin_id,operation_digest,created_at)
          SELECT 'origin-' || id,id,'user_turn',source_id,'legacy:' || id,?1 FROM coding_jobs",
@@ -67,7 +68,7 @@ pub fn authorize(c: &Connection, job: &str, conversation: &str) -> Result<(), St
           ) AND NOT EXISTS(
             SELECT 1 FROM coding_runs prior
             LEFT JOIN conversation_messages source ON source.id=prior.source_id
-            WHERE prior.job_id=j.id AND source.id IS NULL
+            WHERE prior.job_id=j.id AND source.id IS NULL AND NOT EXISTS(SELECT 1 FROM terminal_resumes x JOIN terminal_questions q ON q.id=x.question_id WHERE x.source_id=prior.source_id AND x.job_id=j.id AND q.job_id=j.id AND q.state='answered' AND q.decision_id=x.decision_id)
           )) OR
           (o.origin_kind='delegated_event' AND EXISTS(
             SELECT 1 FROM steward_tasks t
@@ -86,7 +87,7 @@ pub fn authorize(c: &Connection, job: &str, conversation: &str) -> Result<(), St
           ) AND NOT EXISTS(
             SELECT 1 FROM coding_runs prior
             LEFT JOIN conversation_messages source ON source.id=prior.source_id
-            WHERE prior.job_id=j.id AND source.id IS NULL
+            WHERE prior.job_id=j.id AND source.id IS NULL AND NOT EXISTS(SELECT 1 FROM terminal_resumes x JOIN terminal_questions q ON q.id=x.question_id WHERE x.source_id=prior.source_id AND x.job_id=j.id AND q.job_id=j.id AND q.state='answered' AND q.decision_id=x.decision_id)
           ))
         ))",
             params![job, conversation],
@@ -125,6 +126,17 @@ pub fn inspect(
             .as_u64()
             .ok_or_else(|| "Coding event sequence is missing".to_string())?;
         events.push(row);
+    }
+    value["terminal"] = super::terminal::ledger::context(c, job)?;
+    if !value["terminal"].is_null() && !value["result"].is_null() {
+        let result = value["result"].clone();
+        value["result"] = json!({"complete":result["complete"]});
+        if result["summary"].is_string() {
+            value["result"]["summary"] = result["summary"].clone();
+        }
+        if result["error"].is_string() {
+            value["result"]["error"] = result["error"].clone();
+        }
     }
     value["events"] = json!(events);
     value["nextCursor"] = json!(next);

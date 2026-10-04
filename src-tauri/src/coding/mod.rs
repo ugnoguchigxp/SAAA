@@ -12,3 +12,5 @@ mod settings;
 mod tests;
 pub(crate) mod tools;
 pub(crate) mod world_snapshot;
+
+pub(crate) mod terminal;

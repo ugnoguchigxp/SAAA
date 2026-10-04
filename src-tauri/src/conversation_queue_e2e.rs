@@ -136,6 +136,14 @@ struct Fixture {
     llm_calls: Mutex<usize>,
     speech_before_done: AtomicBool,
     fail_after_search: AtomicBool,
+    revoke_cloud: AtomicBool,
+    cloud_deadline: AtomicBool,
+    cloud_fallback: AtomicBool,
+    cloud_native: AtomicBool,
+    cloud_options: AtomicBool,
+    cloud_auth_rejection: AtomicBool,
+    withdraw_cloud: AtomicBool,
+    switch_cloud: AtomicBool,
     slow_ornith: AtomicBool,
     invalid_reply: AtomicBool,
     authentication_failure: AtomicBool,
@@ -175,6 +183,53 @@ pub(crate) fn capture_speech(text: &str) -> bool {
 }
 pub(crate) fn web_search(query: &str) -> Option<String> {
     let fixture = fixture()?;
+    if fixture.revoke_cloud.swap(false, Ordering::SeqCst)
+        || fixture.withdraw_cloud.load(Ordering::SeqCst)
+        || fixture.switch_cloud.load(Ordering::SeqCst)
+    {
+        fixture
+            .context_writer
+            .lock()
+            .expect("cloud writer")
+            .as_ref()
+            .expect("cloud writer set")
+            .write(|db| {
+                let loaded = persistence::service_registry_store::load_registry(db)?;
+                let mut snapshot = loaded.snapshot;
+                if fixture.withdraw_cloud.load(Ordering::SeqCst) {
+                    snapshot
+                        .bindings
+                        .iter_mut()
+                        .find(|b| {
+                            b.purpose
+                                == crate::providers::service_registry::Purpose::ConversationRespond
+                        })
+                        .ok_or("binding missing")?
+                        .cloud_allowed = false;
+                } else if fixture.switch_cloud.load(Ordering::SeqCst) {
+                    let binding = snapshot
+                        .bindings
+                        .iter_mut()
+                        .find(|b| {
+                            b.purpose
+                                == crate::providers::service_registry::Purpose::ConversationRespond
+                        })
+                        .ok_or("binding missing")?;
+                    binding.primary_resource_id = Some("res:harness-llm".into());
+                    binding.fallback_resource_ids.clear();
+                } else {
+                    snapshot
+                        .connections
+                        .iter_mut()
+                        .find(|c| c.connection_id == "conn:svc-cloud-llm")
+                        .ok_or("cloud connection missing")?
+                        .enabled = false;
+                }
+                persistence::service_registry_store::save_registry(db, &snapshot, loaded.revision)?;
+                Ok(())
+            })
+            .expect("cloud revocation saved");
+    }
     fixture
         .searches
         .lock()
@@ -336,7 +391,35 @@ pub async fn run() -> Result<Value, String> {
 }
 
 pub async fn run_cloud_conversation() -> Result<Value, String> {
-    run_variant_with(false, false, false, false, false, true).await
+    run_variant_with(false, false, false, false, false, Some(CloudCase::Normal)).await
+}
+
+#[derive(Clone, Copy)]
+enum CloudCase {
+    Normal,
+    Revoked,
+    Deadline,
+    Fallback,
+    AuthRejected,
+    Withdrawn,
+    Switched,
+    Native,
+    Options,
+}
+
+pub async fn run_cloud_boundary(case: &str) -> Result<Value, String> {
+    let case = match case {
+        "revoked" => CloudCase::Revoked,
+        "deadline" => CloudCase::Deadline,
+        "fallback" => CloudCase::Fallback,
+        "auth" => CloudCase::AuthRejected,
+        "consent" => CloudCase::Withdrawn,
+        "switch" => CloudCase::Switched,
+        "native" => CloudCase::Native,
+        "options" => CloudCase::Options,
+        _ => return Err("Unknown cloud boundary case".into()),
+    };
+    run_variant_with(false, false, false, false, false, Some(case)).await
 }
 
 pub async fn run_failure_after_search() -> Result<Value, String> {
@@ -387,7 +470,7 @@ async fn run_variant(
         invalid_reply,
         authentication_failure,
         context_trial,
-        false,
+        None,
     )
     .await
 }
@@ -398,7 +481,7 @@ async fn run_variant_with(
     invalid_reply: bool,
     authentication_failure: bool,
     context_trial: bool,
-    cloud_route: bool,
+    cloud_route: Option<CloudCase>,
 ) -> Result<Value, String> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -417,6 +500,41 @@ async fn run_variant_with(
         .fail_after_search
         .store(fail_after_search, Ordering::SeqCst);
     fixture.slow_ornith.store(slow_ornith, Ordering::SeqCst);
+    fixture.revoke_cloud.store(
+        matches!(cloud_route, Some(CloudCase::Revoked)),
+        Ordering::SeqCst,
+    );
+    fixture.cloud_deadline.store(
+        matches!(cloud_route, Some(CloudCase::Deadline)),
+        Ordering::SeqCst,
+    );
+    fixture.cloud_options.store(
+        matches!(cloud_route, Some(CloudCase::Options)),
+        Ordering::SeqCst,
+    );
+    fixture.cloud_native.store(
+        matches!(cloud_route, Some(CloudCase::Native)),
+        Ordering::SeqCst,
+    );
+    fixture.cloud_fallback.store(
+        matches!(
+            cloud_route,
+            Some(CloudCase::Fallback | CloudCase::AuthRejected)
+        ),
+        Ordering::SeqCst,
+    );
+    fixture.cloud_auth_rejection.store(
+        matches!(cloud_route, Some(CloudCase::AuthRejected)),
+        Ordering::SeqCst,
+    );
+    fixture.withdraw_cloud.store(
+        matches!(cloud_route, Some(CloudCase::Withdrawn)),
+        Ordering::SeqCst,
+    );
+    fixture.switch_cloud.store(
+        matches!(cloud_route, Some(CloudCase::Switched)),
+        Ordering::SeqCst,
+    );
     *active().lock().map_err(|_| "fixture lock unavailable")? = Some(fixture.clone());
     let _guard = FixtureGuard;
     let router = Router::new()
@@ -425,7 +543,7 @@ async fn run_variant_with(
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    let result = if cloud_route {
+    let result = if cloud_route.is_some() {
         cloud_route::run_with_server(&base, &fixture).await
     } else {
         run_with_server(&base, &fixture).await

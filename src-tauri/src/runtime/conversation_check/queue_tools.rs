@@ -6,7 +6,8 @@ use super::ConversationAudit;
 use crate::{ProviderOutputPersistence, RunCancellation, StartTurnInput};
 
 pub(super) fn allowed(name: &str) -> bool {
-    crate::tts_dictionary::tools::NAMES.contains(&name)
+    crate::coding::contracts::NAMES.contains(&name)
+        || crate::tts_dictionary::tools::NAMES.contains(&name)
         || name == crate::memory::personal_state::worker::explicit::TOOL
         || name == "recall_conversation"
         || crate::runtime::agent_tools::is_typed_memory_tool(name)

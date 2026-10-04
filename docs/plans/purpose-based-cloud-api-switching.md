@@ -312,30 +312,29 @@ rollbackの検証には設定のコピーとfixture secretを使い、実デー�
 
 実装前に確定する事項は、最初のnative LLM adapterと外部Media adapterのサービス選定、各embedding consumerの現在の索引契約、LARMの用途別profileと必要能力集合、既存Agent境界、記憶系の許可されたデータ区分である。P0で実契約を確認して各段階へ反映する。秘密情報の不足や実サービスの非対応があっても、fixtureによる共通基盤の検証は独立して進められる。
 
-## 実装状況と計画との差分（2026年10月4日時点）
+## 実装状況と計画との差分（2026年10月5日時点）
 
-実装済みの範囲はP1の登録・保存・移行の基盤、P2の会話LLM（直接Chat Completions）、P3のうち音声Bindingの共有、P4の最小UIである。実サービスと実機の受入（P8）は未実施で、下記の未実装の用途は未対応のままである。
+レビューで確認した六件の不具合を修正し、初期提供の会話・音声・設定UIへ実行境界と回復操作を追加した。native会話APIとしてAnthropic Messages、外部MediaとしてReplicate Predictionsを追加した。実サービス・macOS音声の受入は、決定的なfixtureの合格と区別する。
 
-### 実装した内容
+### 実装と検証の範囲
 
-- 型、検証、旧設定の移行、ResolvedRoute解決: [providers/service_registry](../../src-tauri/src/providers/service_registry.rs)。
-- 保存と読出し、expectedRevisionによる競合検出: [persistence/service_registry_store.rs](../../src-tauri/src/persistence/service_registry_store.rs)。
-- 会話の接続先選択と直接Chat Completions試行: [conversation_check/direct_route.rs](../../src-tauri/src/runtime/conversation_check/direct_route.rs)。`ornith.rs`はjob開始時に一度だけ接続先を固定する。
-- IPC: `get_service_registry`、`save_service_registry`、`set_service_connection_secret`、`get_service_connection_secret_state`。
-- UI: 設定の「用途別の接続先」タブ（[PurposeRoutesSection](../../src/features/settings/PurposeRoutesSection.tsx)）。
+- 登録、用途選択、secret保存の途中失敗からの再開、無効化、参照保護付き削除、同一接続内の複数モデル、revision競合を扱う。APIキーは表示・監査へ出さず、既存設定と資格情報を初期化しない。
+- 会話は開始時の経路を固定し、次の送信・Tool・回答採用の前に接続の無効化と送信許可の撤回を再検証する。通常の選択変更は次の依頼へ反映する。最初の推論だけ、出力・Tool実行前の接続不可・混雑・一時不提供に限り直接API間の代替先を使う。
+- 全体期限は準備・Tool往復・音声待ち・採用を含む。個別の通信期限を全体の残り時間へ切り詰める。HTTPのJSON応答を受けた場合も同じ応答を処理し、別の生成POSTを追加しない。
+- 既存の会話互換設定を保持し、出力上限の指定方法・推論・thinking・生成中表示をResource単位で編集できる。Context容量は既存の保守的な予算を使い、モデル別容量の編集は未対応。
+- HTTP ASRは同じ発話の途中版と最終版を固定した設定で処理する。TTSも発話内のチャンクを固定する。ライブASRの方式変更はマイク再開時へ反映し、画面にその制限を示す。capture、PCMのAEC処理、音声重なりの契約は変更していない。
+- 明示操作のモデル一覧・固定文の確認と、実際の用途別attempt・結果採用の履歴を別に保存する。設定変更前の利用実績を現在の設定の成功として表示しない。
+- Anthropic Messagesはsystem・履歴を変換し、完成したpublic textだけを共通action loopへ戻す。native tool delegationは行わない。完了後に表示する形式で提供する。
+- 画像・音楽のBinding、Replicateのモデル固有JSON入力、remote IDと設定snapshotの永続化、再起動後の照会、確認済み／未確認を区別した中止、採用前の成果物保存を実装した。生成要求は自動再送せず、同じrun IDをDBで拒否する。成果物の取得でAPIキーを外部配信URLへ転送しない。
 
-### 計画からの差分と理由
+### 維持した互換性と提供範囲
 
-- 三つのdocumentに分けず、`providers.registry/default`の一つのdocumentに保存する。単一行の更新で原子性が成り立ち、既存の7〜8件の完全snapshotバッチと一覧の許可リストへ触れずに済む。三分割が必要になった時点で移行する。
-- 保存済みのregistryが存在するまでは、会話は従来のLARM経路のまま動く。保存済みのregistryは正本となり、解決に失敗した場合は構成エラーを返し、他のサービスへ切り替えない。
-- 旧Provider一覧と音声Routeは従来設定が正本のまま、registry読出し時に重ねる。音声Bindingの保存は同じtransactionで`routing.tasks`へ射影する（[registry_projection.rs](../../src-tauri/src/persistence/settings/registry_projection.rs)）。音声パイプライン、AEC、captureには変更を加えていない。音声の用途は未選択にできず、LARMをfallbackにできない（従来の契約どおり）。
-- 会話Bindingは保存済みのクラウド設定が従来の実行経路と食い違うため`needs-review`として移行する。利用者が選んで適用するまで従来のLARM経路で動く。
-- 会話の接続先がクラウドの場合、出力予約は4096 tokens、入力予算は`ProviderInputBudget::openai_compatible()`の既定値を使う。ResourceにContext容量を持たせる拡張は未実装である。
-- 新規サービスの秘密情報は`com.saaa.service-connection`の名前付きsecretとして、既存のcredential_secretsに保存する。既存Providerのsecretは`com.saaa.provider-api-key`のまま参照する。
+Registryは一つのdocumentを原子的に保存する。従来のProvider設定が所有する接続は読出し時に投影し、新規接続はregistryに保存する。従来形式で表せない音声接続を既存Provider設定へ上書きしない。会話のneeds-reviewは明示適用まで従来経路を維持する。
 
-### 未実装
+記憶・Worldの正本はローカルのRust/SQLiteにある。既存の背景推論にはlocal binding、source/View、配送・削除・tokenizer等の専用契約がある。任意のクラウドAPIへ切り替えるP6、埋め込み索引のgeneration移行は未実装であり、用途画面に非対応理由を表示する。既存索引やforget状態は変更しない。
 
-- 会話の最初の推論attempt限定のfallback、用途別attemptの永続記録と「直近の利用先」の表示。
-- 動作確認（モデル一覧取得、接続確認）、用途ごとの全体期限・attempt期限・送信許可の編集、プリセット、サービス削除。
-- P5（画像・音楽）、P6（記憶・World・埋め込み）、P7（Agent・検索）、native Model API adapter。
-- P8の実サービスとmacOS実機の受入。
+P7の実装エージェントは既存の実装設定へ案内し、既存のworkspace・実行権限・成果採用の入口を維持する。Agentと外部検索を新しいPurpose Bindingで管理する拡張は未実装。会話モデルの登録によってコード実行権限を増やさない。
+
+P8の実API料金・応答品質・実機AEC受入は未実施。TTS-onlyが発話を作らないことと、再生中の人の発話がASRへ届くことの両方を実機で確認するまで、音声受入完了とは扱わない。全計画の完了を示すものではない。
+
+検証結果と残る品質ゲートは [修正検証記録](../../spec/evidence/purpose-cloud-api-fixes/20261005/verification.md) に記録する。

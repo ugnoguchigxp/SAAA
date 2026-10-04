@@ -64,7 +64,19 @@ fn overlay_legacy(stored: RegistrySnapshot, derived: RegistrySnapshot) -> Regist
             binding.purpose,
             Purpose::VoiceTranscribe | Purpose::VoiceSpeak
         );
-        if is_voice {
+        if is_voice
+            && !stored_bindings
+                .iter()
+                .find(|item| item.purpose == binding.purpose)
+                .and_then(|b| b.primary_resource_id.as_deref())
+                .is_some_and(|id| id.starts_with("res:svc-"))
+        {
+            if let Some(saved) = stored_bindings
+                .iter()
+                .find(|item| item.purpose == binding.purpose)
+            {
+                binding.cloud_allowed = saved.cloud_allowed;
+            }
             continue;
         }
         if let Some(saved) = stored_bindings
@@ -97,20 +109,6 @@ fn overlay_legacy(stored: RegistrySnapshot, derived: RegistrySnapshot) -> Regist
             .take_if(|id| !known.contains(id));
     }
     merged
-}
-
-/// True once a user-applied registry exists. Until then the conversation keeps
-/// its legacy execution path unchanged.
-pub(crate) fn has_saved_registry(connection: &Connection) -> Result<bool, String> {
-    connection
-        .query_row(
-            "SELECT 1 FROM settings_documents WHERE namespace=?1 AND key=?2",
-            params![NAMESPACE, KEY],
-            |_| Ok(()),
-        )
-        .optional()
-        .map(|row| row.is_some())
-        .map_err(database_error)
 }
 
 pub(crate) fn load_registry(connection: &Connection) -> Result<LoadedRegistry, String> {
@@ -156,6 +154,7 @@ pub(crate) fn save_registry(
         return Err("Settings changed since they were loaded; reload and review".to_string());
     }
     reject_cloud_while_local_only(&transaction, snapshot)?;
+    validate_owned_ids(&transaction, snapshot)?;
     super::settings::registry_projection::project_voice_bindings(&transaction, snapshot)?;
     transaction
         .execute(
@@ -170,6 +169,36 @@ pub(crate) fn save_registry(
         .map_err(database_error)?;
     transaction.commit().map_err(database_error)?;
     load_registry(connection)
+}
+
+/// A successful save must never silently discard a caller-created resource.
+fn validate_owned_ids(connection: &Connection, snapshot: &RegistrySnapshot) -> Result<(), String> {
+    let legacy = derive_from_legacy(connection)?;
+    for item in &snapshot.connections {
+        if !item.connection_id.starts_with("conn:svc-") {
+            let original = legacy
+                .connection(&item.connection_id)
+                .ok_or("New connection IDs must start with conn:svc-")?;
+            if serde_json::to_value(original).map_err(|e| e.to_string())?
+                != serde_json::to_value(item).map_err(|e| e.to_string())?
+            {
+                return Err("従来のサービスの変更は既存のサービス設定から保存してください".into());
+            }
+        }
+    }
+    for item in &snapshot.resources {
+        if !item.resource_id.starts_with("res:svc-") {
+            let original = legacy
+                .resource(&item.resource_id)
+                .ok_or("New resource IDs must start with res:svc-")?;
+            if serde_json::to_value(original).map_err(|e| e.to_string())?
+                != serde_json::to_value(item).map_err(|e| e.to_string())?
+            {
+                return Err("従来のモデルの変更は既存のサービス設定から保存してください".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Mirrors the legacy rule: while the local-only policy is on, a local primary
@@ -194,7 +223,10 @@ fn reject_cloud_while_local_only(
             .and_then(|resource| snapshot.connection(&resource.connection_id))
             .map(|connection| connection.location.as_str())
     };
-    for binding in snapshot.bindings.iter().filter(|binding| binding.enabled) {
+    for binding in snapshot.bindings.iter().filter(|binding| {
+        binding.enabled
+            && binding.review == crate::providers::service_registry::BindingReview::Ready
+    }) {
         let primary_is_local = binding
             .primary_resource_id
             .as_deref()
@@ -285,6 +317,7 @@ mod tests {
                 capability: crate::providers::service_registry::Capability::Transcription,
                 model: "m".into(),
                 detail: None,
+                request_options: None,
                 enabled: true,
             });
         let asr = snapshot
@@ -399,5 +432,41 @@ mod tests {
         broken.bindings[1].primary_resource_id = Some("res:missing".into());
         assert!(save_registry(&mut connection, &broken, fresh.revision).is_err());
         assert!(load_registry(&connection).unwrap().persisted);
+    }
+}
+
+#[cfg(test)]
+mod registry_id_regressions {
+    use super::*;
+    use crate::providers::service_registry::*;
+    #[test]
+    fn an_unowned_new_id_is_rejected_before_commit() {
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::initialize_database(&db).unwrap();
+        let loaded = load_registry(&db).unwrap();
+        let mut snapshot = loaded.snapshot;
+        snapshot.connections.push(ServiceConnection {
+            connection_id: "conn:other".into(),
+            label: "Other".into(),
+            adapter_kind: AdapterKind::ChatCompletions,
+            endpoint: "http://127.0.0.1:9000/v1".into(),
+            location: "cloud".into(),
+            authentication: "none".into(),
+            credential_ref: None,
+            enabled: false,
+        });
+        assert!(save_registry(&mut db, &snapshot, loaded.revision)
+            .unwrap_err()
+            .contains("conn:svc-"));
+        assert_eq!(settings_revision(&db).unwrap(), loaded.revision);
+        assert!(!load_registry(&db).unwrap().persisted);
+        snapshot.connections.last_mut().unwrap().connection_id = "conn:svc-other".into();
+        let saved = save_registry(&mut db, &snapshot, loaded.revision).unwrap();
+        assert!(saved.snapshot.connection("conn:svc-other").is_some());
+        let reloaded = load_registry(&db).unwrap();
+        assert_eq!(
+            serde_json::to_value(saved.snapshot).unwrap(),
+            serde_json::to_value(reloaded.snapshot).unwrap()
+        );
     }
 }

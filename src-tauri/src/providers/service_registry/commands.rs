@@ -13,7 +13,13 @@ fn view(loaded: &store::LoadedRegistry) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn get_service_registry(state: tauri::State<'_, AppState>) -> Result<Value, String> {
-    view(&state.sqlite_readers.read(store::load_registry)?)
+    state.sqlite_readers.read(|db| {
+        let loaded = store::load_registry(db)?;
+        let mut value = view(&loaded)?;
+        value["latestUsage"] = json!(super::operations::latest(db, &loaded.snapshot)?);
+        value["probes"] = json!(super::probe::latest(db, &loaded.snapshot)?);
+        Ok(value)
+    })
 }
 
 #[tauri::command]
@@ -27,7 +33,14 @@ pub fn save_service_registry(
     let loaded = state
         .sqlite_writer
         .write(|connection| store::save_registry(connection, &snapshot, expected_revision))?;
-    view(&loaded)
+    let mut value = view(&loaded)?;
+    value["latestUsage"] = json!(state
+        .sqlite_readers
+        .read(|db| super::operations::latest(db, &loaded.snapshot))?);
+    value["probes"] = json!(state
+        .sqlite_readers
+        .read(|db| super::probe::latest(db, &loaded.snapshot))?);
+    Ok(value)
 }
 
 fn secret_target(state: &AppState, connection_id: &str) -> Result<super::CredentialRef, String> {
@@ -72,4 +85,28 @@ pub fn get_service_connection_secret_state(
 #[allow(dead_code)]
 pub(crate) const fn credential_service() -> &'static str {
     SERVICE_CREDENTIAL_SERVICE
+}
+
+#[tauri::command]
+pub async fn probe_service_resource(
+    state: tauri::State<'_, AppState>,
+    resource_id: String,
+    kind: String,
+) -> Result<Value, String> {
+    if !matches!(kind.as_str(), "models" | "generation") {
+        return Err("Unknown diagnostic".into());
+    }
+    let loaded = state.sqlite_readers.read(store::load_registry)?;
+    let resource = loaded
+        .snapshot
+        .resource(&resource_id)
+        .ok_or("Resource is missing")?;
+    let fingerprint = super::probe::fingerprint(&loaded.snapshot, resource)?;
+    let result = super::probe::run(&loaded.snapshot, resource, &kind).await;
+    let attributes = json!({"resourceId":resource_id,"fingerprint":fingerprint,"kind":kind});
+    state.sqlite_writer.write(|db| {
+        db.execute("INSERT INTO audit_events(id,occurred_at,component,event_name,phase,outcome,attributes_json) VALUES(?1,?2,'provider','service-resource-probe','terminal',?3,?4)",rusqlite::params![format!("audit_{}",uuid::Uuid::new_v4().simple()),crate::now_iso(),if result.is_ok(){"success"}else{"failure"},attributes.to_string()]).map_err(crate::database_error)?;
+        Ok(())
+    })?;
+    result
 }

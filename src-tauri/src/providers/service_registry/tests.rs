@@ -209,3 +209,33 @@ fn credential_ref_serializes_without_secret_material() {
     assert!(text.contains("\"credentialRef\""));
     assert!(!text.to_lowercase().contains("secret"));
 }
+
+#[test]
+fn migration_pins_explicit_model_options_and_rejects_unsupported_adapters() {
+    use saaa_larm_session::http_api::{LlmOptions, Thinking, TokenLimit};
+    let mut providers = providers();
+    if let ModelProviderSettings::OpenAiCompatible(p) = &mut providers.providers[0] {
+        p.request_options = Some(LlmOptions {
+            token_limit: TokenLimit::Completion,
+            thinking: Thinking::Disabled,
+            temperature: Some(0.4),
+            ..Default::default()
+        });
+    }
+    let mut snapshot = migrate_legacy(&providers, &routing("provider")).unwrap();
+    let binding = &mut snapshot.bindings[0];
+    binding.primary_resource_id = Some("res:cloud-llm".into());
+    binding.review = BindingReview::Ready;
+    let route = resolve_route(&snapshot, Purpose::ConversationRespond).unwrap();
+    let options: LlmOptions = serde_json::from_value(route.request_options.unwrap()).unwrap();
+    let mut request = serde_json::json!({});
+    options.apply(&mut request, "custom-model", 4096, "provider-default");
+    assert_eq!(request["max_completion_tokens"], 4096);
+    assert_eq!(request["chat_template_kwargs"]["enable_thinking"], false);
+    assert_eq!(request["temperature"], serde_json::json!(0.4f32));
+    snapshot.connections[1].adapter_kind = AdapterKind::AgentSession;
+    assert!(validate_snapshot(&snapshot).is_err());
+    assert!(resolve_route(&snapshot, Purpose::ConversationRespond).is_err());
+    snapshot.connections[1].adapter_kind = AdapterKind::Larm;
+    assert!(validate_snapshot(&snapshot).is_err());
+}

@@ -1,11 +1,12 @@
 use serde::Deserialize;
 use ts_rs::TS;
 
-pub const NAMES: [&str; 4] = [
+pub const NAMES: [&str; 5] = [
     "coding_start",
     "coding_inspect",
     "coding_continue",
     "coding_cancel",
+    "coding_answer",
 ];
 pub const MAX_REQUEST_CHARS: usize = 32_000;
 
@@ -43,6 +44,15 @@ pub struct Cancel {
     pub reason: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Answer {
+    pub job_id: String,
+    pub expected_revision: u64,
+    pub question_id: String,
+    pub answer: serde_json::Value,
+}
+
 pub fn validate(name: &str, arguments: &str) -> Result<(), String> {
     if arguments.len() > 200_000 {
         return Err("invalid_arguments".into());
@@ -68,6 +78,15 @@ pub fn validate(name: &str, arguments: &str) -> Result<(), String> {
                 id_valid(&a.job_id)
                     && a.expected_revision <= i64::MAX as u64
                     && text_valid(&a.reason)
+            })
+            .unwrap_or(false),
+        "coding_answer" => serde_json::from_str::<Answer>(arguments)
+            .map(|a| {
+                id_valid(&a.job_id)
+                    && a.expected_revision <= i64::MAX as u64
+                    && !a.question_id.is_empty()
+                    && a.question_id.len() <= 240
+                    && a.answer.to_string().len() <= 32000
             })
             .unwrap_or(false),
         _ => false,

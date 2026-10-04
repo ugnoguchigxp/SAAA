@@ -8,6 +8,10 @@ pub(crate) enum Purpose {
     VoiceTranscribe,
     #[serde(rename = "voice.speak")]
     VoiceSpeak,
+    #[serde(rename = "media.image.generate")]
+    MediaImageGenerate,
+    #[serde(rename = "media.music.generate")]
+    MediaMusicGenerate,
 }
 
 impl Purpose {
@@ -16,6 +20,8 @@ impl Purpose {
             Self::ConversationRespond => "conversation.respond",
             Self::VoiceTranscribe => "voice.transcribe",
             Self::VoiceSpeak => "voice.speak",
+            Self::MediaImageGenerate => "media.image.generate",
+            Self::MediaMusicGenerate => "media.music.generate",
         }
     }
 
@@ -24,6 +30,8 @@ impl Purpose {
             Self::ConversationRespond => Capability::TextGeneration,
             Self::VoiceTranscribe => Capability::Transcription,
             Self::VoiceSpeak => Capability::Speech,
+            Self::MediaImageGenerate => Capability::ImageGeneration,
+            Self::MediaMusicGenerate => Capability::MusicGeneration,
         }
     }
 }
@@ -34,6 +42,8 @@ pub(crate) enum Capability {
     TextGeneration,
     Transcription,
     Speech,
+    ImageGeneration,
+    MusicGeneration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -41,6 +51,8 @@ pub(crate) enum Capability {
 pub(crate) enum AdapterKind {
     Larm,
     ChatCompletions,
+    AnthropicMessages,
+    ReplicateMedia,
     AgentSession,
     HttpAsr,
     HttpTts,
@@ -82,6 +94,9 @@ pub(crate) struct ServiceResource {
     /// Voice, language or other per-purpose setting preserved from legacy settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
+    /// Adapter options are validated at save time and pinned with the resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) request_options: Option<serde_json::Value>,
     pub(crate) enabled: bool,
 }
 
@@ -102,6 +117,10 @@ pub(crate) struct PurposeBinding {
     pub(crate) primary_resource_id: Option<String>,
     #[serde(default)]
     pub(crate) fallback_resource_ids: Vec<String>,
+    /// Explicit per-purpose cloud permission. Absent in older snapshots means
+    /// the existing, deliberately selected cloud configuration is preserved.
+    #[serde(default = "cloud_allowed_default")]
+    pub(crate) cloud_allowed: bool,
     pub(crate) timeout_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) attempt_timeout_ms: Option<u64>,
@@ -141,4 +160,8 @@ impl RegistrySnapshot {
             .find(|r| r.resource_id == id)
             .expect("test resource")
     }
+}
+
+fn cloud_allowed_default() -> bool {
+    true
 }

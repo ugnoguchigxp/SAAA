@@ -3725,6 +3725,7 @@ dependencies = [
  "saaa-personal-state-core",
  "saaa-reasoning-contract",
  "saaa-reasoning-mcp",
+ "saaa-terminal-agent-runtime",
  "scraper",
  "serde",
  "serde_json",
@@ -3789,6 +3790,17 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "saaa-terminal-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "libc",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

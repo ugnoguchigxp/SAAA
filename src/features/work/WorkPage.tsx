@@ -1,3 +1,5 @@
+import { CodingJobActions } from "../coding/CodingJobActions";
+import { WorkspacePicker } from "../coding/WorkspacePicker";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AppIcon } from "../../components/AppIcon";
@@ -13,7 +15,13 @@ type StewardTask = Awaited<ReturnType<typeof stewardApi.listTasks>>[number];
 type WorkTab = "queue" | "completed";
 
 const terminalStates = new Set(["done", "failed", "cancelled", "outcome_unknown"]);
-const terminalJobStates = new Set(["settled", "failed", "interrupted", "outcome_unknown"]);
+const terminalJobStates = new Set([
+  "settled",
+  "completed",
+  "failed",
+  "interrupted",
+  "outcome_unknown",
+]);
 
 function formatTime(value: string, locale: string): string {
   const numeric = Number(value);
@@ -204,7 +212,9 @@ export function WorkPage({
             </label>
           ) : null}
         </div>
-        {coding && coding.profile !== "codex-sdk-v1" ? (
+        {coding &&
+        coding.implementationMethod !== "terminal" &&
+        coding.profile !== "codex-sdk-v1" ? (
           <div className="work-settings-notice">
             <span>{t("workPage.notCodexProfile")}</span>
             <button type="button" className="workspace-text-button" onClick={onOpenSettings}>
@@ -212,6 +222,14 @@ export function WorkPage({
             </button>
           </div>
         ) : null}
+        {coding?.enabled && conversationId && (
+          <WorkspacePicker
+            conversationId={conversationId}
+            current={snapshot?.workspace?.path}
+            onSaved={() => void refresh()}
+            onError={setError}
+          />
+        )}
         {error ? (
           <p className="workspace-error" role="alert">
             {error}
@@ -275,9 +293,23 @@ export function WorkPage({
                   <div className="work-card-main">
                     <div>
                       <strong>{job.workspace}</strong>
-                      <span className="state-chip">{job.state}</span>
+                      <span className="state-chip">
+                        {job.state === "completed"
+                          ? "完了確認済み"
+                          : job.state === "awaiting_user"
+                            ? "回答・確認待ち"
+                            : job.state}
+                      </span>
                     </div>
                     <p>{job.result?.summary ?? job.jobId}</p>
+                    {conversationId && (
+                      <CodingJobActions
+                        conversationId={conversationId}
+                        job={job}
+                        onSaved={() => void refresh()}
+                        onError={setError}
+                      />
+                    )}
                   </div>
                 </article>
               ))}
@@ -320,9 +352,23 @@ export function WorkPage({
                       <div className="work-card-main">
                         <div>
                           <strong>{job.workspace}</strong>
-                          <span className="state-chip">{job.state}</span>
+                          <span className="state-chip">
+                            {job.state === "completed"
+                              ? "完了確認済み"
+                              : job.state === "awaiting_user"
+                                ? "回答・確認待ち"
+                                : job.state}
+                          </span>
                         </div>
                         <p>{job.result?.summary ?? job.result?.error ?? job.jobId}</p>
+                        {conversationId && (
+                          <CodingJobActions
+                            conversationId={conversationId}
+                            job={job}
+                            onSaved={() => void refresh()}
+                            onError={setError}
+                          />
+                        )}
                       </div>
                     </article>
                   ))}

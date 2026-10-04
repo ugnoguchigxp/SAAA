@@ -1,0 +1,54 @@
+[
+  {
+    "cli": "claude",
+    "terminal": "kitty",
+    "helperExit": 0,
+    "viewerStarted": true,
+    "exactSession": true,
+    "candidateReceived": true,
+    "exit": {
+      "code": 0,
+      "outputError": false,
+      "stopped": false
+    }
+  },
+  {
+    "cli": "claude",
+    "terminal": "ghostty",
+    "helperExit": 0,
+    "viewerStarted": true,
+    "exactSession": true,
+    "candidateReceived": true,
+    "exit": {
+      "code": 0,
+      "outputError": false,
+      "stopped": false
+    }
+  },
+  {
+    "cli": "codex",
+    "terminal": "kitty",
+    "helperExit": 0,
+    "viewerStarted": true,
+    "exactSession": true,
+    "candidateReceived": true,
+    "exit": {
+      "code": 0,
+      "outputError": false,
+      "stopped": false
+    }
+  },
+  {
+    "cli": "codex",
+    "terminal": "ghostty",
+    "helperExit": 0,
+    "viewerStarted": true,
+    "exactSession": true,
+    "candidateReceived": true,
+    "exit": {
+      "code": 0,
+      "outputError": false,
+      "stopped": false
+    }
+  }
+]

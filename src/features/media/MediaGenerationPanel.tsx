@@ -1,3 +1,6 @@
+import { MediaGenerationForm } from "./MediaGenerationForm";
+import { MediaHistoryList } from "./MediaHistoryList";
+import { MediaArtifacts } from "./MediaArtifacts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import * as mediaApi from "./mediaApi";
 import {
@@ -9,9 +12,12 @@ import {
 } from "./mediaApi";
 import "./mediaGeneration.css";
 
-type MediaApi = Pick<typeof mediaApi, "generateMedia" | "cancelMedia" | "readMediaArtifact">;
+type MediaApi = Pick<typeof mediaApi, "generateMedia" | "cancelMedia" | "readMediaArtifact"> &
+  Partial<Pick<typeof mediaApi, "listMediaGenerations" | "reconcileMedia">>;
 
 export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}) {
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [history, setHistory] = useState<mediaApi.MediaHistory>([]);
   const [kind, setKind] = useState<MediaKind>("image");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,6 +32,14 @@ export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
+    void api
+      .listMediaGenerations?.()
+      .then((records) => {
+        if (alive.current) setHistory(records);
+      })
+      .catch((cause) => {
+        if (alive.current) setHistoryError(String(cause));
+      });
     return () => {
       alive.current = false;
       for (const url of urls.current) URL.revokeObjectURL(url);
@@ -77,7 +91,50 @@ export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}
       if (alive.current) setError(String(cause));
     } finally {
       active.current = null;
-      if (alive.current) setBusy(false);
+      if (alive.current) {
+        setBusy(false);
+        void api
+          .listMediaGenerations?.()
+          .then((records) => {
+            if (alive.current) setHistory(records);
+          })
+          .catch(() => {});
+      }
+    }
+  }
+  async function recover(record: mediaApi.MediaHistory[number]) {
+    if (busy || fetching) return;
+    for (const url of urls.current) URL.revokeObjectURL(url);
+    urls.current = [];
+    downloaded.current.clear();
+    setFiles({});
+    setError(null);
+    setOutput(null);
+    setBusy(true);
+    active.current = record.runId;
+    try {
+      const result = record.result
+        ? { runId: record.runId, result: record.result, error: null }
+        : await api.reconcileMedia!(record.runId, (event) => {
+            if (alive.current) setProgress(event);
+          });
+      if (alive.current) {
+        setOutput(result);
+        if (result.result) await fetchArtifacts(result);
+      }
+    } catch (cause) {
+      if (alive.current) setError(String(cause));
+    } finally {
+      active.current = null;
+      if (alive.current) {
+        setBusy(false);
+        void api
+          .listMediaGenerations?.()
+          .then((records) => {
+            if (alive.current) setHistory(records);
+          })
+          .catch(() => {});
+      }
     }
   }
   async function cancel() {
@@ -92,51 +149,30 @@ export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}
   return (
     <details className="media-generation">
       <summary>画像・楽曲を作成</summary>
-      <form onSubmit={(event) => void submit(event)}>
-        <label>
-          作成するもの
-          <select
-            aria-label="作成するもの"
-            value={kind}
-            disabled={busy || fetching}
-            onChange={(event) => setKind(event.currentTarget.value as MediaKind)}
-          >
-            <option value="image">画像</option>
-            <option value="music">楽曲</option>
-          </select>
-        </label>
-        <textarea
-          aria-label="生成する内容"
-          value={prompt}
-          disabled={busy || fetching}
-          onChange={(event) => setPrompt(event.currentTarget.value)}
-          placeholder="作りたい画像や楽曲を説明してください"
-          rows={2}
-        />
-        <button
-          type="submit"
-          disabled={
-            busy || fetching || !prompt.trim() || new TextEncoder().encode(prompt).length > 16384
-          }
-        >
-          生成する
-        </button>
-        {busy && !fetching && active.current && (
-          <button
-            type="button"
-            disabled={progress?.phase === "cancelling"}
-            onClick={() => void cancel()}
-          >
-            中止
-          </button>
-        )}
-      </form>
+      <MediaGenerationForm
+        kind={kind}
+        prompt={prompt}
+        busy={busy || fetching}
+        canCancel={busy && !fetching && !!active.current}
+        cancelling={progress?.phase === "cancelling"}
+        setKind={setKind}
+        setPrompt={setPrompt}
+        submit={submit}
+        cancel={cancel}
+      />
       {busy && !fetching && (
         <p role="status">
           {mediaProgressMessage(progress?.phase ?? "discovering")}
           {progress?.progress != null ? ` ${Math.round(progress.progress * 100)}%` : ""}
         </p>
       )}
+      <MediaHistoryList
+        error={historyError}
+        history={history}
+        busy={busy || fetching}
+        canReconcile={!!api.reconcileMedia}
+        recover={recover}
+      />
       {output?.error && <p role="alert">{mediaFailureMessage(output.error)}</p>}
       {output?.error?.retryable && !busy && (
         <button type="button" onClick={() => void submit()}>
@@ -145,33 +181,14 @@ export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}
       )}
       {error && <p role="alert">{error}</p>}
       {output?.result && (
-        <div className="media-generation-artifacts">
-          <p>生成成功 · {output.result.model}</p>
-          {fetching && <p role="status">成果物を取得中…</p>}
-          {output.result.artifacts.map((artifact, index) => (
-            <div key={artifact.id}>
-              {files[index] &&
-                (output.result?.kind === "image" ? (
-                  <img src={files[index]} alt={prompt} />
-                ) : (
-                  <audio controls src={files[index]} />
-                ))}
-              {files[index] && (
-                <a
-                  href={files[index]}
-                  download={`${artifact.id}.${artifact.mimeType.split("/")[1] === "mpeg" ? "mp3" : artifact.mimeType.split("/")[1]}`}
-                >
-                  保存
-                </a>
-              )}
-            </div>
-          ))}
-          {error && !fetching && (
-            <button type="button" onClick={() => void fetchArtifacts(output)}>
-              成果物の取得を再試行
-            </button>
-          )}
-        </div>
+        <MediaArtifacts
+          output={output}
+          files={files}
+          prompt={prompt}
+          fetching={fetching}
+          error={error}
+          retry={() => fetchArtifacts(output)}
+        />
       )}
     </details>
   );

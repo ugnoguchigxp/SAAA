@@ -148,6 +148,21 @@ fn validate_named_secret(service: &str, account: &str, value: &[u8]) -> Result<(
 }
 
 pub(crate) fn load_api_key(provider_id: &str) -> Result<Option<Zeroizing<String>>, String> {
+    if let Some(connection_id) = provider_id.strip_prefix("registry:") {
+        let reference = database()?.read_serialized(|db| {
+            let loaded = crate::persistence::service_registry_store::load_registry(db)?;
+            let connection = loaded
+                .snapshot
+                .connection(connection_id)
+                .filter(|c| c.enabled)
+                .ok_or("音声サービスは無効です")?;
+            connection
+                .credential_ref
+                .clone()
+                .ok_or("資格情報の参照がありません".into())
+        })?;
+        return load_named_secret(&reference.service, &reference.account);
+    }
     load_named_secret(PROVIDER_CREDENTIAL_SERVICE, provider_id)
 }
 

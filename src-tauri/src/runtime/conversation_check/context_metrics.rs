@@ -30,6 +30,7 @@ pub(super) struct RequestMetrics {
     connection: String,
     latest: Arc<Mutex<Option<(String, Instant, bool)>>>,
     retry_blocked: Arc<AtomicBool>,
+    response_model: Arc<Mutex<Option<String>>>,
 }
 
 impl RequestMetrics {
@@ -41,6 +42,7 @@ impl RequestMetrics {
     ) -> Self {
         Self {
             retry_blocked,
+            response_model: Arc::new(Mutex::new(None)),
             audit: audit.clone(),
             logical_id: uuid::Uuid::new_v4().simple().to_string(),
             step: context.step,
@@ -48,6 +50,17 @@ impl RequestMetrics {
             tool_digest: context.fixed.tool_set_digest.clone(),
             connection: digest(connection),
             latest: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub(super) fn observed_model(&self) -> Option<String> {
+        self.response_model.lock().ok().and_then(|v| v.clone())
+    }
+    pub(super) fn response_model(&self, model: Option<&str>) {
+        if let Some(model) = model {
+            if let Ok(mut value) = self.response_model.lock() {
+                *value = Some(model.chars().take(128).collect());
+            }
         }
     }
 
@@ -137,6 +150,7 @@ impl ObservationSink for RequestMetrics {
     }
 
     fn finished(&self, receipt: &AttemptReceipt) {
+        self.response_model(receipt.response_model.as_deref());
         let mut value = serde_json::to_value(receipt).unwrap_or(Value::Null);
         if let Some(object) = value.as_object_mut() {
             object.insert("correlationId".into(), json!(self.audit.correlation_id));

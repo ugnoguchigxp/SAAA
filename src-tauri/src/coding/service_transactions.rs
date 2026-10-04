@@ -22,6 +22,7 @@ impl ToolTransaction<'_> {
             "coding_inspect" => inspect(self.tx, self.input, self.canonical),
             "coding_continue" => continue_job(&self, &settings, launch),
             "coding_cancel" => cancel_job(self.tx, self.input, self.canonical),
+            "coding_answer" => answer_question(&self, launch),
             _ => Err("invalid_tool".into()),
         }
     }
@@ -116,7 +117,12 @@ fn continue_job(
     }
     repo::authorize(tx, &args.job_id, &input.conversation_id)?;
     let (status, _) = repo::revision(tx, &args.job_id, args.expected_revision)?;
-    if !matches!(status.as_str(), "settled" | "failed" | "interrupted") {
+    let review: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM terminal_runs t JOIN coding_jobs j ON j.current_run_id=t.run_id WHERE j.id=?1 AND t.phase='review')", [&args.job_id], |r| r.get(0)).map_err(crate::database_error)?;
+    if !matches!(
+        status.as_str(),
+        "settled" | "completed" | "failed" | "interrupted"
+    ) && !review
+    {
         return Err("busy".into());
     }
     let (saved_settings, delivery): (String, String) = tx
@@ -130,7 +136,7 @@ fn continue_job(
         && serde_json::from_str::<CodingSettings>(&saved_settings)
             .map_err(|_| "coding_settings_invalid")?
             .implementation_method
-            == "codex-sdk"
+            != "pi"
     {
         return Err("coding_outcome_unknown".into());
     }
@@ -161,4 +167,56 @@ fn cancel_job(tx: &Connection, input: &StartTurnInput, canonical: &Value) -> Res
         args.expected_revision,
         &args.reason,
     )
+}
+
+fn answer_question(
+    context: &ToolTransaction<'_>,
+    launch: &mut Option<String>,
+) -> Result<Value, String> {
+    let args: Answer =
+        serde_json::from_value(context.canonical.clone()).map_err(|_| "invalid_arguments")?;
+    let kind: String = context
+        .tx
+        .query_row(
+            "SELECT kind FROM terminal_questions WHERE id=?1 AND job_id=?2",
+            rusqlite::params![args.question_id, args.job_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| "question_unavailable")?;
+    if kind == "permission" {
+        return Err("permission_requires_user_screen".into());
+    }
+    let source: String = context
+        .tx
+        .query_row(
+            "SELECT content FROM conversation_messages WHERE id=?1 AND conversation_id=?2",
+            rusqlite::params![context.source, context.input.conversation_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| "source_unavailable")?;
+    let literal = match &args.answer {
+        Value::String(value) => !value.is_empty() && source.contains(value),
+        Value::Object(values) => {
+            !values.is_empty()
+                && values.values().all(|v| {
+                    v.as_str()
+                        .is_some_and(|s| !s.is_empty() && source.contains(s))
+                })
+        }
+        _ => false,
+    };
+    if !literal {
+        return Err("answer_not_in_user_request".into());
+    }
+    *launch = super::super::terminal::answer(
+        context.tx,
+        &context.input.conversation_id,
+        &args.job_id,
+        args.expected_revision,
+        &args.question_id,
+        &args.answer,
+        Some(context.source),
+        &new_id("terminal_answer"),
+    )?;
+    Ok(json!({"accepted":true,"meaning":"answer recorded; completion not yet verified"}))
 }

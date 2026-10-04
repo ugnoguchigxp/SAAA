@@ -75,7 +75,7 @@ export function SettingsPage({
       label: t("settings.tabs.connection.label"),
       detail: t("settings.tabs.connection.detail"),
     },
-    { id: "purposes", label: "用途別の接続先", detail: "会話・音声のサービス" },
+    { id: "purposes", label: "用途別の接続先", detail: "会話・音声・画像・音楽のサービス" },
     {
       id: "providers",
       label: t("settings.tabs.providers.label"),
@@ -272,7 +272,9 @@ export function SettingsPage({
               onCodexChange={(codex) => changeDraft((current) => ({ ...current, codex }))}
             />
           )}
-          {activeTab === "purposes" && <PurposeRoutesSection />}
+          {activeTab === "purposes" && (
+            <PurposeRoutesSection onOpenCoding={() => setActiveTab("coding")} />
+          )}
           {activeTab === "coding" && <CodingSettingsSection />}
           {activeTab === "routing" && (
             <RoleRoutingSection

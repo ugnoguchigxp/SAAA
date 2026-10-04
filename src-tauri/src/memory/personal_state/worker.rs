@@ -13,7 +13,7 @@ pub const EXTRACTION_INSTRUCTION: &str = r#"Extract only state supported by the 
 
 #[cfg(test)]
 pub use super::scheduler::occupy_for_test;
-pub use super::scheduler::{blocking_generation, foreground, generation_slot_busy};
+pub use super::scheduler::{background, blocking_generation, foreground, generation_slot_busy};
 use super::scheduler::{BACKGROUND, SLOT};
 
 #[derive(Debug, Serialize, Deserialize)]

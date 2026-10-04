@@ -1,0 +1,37 @@
+
+#[cfg(test)]
+mod review_probes {
+ use super::*;
+ use crate::providers::service_registry::*;
+ fn sample(adapter:AdapterKind,id:&str)->(rusqlite::Connection,RegistrySnapshot,i64){
+  let db=rusqlite::Connection::open_in_memory().unwrap();crate::initialize_database(&db).unwrap();
+  let loaded=crate::persistence::service_registry_store::load_registry(&db).unwrap();
+  let mut snapshot=loaded.snapshot;
+  snapshot.connections.push(ServiceConnection{connection_id:format!("conn:{id}"),label:id.into(),adapter_kind:adapter,endpoint:"http://127.0.0.1:9999/v1".into(),location:"cloud".into(),authentication:"none".into(),credential_ref:None,enabled:true});
+  snapshot.resources.push(ServiceResource{resource_id:format!("res:{id}"),connection_id:format!("conn:{id}"),capability:Capability::TextGeneration,model:"fixture".into(),detail:None,enabled:true});
+  let b=snapshot.bindings.iter_mut().find(|b|b.purpose==Purpose::ConversationRespond).unwrap();b.primary_resource_id=Some(format!("res:{id}"));b.review=BindingReview::Ready;
+  (db,snapshot,loaded.revision)
+ }
+ #[test]fn review_saved_valid_resource_is_silently_discarded_without_svc_prefix(){
+  let(mut db,s,rev)=sample(AdapterKind::ChatCompletions,"cloud-llm");validate_snapshot(&s).unwrap();
+  let saved=crate::persistence::service_registry_store::save_registry(&mut db,&s,rev).unwrap();
+  assert!(saved.snapshot.connection("conn:cloud-llm").is_none());
+  assert!(!saved.snapshot.binding(Purpose::ConversationRespond).unwrap().enabled);
+  println!("Observed: accepted valid connection removed; conversation disabled after successful save.");
+ }
+ #[test]fn review_agent_resource_can_be_saved_but_cannot_execute(){
+  let(mut db,s,rev)=sample(AdapterKind::AgentSession,"svc-agent");
+  let saved=crate::persistence::service_registry_store::save_registry(&mut db,&s,rev).unwrap();
+  assert!(saved.snapshot.binding(Purpose::ConversationRespond).unwrap().enabled);
+  assert!(transport_for(&saved.snapshot).is_err());
+  println!("Observed: AgentSession binding committed, then transport rejects it.");
+ }
+ #[test]fn review_non_harness_larm_route_discards_selected_endpoint(){
+  let(mut db,s,rev)=sample(AdapterKind::Larm,"svc-other-larm");
+  let saved=crate::persistence::service_registry_store::save_registry(&mut db,&s,rev).unwrap();
+  let resolved=resolve_route(&saved.snapshot,Purpose::ConversationRespond).unwrap();
+  assert_eq!(resolved.connection_id,"conn:svc-other-larm");
+  assert!(matches!(transport_for(&saved.snapshot),Ok(ConversationTransport::Larm)));
+  println!("Observed: non-harness LARM connection resolves, transport retains no endpoint or connection.");
+ }
+}

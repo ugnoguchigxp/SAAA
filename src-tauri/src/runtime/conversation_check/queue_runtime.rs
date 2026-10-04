@@ -350,17 +350,6 @@ async fn run_lane<R: Runtime>(app: tauri::AppHandle<R>, lane: &'static str) {
     }
 }
 
-fn providers_and_timeout(state: &AppState) -> Result<(crate::ModelProvidersSettings, u64), String> {
-    state.sqlite_readers.read(|connection| {
-        Ok((
-            persistence::load_model_providers(connection)?,
-            persistence::load_routing_settings(connection)?
-                .conversation_respond
-                .timeout_ms,
-        ))
-    })
-}
-
 fn active_previous(
     state: &AppState,
     current_key: &str,
@@ -371,6 +360,9 @@ fn active_previous(
 }
 
 async fn process_job<R: Runtime>(app: &tauri::AppHandle<R>, job: &Job) -> Result<(), String> {
+    if job.kind == "terminal_question" {
+        return super::terminal_decision::process(app, job).await;
+    }
     if job.lane == "speech" {
         return if job.kind == "progress_speech" {
             process_progress_speech(app, job).await
@@ -424,6 +416,7 @@ async fn process_conversation<R: Runtime>(
                 "承知しました。前の依頼を中止しました。".into(),
                 cancel,
                 &[],
+                None,
                 None,
                 None,
             )?;
@@ -492,6 +485,7 @@ async fn process_conversation<R: Runtime>(
                 &answer.source_urls,
                 Some(&answer.context),
                 answer.speech.as_ref(),
+                answer.route.as_ref().map(|route| (route, answer.deadline)),
             );
             crate::tts_dictionary::tools::finish_turn(
                 &state,
@@ -555,6 +549,7 @@ async fn process_conversation<R: Runtime>(
                 None,
                 &source_urls,
                 context.as_ref(),
+                None,
                 None,
             )
         })();
@@ -621,6 +616,7 @@ fn validate_answer_content(answer: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn commit_answer(
     state: &AppState,
     job: &Job,
@@ -629,6 +625,10 @@ fn commit_answer(
     source_urls: &[String],
     context: Option<&queue_context::QueueContext>,
     streamed_speech: Option<&super::streaming_speech::AnswerStreamReport>,
+    acceptance: Option<(
+        &crate::providers::service_registry::ResolvedRoute,
+        tokio::time::Instant,
+    )>,
 ) -> Result<(), String> {
     validate_answer_content(&answer)?;
     let answer = append_source_links(answer, source_urls);
@@ -640,6 +640,10 @@ fn commit_answer(
     state.sqlite_writer.write(|connection| {
         let tx = connection.transaction().map_err(database_error)?;
         if let Some(context) = context { context.validate_commit(&tx)?; }
+        if let Some((route, deadline))=acceptance {
+            if tokio::time::Instant::now() >= deadline { return Err("この依頼の全体期限を超えたため回答を保存できません。".into()); }
+            direct_route::validate_route(&tx,route)?;
+        }
         let input: Value = serde_json::from_str(&job.payload).map_err(|_| "入力参照が不正です。")?;
         let current: String = tx.query_row("SELECT content FROM conversation_messages WHERE id=?1 AND conversation_id=?2 AND role='user'",
             params![format!("check_{}", job.key), job.scope], |row| row.get(0)).map_err(database_error)?;
@@ -668,6 +672,7 @@ fn commit_answer(
         let completed = tx.execute("UPDATE runtime_runs SET status='completed',completed_at=?2 WHERE id=?1 AND status='running'",
             params![format!("run_{}",job.key),now_iso()]).map_err(database_error)?;
         if completed != 1 { return Err("実行状態が変化したため回答を公開できません。".into()); }
+        if let Some((route, _))=acceptance { crate::providers::service_registry::operations::accepted(&tx,&job.key,route)?; }
         tx.commit().map_err(database_error)?;
         Ok(())
     })

@@ -47,6 +47,64 @@ async fn asr_ornith_tool_saved_answer_tts_reaches_terminal_queue_states() {
         .starts_with("資料では確認済みの事実は42です。"));
     assert_eq!(cloud["larmRequests"], 0, "{cloud}");
     assert_eq!(cloud["llmCalls"], 4);
+    let native = saaa_lib::conversation_queue_e2e::run_cloud_boundary("native")
+        .await
+        .expect("native Messages conversation and tool loop");
+    assert!(native["answer"].is_string(), "{native}");
+    assert_eq!(native["llmCalls"], 4, "{native}");
+    assert_eq!(native["larmRequests"], 0, "{native}");
+    let options = saaa_lib::conversation_queue_e2e::run_cloud_boundary("options")
+        .await
+        .expect("JSON-only provider preserves explicit compatibility options across tool steps");
+    assert!(options["answer"].is_string(), "{options}");
+    assert_eq!(options["llmCalls"], 4, "{options}");
+    assert_eq!(options["larmRequests"], 0, "{options}");
+    let revoked = saaa_lib::conversation_queue_e2e::run_cloud_boundary("revoked")
+        .await
+        .expect("cloud revocation E2E");
+    assert!(revoked["answer"].is_null(), "{revoked}");
+    assert_eq!(revoked["llmCalls"], 1, "{revoked}");
+    assert_eq!(revoked["larmRequests"], 0, "{revoked}");
+    let consent = saaa_lib::conversation_queue_e2e::run_cloud_boundary("consent")
+        .await
+        .expect("cloud permission withdrawal");
+    assert!(consent["answer"].is_null(), "{consent}");
+    assert_eq!(consent["llmCalls"], 1, "{consent}");
+    let fallback = saaa_lib::conversation_queue_e2e::run_cloud_boundary("fallback")
+        .await
+        .expect("initial rejection fallback");
+    assert!(fallback["answer"].is_string(), "{fallback}");
+    assert_eq!(fallback["llmCalls"], 4, "{fallback}");
+    assert_eq!(
+        fallback["usage"][0]["resourceId"], "res:svc-cloud-llm",
+        "{fallback}"
+    );
+    assert_eq!(fallback["usage"][0]["status"], "accepted", "{fallback}");
+    assert_eq!(
+        fallback["usage"][0]["matchesCurrentSettings"], true,
+        "fallback belongs to the current binding: {fallback}"
+    );
+    let auth = saaa_lib::conversation_queue_e2e::run_cloud_boundary("auth")
+        .await
+        .expect("authentication never falls back");
+    assert!(auth["answer"].is_null(), "{auth}");
+    assert_eq!(auth["llmCalls"], 0, "{auth}");
+    let switched = saaa_lib::conversation_queue_e2e::run_cloud_boundary("switch")
+        .await
+        .expect("ordinary route changes apply to next job");
+    assert!(switched["answer"].is_string(), "{switched}");
+    assert_eq!(switched["llmCalls"], 4, "{switched}");
+    assert_eq!(switched["larmRequests"], 0, "{switched}");
+    assert_eq!(
+        switched["usage"][0]["matchesCurrentSettings"], false,
+        "{switched}"
+    );
+    let deadline = saaa_lib::conversation_queue_e2e::run_cloud_boundary("deadline")
+        .await
+        .expect("cloud deadline E2E");
+    assert!(deadline["answer"].is_null(), "{deadline}");
+    assert!(deadline["elapsedMs"].as_u64().unwrap() < 1800, "{deadline}");
+    assert!(deadline["llmCalls"].as_u64().unwrap() < 4, "{deadline}");
 }
 
 #[test]

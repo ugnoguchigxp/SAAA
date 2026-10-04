@@ -10,6 +10,8 @@ pub(crate) mod queue_runtime;
 mod queue_tools;
 #[path = "conversation_check/streaming_speech.rs"]
 mod streaming_speech;
+mod terminal_decision;
+mod voice_routes;
 pub(crate) fn spawn_queue_workers<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     queue_runtime::spawn(app);
 }
@@ -137,6 +139,7 @@ fn asr_session() -> &'static tokio::sync::Mutex<Option<CachedAsrSession>> {
 #[cfg(feature = "conversation-queue-e2e")]
 pub(crate) async fn reset_fixture_asr_session() {
     context_metrics::clear();
+    voice_routes::reset_fixture();
     if let Some(cached) = asr_session().lock().await.take() {
         let _ = cached.session.close().await;
     }
@@ -431,12 +434,11 @@ async fn transcribe_conversation_audio_inner(
                 "sha256":format!("{:x}",digest.finalize())}),
         );
     }
-    let (providers, route) = state.sqlite_readers.read(|connection| {
-        Ok((
-            persistence::load_model_providers(connection)?,
-            persistence::load_routing_settings(connection)?.voice_transcribe,
-        ))
-    })?;
+    let prepared = voice_routes::utterance(state, &input.utterance_id)?;
+    let providers = &prepared.providers;
+    let mut route = prepared.route.clone();
+    route.timeout_ms = prepared.validate(state)?;
+    let mut attempt = direct_route::RouteAttempt::begin(audit, &prepared.resolved)?;
     let cancellation = Arc::new(RunCancellation::default());
     audit.event(
         "voice-asr",
@@ -448,84 +450,107 @@ async fn transcribe_conversation_audio_inner(
             "providerId": route.provider_id,
         }),
     );
-    let (text, language, provider_label) = if route.source == "harness" {
-        let timeout = std::time::Duration::from_millis(route.timeout_ms.min(120_000));
-        let session = tokio::time::timeout(timeout, cached_larm_asr(&providers, Some(audit)))
+    let recognition = async {
+        let (text, language, provider_label) = if route.source == "harness" {
+            let timeout = std::time::Duration::from_millis(route.timeout_ms.min(120_000));
+            let session = tokio::time::timeout(timeout, cached_larm_asr(providers, Some(audit)))
+                .await
+                .map_err(|_| {
+                    "LARMのProvider接続準備が時間内に完了せず、ASRへ音声を送れませんでした。"
+                        .to_string()
+                })??;
+            let result = tokio::time::timeout(timeout, async {
+                let lease = session.acquire("asr").await.map_err(str::to_string)?;
+                if lease.provider().protocol != "openai.audio-transcriptions.v1" {
+                    return Err("選択済みLARMのASRプロトコルに対応していません。".into());
+                }
+                audit.event(
+                    "provider",
+                    "conversation-asr-provider",
+                    "start",
+                    None,
+                    json!({
+                        "role": "asr", "model": lease.provider().model,
+                        "protocol": lease.provider().protocol,
+                    }),
+                );
+                let budget = lease
+                    .request_budget(std::time::Duration::from_millis(prepared.validate(state)?))
+                    .map_err(str::to_string)?;
+                let provider =
+                    crate::providers::larm_resources::audio::asr_settings(lease.provider());
+                crate::voice::cloud_asr::transcribe_full(
+                    &provider,
+                    &samples,
+                    16_000,
+                    budget.as_millis() as u64,
+                    cancellation,
+                    Some(lease.provider().token()),
+                )
+                .await
+            })
             .await
-            .map_err(|_| {
-                "LARMのProvider接続準備が時間内に完了せず、ASRへ音声を送れませんでした。"
-                    .to_string()
-            })??;
-        let result = tokio::time::timeout(timeout, async {
-            let lease = session.acquire("asr").await.map_err(str::to_string)?;
-            if lease.provider().protocol != "openai.audio-transcriptions.v1" {
-                return Err("選択済みLARMのASRプロトコルに対応していません。".into());
+            .map_err(|_| "ASRの文字起こしが時間内に完了しませんでした。".to_string());
+            let reset_session = match &result {
+                Err(_) => true,
+                Ok(Err(error)) => !error.starts_with("ASR_NO_SPEECH:"),
+                Ok(Ok(_)) => false,
+            };
+            if reset_session {
+                audit.event(
+                    "voice-asr",
+                    "conversation-asr-session-reset",
+                    "decision",
+                    None,
+                    json!({
+                        "reason": "recognition-failed",
+                    }),
+                );
+                release_conversation_asr_session().await?;
             }
-            audit.event(
-                "provider",
-                "conversation-asr-provider",
-                "start",
-                None,
-                json!({
-                    "role": "asr", "model": lease.provider().model,
-                    "protocol": lease.provider().protocol,
-                }),
-            );
-            let budget = lease.request_budget(timeout).map_err(str::to_string)?;
-            let provider = crate::providers::larm_resources::audio::asr_settings(lease.provider());
-            crate::voice::cloud_asr::transcribe_full(
-                &provider,
+            let (text, language) = result??;
+            (text, language, "LARM ASR".to_string())
+        } else {
+            let provider = providers
+                .providers
+                .iter()
+                .find(|candidate| {
+                    route.provider_id.as_deref() == Some(candidate.id()) && candidate.enabled()
+                })
+                .ok_or("設定済みのASR Providerが見つかりません。")?;
+            let ModelProviderSettings::CloudAsr(provider) = provider else {
+                return Err("設定済みの音声入力ルートはASR Providerではありません。".into());
+            };
+            let (text, language) = crate::voice::cloud_asr::transcribe_full(
+                provider,
                 &samples,
                 16_000,
-                budget.as_millis() as u64,
+                route.timeout_ms.min(120_000),
                 cancellation,
-                Some(lease.provider().token()),
-            )
-            .await
-        })
-        .await
-        .map_err(|_| "ASRの文字起こしが時間内に完了しませんでした。".to_string());
-        let reset_session = match &result {
-            Err(_) => true,
-            Ok(Err(error)) => !error.starts_with("ASR_NO_SPEECH:"),
-            Ok(Ok(_)) => false,
-        };
-        if reset_session {
-            audit.event(
-                "voice-asr",
-                "conversation-asr-session-reset",
-                "decision",
                 None,
-                json!({
-                    "reason": "recognition-failed",
-                }),
-            );
-            release_conversation_asr_session().await?;
-        }
-        let (text, language) = result??;
-        (text, language, "LARM ASR".to_string())
-    } else {
-        let provider = providers
-            .providers
-            .iter()
-            .find(|candidate| {
-                route.provider_id.as_deref() == Some(candidate.id()) && candidate.enabled()
-            })
-            .ok_or("設定済みのASR Providerが見つかりません。")?;
-        let ModelProviderSettings::CloudAsr(provider) = provider else {
-            return Err("設定済みの音声入力ルートはASR Providerではありません。".into());
+            )
+            .await?;
+            (text, language, provider.label.clone())
         };
-        let (text, language) = crate::voice::cloud_asr::transcribe_full(
-            provider,
-            &samples,
-            16_000,
-            route.timeout_ms.min(120_000),
-            cancellation,
-            None,
-        )
-        .await?;
-        (text, language, provider.label.clone())
+        Ok::<_, String>((text, language, provider_label))
     };
+    let (text, language, provider_label) = tokio::select! {
+        result=recognition => result?,
+        _=tokio::time::sleep_until(prepared.deadline)=>{return Err("この発話の全体期限を超えました".into());}
+    };
+    prepared.validate(state)?;
+    attempt.finish(true)?;
+    state.sqlite_writer.write(|db| {
+        crate::providers::service_registry::validate_active(db, &prepared.resolved)?;
+        crate::providers::service_registry::operations::accepted(
+            db,
+            &input.utterance_id,
+            &prepared.resolved,
+        )
+    })?;
+    if input.kind == "final" {
+        voice_routes::close_utterance(state, &input.utterance_id)?;
+    }
     Ok(TranscribeResult {
         text,
         language,
@@ -627,14 +652,16 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
     }
     let _playback_state = PlaybackStateGuard::new(app, input_id);
     let answer_id = format!("reply_{input_id}");
-    let (content, providers, route) = state.sqlite_readers.read(|connection| {
+    let (content, prepared) = state.sqlite_readers.read(|connection| {
         let content: String = connection.query_row(
             "SELECT content FROM conversation_messages WHERE id=?1 AND conversation_id=?2 AND role='assistant'",
             params![answer_id, PRIMARY_CONVERSATION_ID], |row| row.get(0),
         ).map_err(database_error)?;
-        Ok((content, persistence::load_model_providers(connection)?,
-            persistence::load_routing_settings(connection)?.voice_speak))
+        Ok((content, voice_routes::prepare(connection, crate::providers::service_registry::Purpose::VoiceSpeak)?))
     })?;
+    let providers = &prepared.providers;
+    let mut route = prepared.route.clone();
+    route.timeout_ms = prepared.validate(state)?;
     if content.trim().is_empty() || content.len() > MAX_ANSWER_BYTES {
         return Err("読み上げる回答がありません。".into());
     }
@@ -688,8 +715,15 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
         return Ok(());
     }
     let output = Arc::new(AtomicBool::new(false));
+    route.timeout_ms = prepared.validate(state)?;
+    let mut purpose_attempt = direct_route::RouteAttempt::begin(audit, &prepared.resolved)?;
+    let result = tokio::select! {
+        biased;
+        _=tokio::time::sleep_until(prepared.deadline)=>{cancellation.cancel();Err("この発話の全体期限を超えました".into())},
+        result=async {
     if route.source == "harness" {
-        let session = cached_larm_asr(&providers, Some(audit)).await?;
+        let session = cached_larm_asr(providers, Some(audit)).await?;
+                prepared.validate(state)?;
         audit.event(
             "tts",
             "conversation-tts-provider",
@@ -712,7 +746,7 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
             output,
             &spoken,
             route.timeout_ms.min(120_000),
-            cancellation,
+            cancellation.clone(),
             move || {
                 set_speech_playback(&playback_app, &playback_id, true);
                 playback_audit.event("tts", "conversation-tts-playback", "start", None, json!({}));
@@ -746,7 +780,7 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
                 provider,
                 &spoken,
                 route.timeout_ms.min(120_000),
-                cancellation,
+                cancellation.clone(),
                 output,
                 move || {
                     set_speech_playback(&playback_app, &playback_id, true);
@@ -810,6 +844,10 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
         }
         _ => Err("設定済みの音声出力ルートはTTS Providerではありません。".into()),
     }
+        }=>result,
+    };
+    purpose_attempt.finish(result.is_ok())?;
+    result
 }
 
 fn speech_text_for_answer(content: &str) -> String {
@@ -911,10 +949,15 @@ pub(crate) async fn submit_conversation_text(
                 Ok((answer, status))
             })?;
         if let Some(content) = outcome.0 {
+            let (model,label)=state.sqlite_readers.read(|db| {
+                let raw:Option<String>=db.query_row("SELECT attributes_json FROM audit_events WHERE event_name='purpose-route-accepted' AND correlation_id=?1 ORDER BY sequence DESC LIMIT 1",[&input.input_id],|r|r.get(0)).optional().map_err(database_error)?;
+                let metadata:Value=raw.map(|v|serde_json::from_str(&v).map_err(|_|"利用記録が不正です".to_string())).transpose()?.unwrap_or(json!({}));
+                Ok((metadata["model"].as_str().unwrap_or_default().to_string(),metadata["connectionLabel"].as_str().unwrap_or("未確認").to_string()))
+            })?;
             return Ok(SubmitResult {
                 content,
-                model: "Ornith 1.5".into(),
-                provider_label: "LARM llm".into(),
+                model,
+                provider_label: label,
             });
         }
         if let Some((status, error)) = outcome.1 {
@@ -1060,6 +1103,7 @@ async fn complete_larm_role_with_events(
             on_delta,
             cancellation,
             Some(&metrics),
+            None,
         )
         .await?;
         audit.text("provider", "conversation-ornith-output", &content);
@@ -1190,6 +1234,7 @@ pub(crate) async fn complete_http(
         None,
         None,
         None,
+        None,
     )
     .await
 }
@@ -1210,6 +1255,7 @@ async fn complete_http_with_instruction(
     on_delta: Option<&dyn crate::runtime::event_hub::RuntimeEventSender>,
     cancellation: Option<Arc<RunCancellation>>,
     observation: Option<&dyn crate::providers::chat_completions::observation::ObservationSink>,
+    fallback_safe: Option<&AtomicBool>,
 ) -> Result<String, String> {
     let input = StartTurnInput {
         run_id: format!("check_{}", uuid::Uuid::new_v4().simple()),
@@ -1267,12 +1313,12 @@ async fn complete_http_with_instruction(
         context_omissions: &[],
         output_persistence: None,
     };
-    let mode = if on_delta.is_some() {
+    let mode = if on_delta.is_some() && options.streaming {
         crate::providers::chat_completions::RequestMode::Stream
     } else {
         crate::providers::chat_completions::RequestMode::JsonProbe
     };
-    let mut result = crate::providers::chat_completions::run_observed(
+    let result = crate::providers::chat_completions::run_observed(
         endpoint,
         authorization,
         model,
@@ -1285,40 +1331,38 @@ async fn complete_http_with_instruction(
         observation,
     )
     .await;
-    // Some configured Chat Completions servers reject SSE. Preserve the existing
-    // complete-response path only if no streamed output has reached the speaker.
-    if on_delta.is_some()
-        && matches!(
-            result,
-            Err(crate::providers::stream::ProviderAttemptError::Failed {
-                kind: crate::providers::stream::ProviderFailureKind::Contract
-                    | crate::providers::stream::ProviderFailureKind::Protocol,
-                output_started: false,
-                ..
-            })
-        )
-    {
-        result = crate::providers::chat_completions::run_observed(
-            endpoint,
-            authorization,
-            model,
-            &history,
-            timeout_ms.min(120_000),
-            make_context(),
-            crate::providers::chat_completions::RequestMode::JsonProbe,
-            &options,
-            no_proxy,
-            observation,
-        )
-        .await;
-        if let (Ok(content), Some(on_delta)) = (&result, on_delta) {
-            on_delta
-                .send(crate::ipc_contract::RuntimeEvent::Delta {
-                    run_id: input.run_id.clone(),
-                    text: content.clone(),
-                })
-                .map_err(|_| "音声用の回答を受け渡せませんでした。".to_string())?;
+    let result = result.and_then(|content| {
+        if mode == crate::providers::chat_completions::RequestMode::JsonProbe {
+            if let Some(on_delta) = on_delta {
+                on_delta
+                    .send(crate::ipc_contract::RuntimeEvent::Delta {
+                        run_id: input.run_id.clone(),
+                        text: content.clone(),
+                    })
+                    .map_err(|_| {
+                        crate::providers::stream::ProviderAttemptError::failed(
+                            crate::providers::stream::ProviderFailureKind::ClientDisconnected,
+                            true,
+                        )
+                    })?;
+            }
         }
+        Ok(content)
+    });
+    if let Some(safe) = fallback_safe {
+        safe.store(
+            matches!(
+                &result,
+                Err(crate::providers::stream::ProviderAttemptError::Failed {
+                    kind: crate::providers::stream::ProviderFailureKind::Connect
+                        | crate::providers::stream::ProviderFailureKind::Capacity
+                        | crate::providers::stream::ProviderFailureKind::Unavailable,
+                    output_started: false,
+                    ..
+                })
+            ),
+            Ordering::Release,
+        );
     }
     result.map_err(|error| match error {
         crate::providers::stream::ProviderAttemptError::Failed {

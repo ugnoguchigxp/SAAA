@@ -12,10 +12,11 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     input_id: String,
     mut receiver: tokio::sync::mpsc::UnboundedReceiver<String>,
-    cancellation: Arc<RunCancellation>,
+    job_cancellation: Arc<RunCancellation>,
     context_digest: String,
     audio_started: Arc<AtomicBool>,
 ) -> AnswerStreamReport {
+    let cancellation = Arc::new(RunCancellation::default());
     let state = app.state::<AppState>();
     let audit = ConversationAudit::new(state.sqlite_writer.clone(), input_id.clone());
     let mut accumulator = SentenceAccumulator::default();
@@ -25,12 +26,19 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
     let mut speech_guard = None;
     let mut active_guard = None;
     let mut playback_guard = None;
-    let mut route = None;
+    let mut route: Option<super::voice_routes::PreparedVoice> = None;
     let mut dictionary = None;
+    let mut purpose_attempt = None;
     let mut pending_spoken = String::new();
     let mut error = None;
     loop {
-        let next = receiver.recv().await;
+        let next = tokio::select! {
+            biased;
+            _=job_cancellation.cancelled()=>{cancellation.cancel(); error=Some("Speech cancelled".into());break;}
+            _=cancellation.cancelled()=>{error=Some("Speech cancelled".into());break;}
+            _=tokio::time::sleep_until(route.as_ref().map(|r|r.deadline).unwrap_or_else(||tokio::time::Instant::now()+std::time::Duration::from_secs(3600))), if initialized => {cancellation.cancel(); error=Some("この発話の全体期限を超えました".into());break;}
+            next=receiver.recv()=>next,
+        };
         let reason = if let Some(delta) = next.as_deref() {
             if accumulator.append(delta).is_err() {
                 error = Some("回答の音声用テキストが長すぎます。".into());
@@ -65,15 +73,22 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
                         .lock()
                         .await,
                 );
-                let settings = state.sqlite_readers.read(|connection| {
-                    Ok((
-                        persistence::load_model_providers(connection)?,
-                        persistence::load_routing_settings(connection)?.voice_speak,
-                    ))
+                let settings = state.sqlite_readers.read(|db| {
+                    super::voice_routes::prepare(
+                        db,
+                        crate::providers::service_registry::Purpose::VoiceSpeak,
+                    )
                 });
                 match settings {
-                    Ok((providers, voice_route)) => {
-                        route = Some((providers, voice_route));
+                    Ok(prepared) => {
+                        match direct_route::RouteAttempt::begin(&audit, &prepared.resolved) {
+                            Ok(attempt) => purpose_attempt = Some(attempt),
+                            Err(cause) => {
+                                error = Some(cause);
+                                break;
+                            }
+                        }
+                        route = Some(prepared);
                         match state.tts_dictionary_cache.snapshot(&state.sqlite_readers) {
                             Ok(snapshot) => dictionary = Some(snapshot),
                             Err(cause) => {
@@ -107,19 +122,36 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
             }
             let ready = pending_spoken[..ready_len].to_string();
             pending_spoken.drain(..ready_len);
-            let (providers, voice_route) = route.as_ref().expect("speech route loaded");
-            let played = play_chunk(
+            let prepared = route.as_ref().expect("speech route loaded");
+            let budget = match prepared.validate(&state) {
+                Ok(budget) => budget,
+                Err(cause) => {
+                    error = Some(cause);
+                    cancellation.cancel();
+                    break;
+                }
+            };
+            let mut voice_route = prepared.route.clone();
+            voice_route.timeout_ms = budget;
+            let providers = &prepared.providers;
+            let playback = play_chunk(
                 &app,
                 &input_id,
+                &state,
+                &prepared.resolved,
                 providers,
-                voice_route,
+                &voice_route,
                 &ready,
                 matcher,
                 &audit,
                 cancellation.clone(),
                 &mut player,
-            )
-            .await;
+            );
+            let played = tokio::select! {
+                _=job_cancellation.cancelled()=>{ cancellation.cancel(); Err("Speech cancelled".into()) },
+                result=playback=>result,
+                _=tokio::time::sleep_until(prepared.deadline)=> { cancellation.cancel(); Err("この発話の全体期限を超えました".into()) }
+            };
             started |= super::speech_playing();
             if started {
                 audio_started.store(true, Ordering::Release);
@@ -138,20 +170,35 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
         if current_context.as_deref() != Ok(context_digest.as_str()) {
             error = Some("回答の根拠が変更されたため音声を中止しました。".into());
         } else {
-            let (providers, voice_route) = route.as_ref().expect("pending speech has a route");
-            if let Err(cause) = play_chunk(
+            let prepared = route.as_ref().expect("pending speech has a route");
+            let mut voice_route = prepared.route.clone();
+            match prepared.validate(&state) {
+                Ok(budget) => voice_route.timeout_ms = budget,
+                Err(cause) => {
+                    error = Some(cause);
+                    cancellation.cancel();
+                }
+            }
+            let providers = &prepared.providers;
+            let playback = play_chunk(
                 &app,
                 &input_id,
+                &state,
+                &prepared.resolved,
                 providers,
-                voice_route,
+                &voice_route,
                 &pending_spoken,
                 dictionary.as_ref().expect("speech dictionary loaded"),
                 &audit,
                 cancellation.clone(),
                 &mut player,
-            )
-            .await
-            {
+            );
+            let result = tokio::select! {
+                _=job_cancellation.cancelled()=>{ cancellation.cancel(); Err("Speech cancelled".into()) },
+                result=playback=>result,
+                _=tokio::time::sleep_until(prepared.deadline)=>{ cancellation.cancel(); Err("この発話の全体期限を超えました".into()) }
+            };
+            if let Err(cause) = result {
                 error = Some(cause);
             }
             started |= super::speech_playing();
@@ -160,8 +207,21 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
             }
         }
     }
+    if error.is_some() {
+        cancellation.cancel();
+    }
     if let Some(player) = player {
-        if let Err(cause) = player.finish().await {
+        let finished = tokio::select! {
+            _=job_cancellation.cancelled()=>{cancellation.cancel();Err("Speech cancelled".into())},
+            _=tokio::time::sleep_until(route.as_ref().expect("initialized voice").deadline)=>{cancellation.cancel();Err("この発話の全体期限を超えました".into())},
+            result=player.finish()=>result,
+        };
+        if let Err(cause) = finished {
+            error.get_or_insert(cause);
+        }
+    }
+    if let Some(attempt) = &mut purpose_attempt {
+        if let Err(cause) = attempt.finish(error.is_none()) {
             error.get_or_insert(cause);
         }
     }
@@ -175,125 +235,6 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
 mod progress;
 pub(super) use progress::play_progress;
 
-#[allow(clippy::too_many_arguments)]
-async fn play_chunk<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    input_id: &str,
-    providers: &crate::ModelProvidersSettings,
-    route: &crate::VoiceRouteSettings,
-    text: &str,
-    dictionary: &crate::tts_dictionary::CompiledDictionary,
-    audit: &ConversationAudit,
-    cancellation: Arc<RunCancellation>,
-    continuous: &mut Option<crate::voice::local_audio_output::ContinuousPlayback>,
-) -> Result<(), String> {
-    if cancellation.is_cancelled() {
-        return Err("Speech cancelled".into());
-    }
-    let spoken = dictionary.apply(text);
-    if spoken.trim().is_empty() {
-        return Ok(());
-    }
-    audit.text("tts", "conversation-tts-provider-text", &spoken);
-    let text = spoken.as_str();
-    let timeout = route.timeout_ms.min(120_000);
-    let output = Arc::new(AtomicBool::new(false));
-    let playback_audit = audit.clone();
-    let playback_app = app.clone();
-    let playback_id = input_id.to_string();
-    let on_started = move || {
-        set_speech_playback(&playback_app, &playback_id, true);
-        playback_audit.event("tts", "conversation-tts-playback", "start", None, json!({}));
-    };
-    #[cfg(feature = "conversation-queue-e2e")]
-    if crate::conversation_queue_e2e::capture_speech(text) {
-        on_started();
-        return Ok(());
-    }
-    if route.source == "harness" {
-        let session = cached_larm_asr(providers, Some(audit)).await?;
-        let request_started = std::time::Instant::now();
-        let player = continuous.get_or_insert_with(|| {
-            crate::voice::local_audio_output::ContinuousPlayback::start(
-                cancellation.clone(),
-                move || {
-                    crate::providers::http_metrics::record(
-                        "ttsRequestToFirstMixerSample",
-                        request_started.elapsed(),
-                    );
-                    on_started();
-                },
-            )
-        });
-        return crate::voice::http_audio::play_larm_with_situation(
-            &session,
-            PRIMARY_CONVERSATION_ID,
-            providers.harness.tts_voice.as_deref(),
-            Some(&providers.harness),
-            crate::voice::cloud_tts::speech_directive::SpeechExpression::Natural,
-            output,
-            text,
-            timeout,
-            cancellation,
-            || {},
-            None,
-            Some(player),
-        )
-        .await;
-    }
-    let provider = providers
-        .providers
-        .iter()
-        .find(|provider| route.provider_id.as_deref() == Some(provider.id()) && provider.enabled())
-        .ok_or("設定済みのTTS Providerが見つかりません。")?;
-    match provider {
-        ModelProviderSettings::CloudTts(provider) => {
-            let request_started = std::time::Instant::now();
-            let player = continuous.get_or_insert_with(|| {
-                crate::voice::local_audio_output::ContinuousPlayback::start(
-                    cancellation.clone(),
-                    move || {
-                        crate::providers::http_metrics::record(
-                            "ttsRequestToFirstMixerSample",
-                            request_started.elapsed(),
-                        );
-                        on_started();
-                    },
-                )
-            });
-            crate::voice::http_audio::play_with_situation(
-                provider,
-                text,
-                timeout,
-                cancellation,
-                output,
-                || {},
-                None,
-                Some(player),
-            )
-            .await
-        }
-        ModelProviderSettings::SystemTts(provider) => {
-            let player = continuous.get_or_insert_with(|| {
-                crate::voice::local_audio_output::ContinuousPlayback::start(
-                    cancellation.clone(),
-                    on_started,
-                )
-            });
-            let directory =
-                tempfile::tempdir().map_err(|_| "TTS一時領域を作成できませんでした。")?;
-            let path = crate::voice::system_tts::render_tts_artifact(
-                text.to_string(),
-                provider.voice.clone(),
-                directory.path().to_path_buf(),
-                cancellation.clone(),
-            )
-            .await?;
-            if cancellation.is_cancelled() {
-                return Err("Speech cancelled".into());
-            }
-            player.play_wav_file(&path, &cancellation).await
-        }
-        _ => Err("設定済みの音声出力ルートはTTS Providerではありません。".into()),
-    }
-}
+#[path = "speech_playback.rs"]
+mod playback;
+use playback::play_chunk;

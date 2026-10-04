@@ -1,0 +1,208 @@
+--- a/src-tauri/src/coding/terminal/automatic.rs
++++ b/src-tauri/src/coding/terminal/automatic.rs
+@@ -13 +13,9 @@
+-pub fn automatic_answer(state: &AppState, context: &Value, output: &Value) -> Result<(), String> {
++pub fn automatic_answer(
++    state: &AppState,
++    context: &Value,
++    output: &Value,
++    acceptance: Option<(
++        &crate::providers::service_registry::ResolvedRoute,
++        tokio::time::Instant,
++    )>,
++) -> Result<(), String> {
+@@ -34,0 +43,5 @@
++        if let Some((route,deadline))=acceptance {
++            if tokio::time::Instant::now()>=deadline {return Err("purpose_deadline_exceeded".into());}
++            crate::providers::service_registry::validate_active(&tx,route)?;
++            crate::providers::service_registry::operations::accepted(&tx,question,route)?;
++        }
+--- a/src-tauri/src/runtime/conversation_check/terminal_decision.rs
++++ b/src-tauri/src/runtime/conversation_check/terminal_decision.rs
+@@ -48,9 +48,16 @@
+-    let (providers, timeout) = state.sqlite_readers.read(|c| {
+-        Ok((
+-            persistence::load_model_providers(c)?,
+-            persistence::load_routing_settings(c)?
+-                .conversation_respond
+-                .timeout_ms,
+-        ))
+-    })?;
+-    let transport = direct_route::select_transport(&state)?;
++    let (providers, legacy_timeout, transport, _fallbacks) =
++        direct_route::prepare_transport(&state)?;
++    let route = direct_route::route_of(&transport);
++    let timeout = route
++        .map(|r| r.timeout_ms)
++        .unwrap_or(legacy_timeout)
++        .min(30_000);
++    let attempt_timeout = route
++        .and_then(|r| r.attempt_timeout_ms)
++        .unwrap_or(timeout)
++        .min(timeout);
++    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout);
++    direct_route::validate_transport(&state, &transport)?;
++    let mut purpose_attempt = route
++        .map(|r| direct_route::RouteAttempt::begin(&audit, r))
++        .transpose()?;
+@@ -77,34 +84,15 @@
+-    let attempt = tokio::time::timeout(
+-        std::time::Duration::from_millis(timeout.min(30000)),
+-        async {
+-            match &transport {
+-                direct_route::ConversationTransport::Direct(route) => {
+-                    direct_route::complete_direct_with_events(
+-                        route,
+-                        &[],
+-                        &text,
+-                        &audit,
+-                        &step,
+-                        &metrics,
+-                        None,
+-                        Some(cancellation.clone()),
+-                    )
+-                    .await
+-                }
+-                direct_route::ConversationTransport::Larm => {
+-                    let session = cached_larm_asr(&providers, Some(&audit)).await?;
+-                    complete_larm_role_with_events(
+-                        &session,
+-                        "llm",
+-                        &[],
+-                        &text,
+-                        timeout.min(30000),
+-                        &audit,
+-                        &step,
+-                        &metrics,
+-                        None,
+-                        Some(cancellation.clone()),
+-                    )
+-                    .await
+-                    .map(|v| v.0)
+-                }
++    let attempt = tokio::time::timeout(std::time::Duration::from_millis(attempt_timeout), async {
++        match &transport {
++            direct_route::ConversationTransport::Direct(route) => {
++                direct_route::complete_direct_with_events(
++                    route,
++                    &[],
++                    &text,
++                    &audit,
++                    &step,
++                    &metrics,
++                    None,
++                    Some(cancellation.clone()),
++                    &AtomicBool::new(false),
++                )
++                .await
+@@ -112,2 +100,23 @@
+-        },
+-    );
++            direct_route::ConversationTransport::Larm(_) => {
++                let session = cached_larm_asr(&providers, Some(&audit)).await?;
++                direct_route::validate_transport(&state, &transport)?;
++                complete_larm_role_with_events(
++                    &session,
++                    "llm",
++                    &[],
++                    &text,
++                    attempt_timeout,
++                    &audit,
++                    &step,
++                    &metrics,
++                    None,
++                    Some(cancellation.clone()),
++                )
++                .await
++                .map(|(content, model)| {
++                    metrics.response_model(Some(&model));
++                    content
++                })
++            }
++        }
++    });
+@@ -114,0 +124,4 @@
++    if let Some(attempt) = &mut purpose_attempt {
++        attempt.finish(true)?;
++    }
++    direct_route::validate_transport(&state, &transport)?;
+@@ -116 +129,12 @@
+-    crate::coding::terminal::automatic_answer(&state, &context, &output)
++    let mut accepted_route = direct_route::route_of(&transport).cloned();
++    if let Some(route) = &mut accepted_route {
++        if let Some(model) = metrics.observed_model() {
++            route.model = model;
++        }
++    }
++    crate::coding::terminal::automatic_answer(
++        &state,
++        &context,
++        &output,
++        accepted_route.as_ref().map(|r| (r, deadline)),
++    )
+--- a/src-tauri/src/coding/terminal/tests.rs
++++ b/src-tauri/src/coding/terminal/tests.rs
+@@ -424,0 +425 @@
++            None,
+@@ -459,0 +461,2 @@
++#[path = "purpose_route_tests.rs"]
++mod purpose_route_tests;
+--- /dev/null
++++ b/src-tauri/src/coding/terminal/purpose_route_tests.rs
+@@ -0,0 +1,56 @@
++#![cfg(test)]
++use super::*;
++#[test]
++fn model_route_revocation_or_deadline_blocks_automatic_terminal_answer_adoption() {
++    for withdraw in [true, false] {
++        let c = fixture();
++        pause(&c, "blocker");
++        c.execute("INSERT INTO terminal_decisions(question_id,job_id,status) VALUES('run:q','job','reserved')",[]).unwrap();
++        c.execute("INSERT INTO terminal_questions(id,run_id,job_id,kind,input_json,state,created_at) VALUES('run:second','run','job','blocker','{}','awaiting_user','1')",[]).unwrap();
++        let state = crate::test_support::app_state(c);
++        let context = automatic_context(&state, "run:q").unwrap();
++        let route = state
++            .sqlite_readers
++            .read(|db| {
++                let loaded = crate::persistence::service_registry_store::load_registry(db)?;
++                crate::providers::service_registry::resolve_route(
++                    &loaded.snapshot,
++                    crate::providers::service_registry::Purpose::ConversationRespond,
++                )
++                .map_err(|e| format!("{e:?}"))
++            })
++            .unwrap();
++        if withdraw {
++            state
++                .sqlite_writer
++                .write(|db| {
++                    let loaded = crate::persistence::service_registry_store::load_registry(db)?;
++                    let mut next = loaded.snapshot;
++                    next.bindings
++                        .iter_mut()
++                        .find(|b| {
++                            b.purpose
++                                == crate::providers::service_registry::Purpose::ConversationRespond
++                        })
++                        .unwrap()
++                        .enabled = false;
++                    crate::persistence::service_registry_store::save_registry(
++                        db,
++                        &next,
++                        loaded.revision,
++                    )?;
++                    Ok(())
++                })
++                .unwrap();
++        }
++        let deadline = tokio::time::Instant::now()
++            + std::time::Duration::from_millis(if withdraw { 1000 } else { 0 });
++        let output =
++            json!({"action":"answer","sourceId":"human","quote":"Use Blue","answer":"Blue"});
++        assert!(automatic_answer(&state, &context, &output, Some((&route, deadline))).is_err());
++        state.sqlite_readers.read(|db| {
++            let status:String=db.query_row("SELECT state FROM terminal_questions WHERE id='run:q'",[],|r|r.get(0)).unwrap();assert_eq!(status,"awaiting_user");
++            let count:i64=db.query_row("SELECT count(*) FROM audit_events WHERE event_name='purpose-route-accepted'",[],|r|r.get(0)).unwrap();assert_eq!(count,0);Ok(())
++        }).unwrap();
++    }
++}

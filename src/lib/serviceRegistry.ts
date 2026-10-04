@@ -1,11 +1,23 @@
+import type { LlmRequestOptions } from "./settingsTypes";
 import { invoke } from "@tauri-apps/api/core";
 
 export type PurposeId =
-  "conversation.respond" | "voice.transcribe" | "voice.speak";
-export type CapabilityId = "text-generation" | "transcription" | "speech";
+  | "conversation.respond"
+  | "voice.transcribe"
+  | "voice.speak"
+  | "media.image.generate"
+  | "media.music.generate";
+export type CapabilityId =
+  | "text-generation"
+  | "transcription"
+  | "speech"
+  | "image-generation"
+  | "music-generation";
 export type AdapterKind =
   | "larm"
   | "chat-completions"
+  | "anthropic-messages"
+  | "replicate-media"
   | "agent-session"
   | "http-asr"
   | "http-tts"
@@ -28,6 +40,7 @@ export type ServiceResource = {
   capability: CapabilityId;
   model: string;
   detail?: string;
+  requestOptions?: LlmRequestOptions;
   enabled: boolean;
 };
 
@@ -36,6 +49,7 @@ export type PurposeBinding = {
   enabled: boolean;
   primaryResourceId: string | null;
   fallbackResourceIds: string[];
+  cloudAllowed?: boolean;
   timeoutMs: number;
   attemptTimeoutMs?: number;
   storedPrimaryResourceId?: string;
@@ -48,10 +62,30 @@ export type RegistrySnapshot = {
   bindings: PurposeBinding[];
 };
 
+export type RouteUsage = {
+  purpose: PurposeId;
+  connectionId: string;
+  connectionLabel?: string;
+  resourceId: string;
+  model: string;
+  fingerprint: string;
+  occurredAt: string;
+  status: "accepted" | "sending" | "inference-completed" | "failed";
+  matchesCurrentSettings: boolean;
+};
+
 export type RegistryView = {
   snapshot: RegistrySnapshot;
   revision: number;
   persisted: boolean;
+  latestUsage?: RouteUsage[];
+  probes?: Array<{
+    resourceId: string;
+    kind: "models" | "generation";
+    occurredAt: string;
+    outcome: string;
+    matchesCurrentSettings: boolean;
+  }>;
 };
 
 export const SERVICE_CREDENTIAL_SERVICE = "com.saaa.service-connection";
@@ -68,28 +102,20 @@ export const PURPOSES: Array<{
   },
   { id: "voice.transcribe", label: "声を聞く", capability: "transcription" },
   { id: "voice.speak", label: "声で返す", capability: "speech" },
+  { id: "media.image.generate", label: "画像を作る", capability: "image-generation" },
+  { id: "media.music.generate", label: "音楽を作る", capability: "music-generation" },
 ];
 
-export const getServiceRegistry = () =>
-  invoke<RegistryView>("get_service_registry");
+export const getServiceRegistry = () => invoke<RegistryView>("get_service_registry");
 
-export const saveServiceRegistry = (
-  snapshot: RegistrySnapshot,
-  expectedRevision: number,
-) =>
+export const saveServiceRegistry = (snapshot: RegistrySnapshot, expectedRevision: number) =>
   invoke<RegistryView>("save_service_registry", { snapshot, expectedRevision });
 
-export const setServiceConnectionSecret = (
-  connectionId: string,
-  apiKey: string,
-) =>
-  invoke<{ connectionId: string; state: string }>(
-    "set_service_connection_secret",
-    {
-      connectionId,
-      apiKey,
-    },
-  );
+export const setServiceConnectionSecret = (connectionId: string, apiKey: string) =>
+  invoke<{ connectionId: string; state: string }>("set_service_connection_secret", {
+    connectionId,
+    apiKey,
+  });
 
 export const getServiceConnectionSecretState = (connectionId: string) =>
   invoke<{ connectionId: string; state: "configured" | "missing" }>(
@@ -98,6 +124,14 @@ export const getServiceConnectionSecretState = (connectionId: string) =>
   );
 
 export type NewChatService = {
+  adapterKind?:
+    | "chat-completions"
+    | "anthropic-messages"
+    | "http-asr"
+    | "http-tts"
+    | "replicate-media";
+  mediaKind?: "image-generation" | "music-generation";
+  detail?: string;
   label: string;
   endpoint: string;
   model: string;
@@ -121,16 +155,18 @@ export function addChatService(
 ): { snapshot: RegistrySnapshot; connectionId: string; resourceId: string } {
   const base = slug(input.label);
   let suffix = 0;
-  const taken = new Set(
-    snapshot.connections.map((connection) => connection.connectionId),
-  );
+  const taken = new Set(snapshot.connections.map((connection) => connection.connectionId));
   let connectionId = `conn:svc-${base}`;
-  while (taken.has(connectionId)) connectionId = `conn:svc-${base}-${++suffix}`;
+  while (
+    taken.has(connectionId) ||
+    snapshot.resources.some((r) => r.resourceId === connectionId.replace("conn:", "res:"))
+  )
+    connectionId = `conn:svc-${base}-${++suffix}`;
   const resourceId = connectionId.replace("conn:", "res:");
   const connection: ServiceConnection = {
     connectionId,
     label: input.label.trim(),
-    adapterKind: "chat-completions",
+    adapterKind: input.adapterKind ?? "chat-completions",
     endpoint: input.endpoint.trim().replace(/\/+$/, ""),
     location: input.location,
     authentication: input.authentication,
@@ -147,8 +183,16 @@ export function addChatService(
   const resource: ServiceResource = {
     resourceId,
     connectionId,
-    capability: "text-generation",
+    capability:
+      input.adapterKind === "replicate-media"
+        ? (input.mediaKind ?? "image-generation")
+        : input.adapterKind === "http-asr"
+          ? "transcription"
+          : input.adapterKind === "http-tts"
+            ? "speech"
+            : "text-generation",
     model: input.model.trim(),
+    ...(input.detail !== undefined ? { detail: input.detail.trim() } : {}),
     enabled: false,
   };
   return {
@@ -184,10 +228,30 @@ export function candidatesFor(snapshot: RegistrySnapshot, purpose: PurposeId) {
     .filter((resource) => resource.capability === capability)
     .map((resource) => ({
       resource,
-      connection: snapshot.connections.find(
-        (item) => item.connectionId === resource.connectionId,
-      ),
+      connection: snapshot.connections.find((item) => item.connectionId === resource.connectionId),
+      unsupportedReason: unsupportedReason(snapshot, purpose, resource),
     }));
+}
+
+export function unsupportedReason(
+  snapshot: RegistrySnapshot,
+  purpose: PurposeId,
+  resource: ServiceResource,
+): string | null {
+  const connection = snapshot.connections.find((c) => c.connectionId === resource.connectionId);
+  if (!connection) return "接続サービスが見つかりません";
+  const isHarness = connection.connectionId === "conn:harness";
+  const supported = purpose.startsWith("media.")
+    ? connection.adapterKind === "replicate-media" || isHarness
+    : purpose === "conversation.respond"
+      ? ["chat-completions", "anthropic-messages"].includes(connection.adapterKind) ||
+        (isHarness && resource.resourceId === "res:harness-llm")
+      : purpose === "voice.transcribe"
+        ? (isHarness && resource.resourceId === "res:harness-asr") ||
+          connection.adapterKind === "http-asr"
+        : (isHarness && resource.resourceId === "res:harness-tts") ||
+          ["http-tts", "system-tts"].includes(connection.adapterKind);
+  return supported ? null : "この接続方式は、この用途にまだ対応していません";
 }
 
 /** Applying a selection is explicit: it clears needs-review and stored legacy value. */
@@ -205,9 +269,7 @@ export function assignPrimary(
         ...rest,
         enabled: resourceId !== null,
         primaryResourceId: resourceId,
-        fallbackResourceIds: resourceId
-          ? binding.fallbackResourceIds.filter((id) => id !== resourceId)
-          : [],
+        fallbackResourceIds: [],
         review: "ready",
       };
     }),
@@ -215,10 +277,7 @@ export function assignPrimary(
 }
 
 /** Resources a connection removal would leave unbound. */
-export function purposesUsing(
-  snapshot: RegistrySnapshot,
-  connectionId: string,
-): PurposeId[] {
+export function purposesUsing(snapshot: RegistrySnapshot, connectionId: string): PurposeId[] {
   const resourceIds = new Set(
     snapshot.resources
       .filter((resource) => resource.connectionId === connectionId)
@@ -226,9 +285,14 @@ export function purposesUsing(
   );
   return snapshot.bindings
     .filter((binding) =>
-      [binding.primaryResourceId, ...binding.fallbackResourceIds].some(
-        (id) => id !== null && resourceIds.has(id),
-      ),
+      [
+        binding.primaryResourceId,
+        binding.storedPrimaryResourceId ?? null,
+        ...binding.fallbackResourceIds,
+      ].some((id) => id !== null && resourceIds.has(id)),
     )
     .map((binding) => binding.purpose);
 }
+
+export const probeServiceResource = (resourceId: string, kind: "models" | "generation") =>
+  invoke<{ models?: string[]; message: string }>("probe_service_resource", { resourceId, kind });

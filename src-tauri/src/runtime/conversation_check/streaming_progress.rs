@@ -1,8 +1,4 @@
 use super::streaming_speech::*;
-#[cfg(any(test, feature = "offline-contracts"))]
-use super::*;
-#[cfg(any(test, feature = "offline-contracts"))]
-use tauri::Manager;
 
 pub(crate) async fn play_progress<R: tauri::Runtime>(
     state: &AppState,
@@ -33,12 +29,16 @@ pub(crate) async fn play_progress<R: tauri::Runtime>(
         cancellation.clone(),
     ));
     let _active = ActiveSpeechGuard;
-    let (providers, route) = state.sqlite_readers.read(|connection| {
-        Ok((
-            persistence::load_model_providers(connection)?,
-            persistence::load_routing_settings(connection)?.voice_speak,
-        ))
+    let prepared = state.sqlite_readers.read(|db| {
+        super::super::voice_routes::prepare(
+            db,
+            crate::providers::service_registry::Purpose::VoiceSpeak,
+        )
     })?;
+    let providers = &prepared.providers;
+    let mut route = prepared.route.clone();
+    route.timeout_ms = prepared.validate(state)?;
+    let mut purpose_attempt = direct_route::RouteAttempt::begin(audit, &prepared.resolved)?;
     let dictionary = state.tts_dictionary_cache.snapshot(&state.sqlite_readers)?;
     ensure_current(state, job)?;
     if !super::queue_runtime::progress_eligible(state, job)? {
@@ -58,21 +58,31 @@ pub(crate) async fn play_progress<R: tauri::Runtime>(
         json!({"messageId":format!("progress_{}",job.id),"textBytes":text.len()}),
     );
     let _ = app.emit("conversation-queue-updated", ());
+    tokio::select! {
+        _=tokio::time::sleep_until(prepared.deadline)=>{cancellation.cancel();return Err("この発話の全体期限を超えました".into());},
+        result=async {
     play_chunk(
         app,
         &job.key,
-        &providers,
+        state,
+        &prepared.resolved,
+        providers,
         &route,
         &text,
         &dictionary,
         audit,
-        cancellation,
+        cancellation.clone(),
         &mut continuous,
     )
     .await?;
+
     if let Some(player) = continuous {
         player.finish().await?;
     }
+            Ok::<(),String>(())
+        }=>result?,
+    }
+    purpose_attempt.finish(true)?;
     Ok(())
 }
 

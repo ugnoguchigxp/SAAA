@@ -24,7 +24,9 @@ use rusqlite::{params, Connection};
 /// 40 adds context segments and generation wire columns.
 /// 41 adds the butler conversation event, run-input, and work-state tables.
 /// 42 adds the durable task queue used by the Qwen/Ornith conversation path.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 43;
+/// 43 adds the cloud provider service registry.
+/// 44 adds dedicated terminal run, question, decision, and event receipts.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 44;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =

@@ -17,7 +17,7 @@ pub(super) async fn run(
         let response = tokio::select! {
             biased;
             _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled { output_started }),
-            response = request.send() => response.map_err(|_| ProviderAttemptError::failed(Failure::Network, output_started))?,
+            response = request.send() => response.map_err(|e| ProviderAttemptError::failed(if e.is_connect() { Failure::Connect } else { Failure::Network }, output_started))?,
         };
         if !response.status().is_success() {
             return Err(ProviderAttemptError::failed(
@@ -30,7 +30,7 @@ pub(super) async fn run(
             .and_then(|value| value.split(';').next())
             .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/event-stream"));
         if !is_sse {
-            return Err(ProviderAttemptError::failed(Failure::Protocol, output_started));
+            return super::response_json::stream(response, &context, attempt).await;
         }
         let mut decoder = SseDecoder::default();
         let mut completion = Completion::default();

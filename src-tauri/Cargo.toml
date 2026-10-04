@@ -42,6 +42,7 @@ tauri-build = { version = "2", features = [] }
 cc = "1"
 
 [dependencies]
+saaa-terminal-agent-runtime = { path = "../crates/terminal-agent-runtime" }
 saaa-personal-state-core = { path = "../crates/personal-state-core" }
 saaa-larm-session = { path = "../crates/larm-session" }
 saaa-reasoning-mcp = { path = "../services/reasoning-mcp" }

@@ -1,0 +1,54 @@
+--- /Users/y.noguchi/Code/SAAA/src-tauri/src/conversation_queue_e2e/cloud_route.rs	2026-10-04 19:53:46
++++ /var/folders/mx/jbv8qfwd52z14q0mby_273lhlp5gd2/T/saaa-cloud-review-5oun_omo/src-tauri/src/conversation_queue_e2e/cloud_route.rs	2026-10-04 22:59:40
+@@ -16,7 +16,7 @@
+     // Nothing listens on this LARM address: any LARM request would fail the job.
+     snapshot.connections[0].endpoint = "http://127.0.0.1:1".into();
+     snapshot.connections.push(ServiceConnection {
+-        connection_id: "conn:cloud-llm".into(),
++        connection_id: "conn:svc-cloud-llm".into(),
+         label: "Cloud".into(),
+         adapter_kind: AdapterKind::ChatCompletions,
+         endpoint: format!("{base}/llm/v1"),
+@@ -26,19 +26,23 @@
+         enabled: true,
+     });
+     snapshot.resources.push(ServiceResource {
+-        resource_id: "res:cloud-llm".into(),
+-        connection_id: "conn:cloud-llm".into(),
++        resource_id: "res:svc-cloud-llm".into(),
++        connection_id: "conn:svc-cloud-llm".into(),
+         capability: Capability::TextGeneration,
+         model: "fixture-cloud".into(),
+         detail: None,
+         enabled: true,
+     });
++    if std::env::var_os("SAAA_REVIEW_DEADLINE").is_some() {
++        let b=snapshot.bindings.iter_mut().find(|b|b.purpose==Purpose::ConversationRespond).unwrap();
++        b.timeout_ms=1000;b.attempt_timeout_ms=Some(1000);
++    }
+     let binding = snapshot
+         .bindings
+         .iter_mut()
+         .find(|binding| binding.purpose == Purpose::ConversationRespond)
+         .ok_or("conversation binding missing")?;
+-    binding.primary_resource_id = Some("res:cloud-llm".into());
++    binding.primary_resource_id = Some("res:svc-cloud-llm".into());
+     binding.stored_primary_resource_id = None;
+     binding.review = BindingReview::Ready;
+     persistence::service_registry_store::save_registry(
+@@ -67,6 +71,7 @@
+         .build(tauri::test::mock_context(tauri::test::noop_assets()))
+         .map_err(|error| error.to_string())?;
+     let state = app.state::<AppState>();
++    *fixture.context_writer.lock().unwrap()=Some(state.sqlite_writer.clone());
+     let key = "cloud-route-research";
+     conversation_check::queue_runtime::enqueue_text(
+         &state,
+@@ -104,5 +109,6 @@
+         .filter(|call| call.contains("agent-connections") || call.contains("agent-profiles"))
+         .count();
+     let llm_calls = *fixture.llm_calls.lock().map_err(|_| "LLM count lock")?;
+-    Ok(json!({"answer":answer,"larmRequests":larm_requests,"llmCalls":llm_calls}))
++    let active=state.sqlite_readers.read(|db|Ok(persistence::service_registry_store::load_registry(db)?.snapshot.connection("conn:svc-cloud-llm").unwrap().enabled))?;
++    Ok(json!({"answer":answer,"larmRequests":larm_requests,"llmCalls":llm_calls,"connectionEnabledAtEnd":active}))
+ }

@@ -1,0 +1,181 @@
+{
+  "rubric_version": "1.1.0",
+  "technical_profile": "agent",
+  "mode": "technical",
+  "assessment_kind": "current",
+  "target": {
+    "locator": "/Users/y.noguchi/Code/SAAA",
+    "snapshot": "86826f02fe0e14ef2ada1526797e156f68b57727",
+    "reviewed_at": "2026-10-04",
+    "stage": "pilot / initial implementation",
+    "scope": "用途別クラウドAPI切替機能と計画達成度。登録・保存・移行・会話queue transport・音声binding射影・React設定UIをレビュー。commit全体の無関係変更、配布/更新経路、依存脆弱性調査、実API、実機AEC、負荷測定は範囲外または未検証。実DB/secretは開かずgit archiveの一時コピー、in-memory SQLite、localhost fixtureとmock IPCで検証。backend故障probeの変更は一時コピーだけで、原本には適用していない。"
+  },
+  "depth": "deep",
+  "tracks": {
+    "technical": {
+      "raw_observed_score": 30.5,
+      "provisional_score": null,
+      "score": null,
+      "score_status": "provisional",
+      "coverage_percent": 60.3,
+      "excluded_dimension_weight_percent": 0.0,
+      "raw_bounds": [
+        18.4,
+        58.1
+      ],
+      "bounds": [
+        18.4,
+        58.1
+      ],
+      "confidence": "Medium",
+      "required_dimensions_complete": false,
+      "incomplete_required_dimensions": [
+        "security",
+        "reliability"
+      ],
+      "unresolved_severe_suspicions": [],
+      "gates": [
+        {
+          "cap": 59,
+          "reason": "serious security finding linked to failed control: F01"
+        }
+      ],
+      "production_readiness": "blocked",
+      "dimensions": {
+        "architecture": {
+          "status": "assessed",
+          "score": 3.3,
+          "coverage_percent": 100.0,
+          "bounds": [
+            3.3,
+            3.3
+          ],
+          "base_weight": 12,
+          "confidence": "Medium",
+          "effective_weight_percent": 12.0
+        },
+        "correctness": {
+          "status": "assessed",
+          "score": 2.5,
+          "coverage_percent": 100.0,
+          "bounds": [
+            2.5,
+            2.5
+          ],
+          "base_weight": 15,
+          "confidence": "High",
+          "effective_weight_percent": 15.0
+        },
+        "security": {
+          "status": "partial",
+          "score": 2.5,
+          "coverage_percent": 33.3,
+          "bounds": [
+            0.8,
+            7.5
+          ],
+          "base_weight": 18,
+          "confidence": "High",
+          "effective_weight_percent": 18.0
+        },
+        "reliability": {
+          "status": "partial",
+          "score": 2.5,
+          "coverage_percent": 66.7,
+          "bounds": [
+            1.7,
+            5.0
+          ],
+          "base_weight": 12,
+          "confidence": "High",
+          "effective_weight_percent": 12.0
+        },
+        "maintainability": {
+          "status": "partial",
+          "score": 5.0,
+          "coverage_percent": 33.3,
+          "bounds": [
+            1.7,
+            8.3
+          ],
+          "base_weight": 8,
+          "confidence": "Medium",
+          "effective_weight_percent": 8.0
+        },
+        "common_components": {
+          "status": "assessed",
+          "score": 4.2,
+          "coverage_percent": 100.0,
+          "bounds": [
+            4.2,
+            4.2
+          ],
+          "base_weight": 5,
+          "confidence": "Medium",
+          "effective_weight_percent": 5.0
+        },
+        "testing": {
+          "status": "partial",
+          "score": 3.8,
+          "coverage_percent": 66.7,
+          "bounds": [
+            2.5,
+            5.8
+          ],
+          "base_weight": 10,
+          "confidence": "Medium",
+          "effective_weight_percent": 10.0
+        },
+        "supply_chain": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 8,
+          "confidence": "Unknown",
+          "effective_weight_percent": 8.0
+        },
+        "performance": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 7,
+          "confidence": "Unknown",
+          "effective_weight_percent": 7.0
+        },
+        "operability": {
+          "status": "assessed",
+          "score": 2.5,
+          "coverage_percent": 100.0,
+          "bounds": [
+            2.5,
+            2.5
+          ],
+          "base_weight": 5,
+          "confidence": "High",
+          "effective_weight_percent": 5.0
+        }
+      }
+    }
+  },
+  "confirmed_findings": {
+    "Critical": 0,
+    "High": 2,
+    "Medium": 4,
+    "Low": 0
+  },
+  "priorities": {
+    "P0": 0,
+    "P1": 5,
+    "P2": 1,
+    "P3": 0
+  },
+  "suspected_findings": 0
+}

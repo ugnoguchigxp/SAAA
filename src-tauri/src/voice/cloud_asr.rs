@@ -160,7 +160,7 @@ async fn transcribe_impl(
                 Ok(request)
             },
             &cancellation,
-            true,
+            false,
         )
         .await
         .map_err(|kind| kind.public_message().as_str().to_string())?;

@@ -86,25 +86,12 @@ enum Command {
 
 type Sessions = Mutex<HashMap<String, mpsc::Sender<Command>>>;
 static SESSIONS: OnceLock<Sessions> = OnceLock::new();
+#[path = "qwen_realtime_asr/selection.rs"]
+mod selection;
+use selection::selected_provider;
+
 fn sessions() -> &'static Sessions {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn selected_provider(state: &AppState) -> Result<Option<crate::CloudAsrProviderSettings>, String> {
-    state.sqlite_readers.read(|connection| {
-        let route = persistence::load_routing_settings(connection)?.voice_transcribe;
-        if route.source != "provider" {
-            return Ok(None);
-        }
-        let providers = persistence::load_model_providers(connection)?;
-        let selected = providers.providers.into_iter().find(|provider| {
-            route.provider_id.as_deref() == Some(provider.id()) && provider.enabled()
-        });
-        match selected {
-            Some(ModelProviderSettings::CloudAsr(provider)) => Ok(Some(provider)),
-            _ => Err("設定済みのASR Providerが見つかりません。".into()),
-        }
-    })
 }
 
 #[tauri::command]
@@ -134,6 +121,15 @@ pub(crate) async fn start_qwen_asr_session(
     if sessions().lock().await.contains_key(&input.session_id) {
         return Err("ASRセッションはすでに開始されています。".into());
     }
+    let pinned = state.sqlite_readers.read(|db| {
+        let loaded = persistence::service_registry_store::load_registry(db)?;
+        crate::providers::service_registry::resolve_route(
+            &loaded.snapshot,
+            crate::providers::service_registry::Purpose::VoiceTranscribe,
+        )
+        .map_err(|_| "音声入力の用途設定が無効です".to_string())
+    })?;
+    let readers = state.sqlite_readers.clone();
     let gate = super::conversation_speaker::prepare(&state)?;
     let mut socket = connect_provider(&provider).await?;
     initialize_session(&mut socket, input.silence_timeout_ms).await?;
@@ -152,6 +148,8 @@ pub(crate) async fn start_qwen_asr_session(
         receiver,
         on_event,
         gate,
+        readers,
+        pinned,
     ));
     Ok(())
 }
@@ -323,6 +321,8 @@ async fn run_session(
     mut receiver: mpsc::Receiver<Command>,
     events: Channel<Event>,
     mut gate: super::streaming_asr::speaker_gate_runtime::SpeakerGate,
+    readers: persistence::SqliteReaders,
+    pinned: crate::providers::service_registry::ResolvedRoute,
 ) {
     let (mut writer, mut reader) = socket.split();
     let mut ranges: Vec<Range> = Vec::new();
@@ -348,6 +348,7 @@ async fn run_session(
             }
             command = receiver.recv() => match command {
                 Some(Command::Audio { utterance_id, audio }) => {
+                    if let Err(error)=readers.read(|db|crate::providers::service_registry::validate_active(db,&pinned)) { break 'session Err(error); }
                     pending_ids.push_back(utterance_id);
                     for audio in gate.push(zeroize::Zeroizing::new(audio)).await {
                     let utterance_id = pending_ids.pop_front().expect("one id per gated packet");
@@ -531,12 +532,28 @@ mod tests {
             Ok(())
         });
         let (sender, receiver) = mpsc::channel(4);
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::initialize_database(&db).unwrap();
+        let state = crate::test_support::app_state(db);
+        let pinned = state
+            .sqlite_readers
+            .read(|db| {
+                let snapshot = persistence::service_registry_store::load_registry(db)?.snapshot;
+                crate::providers::service_registry::resolve_route(
+                    &snapshot,
+                    crate::providers::service_registry::Purpose::VoiceTranscribe,
+                )
+                .map_err(|e| format!("{e:?}"))
+            })
+            .unwrap();
         let session = tokio::spawn(run_session(
             "test-session".into(),
             socket,
             receiver,
             events,
             super::super::streaming_asr::speaker_gate_runtime::SpeakerGate::new(None, 0.008),
+            state.sqlite_readers.clone(),
+            pinned,
         ));
         sender
             .send(Command::Audio {

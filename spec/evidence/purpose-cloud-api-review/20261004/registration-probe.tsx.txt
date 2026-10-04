@@ -1,0 +1,44 @@
+import { test, expect } from "bun:test";
+import { act } from "react";
+import { installJsdom } from "./jsdomGlobals";
+import { invokeCalls, invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
+import type { RegistryView } from "../src/lib/serviceRegistry";
+
+test("review probe: failed key storage leaves stale revision and no draft resume UI", async () => {
+ const env = installJsdom(); resetTauriCoreMock();
+ const { PurposeRoutesSection } = await import("../src/features/settings/PurposeRoutesSection");
+ const { createRoot } = await import("react-dom/client");
+ const root = createRoot(document.getElementById("root")!);
+ let current: RegistryView = {snapshot: {connections:[],resources:[],bindings:[]}, revision:0,persisted:false};
+ invokeImpl.handler = async (command,args:any) => {
+  if(command==="get_service_registry") return structuredClone(current);
+  if(command==="save_service_registry") {
+   if(args.expectedRevision !== current.revision) throw new Error("Settings changed; reload");
+   current = {snapshot:structuredClone(args.snapshot),revision:current.revision+1,persisted:true};
+   return structuredClone(current);
+  }
+  if(command==="set_service_connection_secret") throw new Error("injected storage failure");
+  throw new Error(command);
+ };
+ const button=(text:string)=>[...document.querySelectorAll("button")].find(e=>e.textContent===text)!;
+ try {
+  await act(async()=>root.render(<PurposeRoutesSection/>));
+  const inputs=[...document.querySelectorAll<HTMLInputElement>("input")];
+  for(const [i,v] of ["Cloud","https://api.example.invalid/v1","m","fake-review-key"].entries()) {
+   await act(async()=>{Object.getOwnPropertyDescriptor(env.dom.window.HTMLInputElement.prototype,"value")!.set!.call(inputs[i],v);inputs[i].dispatchEvent(new env.dom.window.Event("input",{bubbles:true}));});
+  }
+  await act(async()=>button("登録").click());
+  expect(current.revision).toBe(1);
+  expect(current.snapshot.connections[0].enabled).toBe(false);
+  expect(document.querySelector('[role="status"]')?.textContent).toContain("injected storage failure");
+  await act(async()=>button("登録").click());
+  const saves=invokeCalls.filter(c=>c.command==="save_service_registry");
+  expect(saves.map(c=>(c.args as any).expectedRevision)).toEqual([0,0]);
+  expect(document.querySelector('[role="status"]')?.textContent).toContain("Settings changed");
+  await act(async()=>button("再読込").click());
+  const draft=document.querySelector<HTMLOptionElement>('option[value="res:svc-cloud"]')!;
+  expect(draft.disabled).toBe(true);
+  expect([...document.querySelectorAll("button")].map(b=>b.textContent)).toEqual(["登録","再読込"]);
+  console.log("Observed: first save revision=1; retry submitted revision=0; reloaded draft disabled with no resume action.");
+ } finally {await act(async()=>root.unmount());env.restore();resetTauriCoreMock();}
+});

@@ -195,10 +195,16 @@ export function ConversationCheckPage({
           if (active) setLoading(false);
         });
     };
-    void listen("conversation-queue-updated", () => {
-      if (active) reload();
-    })
-      .then((stop) => {
+    void Promise.all([
+      listen("conversation-queue-updated", () => {
+        if (active) reload();
+      }),
+      listen<{ conversationId: string }>("delegated-report-committed", ({ payload }) => {
+        if (active && payload.conversationId === conversationId) reload();
+      }),
+    ])
+      .then((stops) => {
+        const stop = () => stops.forEach((unlisten) => unlisten());
         if (active) {
           unlisten = stop;
           reload();
@@ -215,7 +221,7 @@ export function ConversationCheckPage({
       refreshGeneration.current += 1;
       unlisten?.();
     };
-  }, [refreshQueue]);
+  }, [refreshQueue, conversationId]);
 
   useEffect(() => {
     let active = true;

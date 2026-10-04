@@ -113,6 +113,7 @@ pub struct MediaClient {
     service: catalog::CatalogService,
     kind: MediaKind,
     pub limits: MediaLimits,
+    request_guard: Option<std::sync::Arc<dyn Fn() -> Result<(), MediaError> + Send + Sync>>,
 }
 #[derive(Clone, Copy)]
 pub struct MediaLimits {
@@ -176,7 +177,57 @@ impl MediaClient {
             service,
             kind,
             limits: MediaLimits::default(),
+            request_guard: None,
         })
+    }
+    /// The host checks revocation immediately before each new wire request.
+    pub fn with_request_guard(
+        mut self,
+        guard: std::sync::Arc<dyn Fn() -> Result<(), MediaError> + Send + Sync>,
+    ) -> Self {
+        self.request_guard = Some(guard);
+        self
+    }
+    fn check_request(&self) -> Result<(), MediaError> {
+        if let Some(guard) = &self.request_guard {
+            guard()?;
+        }
+        Ok(())
+    }
+    pub async fn resume_music_job(
+        &self,
+        id: &str,
+        cancel: watch::Receiver<bool>,
+        progress: &(dyn Fn(MediaProgress) + Send + Sync),
+    ) -> Result<MediaResult, MediaError> {
+        if self.kind != MediaKind::Music {
+            return Err(MediaError::new(FailureKind::Protocol, "image_has_no_job"));
+        }
+        let url = self.music_job_url(id)?;
+        let job = self
+            .json(
+                self.client.get(url.clone()).timeout(self.limits.artifact),
+                &[200],
+            )
+            .await?;
+        self.follow_music(job, cancel, progress, Some(url.as_str()))
+            .await
+    }
+    pub async fn cancel_music_job(&self, id: &str) -> MediaError {
+        let url = match self.music_job_url(id) {
+            Ok(url) => url,
+            Err(error) => return error,
+        };
+        self.cancel_job(url, id).await
+    }
+    fn music_job_url(&self, id: &str) -> Result<Url, MediaError> {
+        identifier(&json!(id))?;
+        let mut url = self.url(&self.service.endpoint)?;
+        url.path_segments_mut()
+            .map_err(|_| MediaError::new(FailureKind::Protocol, "invalid_job_url"))?
+            .pop_if_empty()
+            .push(id);
+        Ok(url)
     }
     pub fn service(&self) -> &catalog::CatalogService {
         &self.service

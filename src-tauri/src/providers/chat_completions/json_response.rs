@@ -13,7 +13,7 @@ pub(super) async fn run(
         biased;
         _ = cancellation.cancelled() => return Err(ProviderAttemptError::Cancelled { output_started: false }),
         result = tokio::time::timeout(Duration::from_millis(timeout_ms), async {
-            let mut response = request.send().await.map_err(|_| Failure::Network)?;
+            let mut response = request.send().await.map_err(|e| if e.is_connect() { Failure::Connect } else { Failure::Network })?;
             if !response.status().is_success() {
                 return Err(crate::providers::http::status_failure(response.status().as_u16()));
             }
@@ -30,45 +30,5 @@ pub(super) async fn run(
                 kind, false, (kind == Failure::Protocol).then_some("invalid-chat-json"),
             ))?,
     };
-    let usage = response
-        .get("usage")
-        .filter(|v| v.is_object())
-        .map(crate::runtime::context::usage::parse_openai_usage);
-    attempt.response(response["model"].as_str(), usage.as_ref());
-    let choice = response["choices"]
-        .as_array()
-        .and_then(|choices| (choices.len() == 1).then(|| &choices[0]))
-        .ok_or_else(|| {
-            ProviderAttemptError::failed_with_detail(
-                Failure::Protocol,
-                false,
-                Some("invalid-chat-choices"),
-            )
-        })?;
-    if choice["finish_reason"] != "stop" {
-        return Err(ProviderAttemptError::failed_with_detail(
-            Failure::Protocol,
-            false,
-            Some("chat-finish-reason-not-stop"),
-        ));
-    }
-    if !choice["message"]["tool_calls"].is_null() {
-        return Err(ProviderAttemptError::failed_with_detail(
-            Failure::Protocol,
-            false,
-            Some("unexpected-chat-tool-call"),
-        ));
-    }
-    let content = choice["message"]["content"]
-        .as_str()
-        .filter(|text| !text.trim().is_empty())
-        .ok_or_else(|| {
-            ProviderAttemptError::failed_with_detail(
-                Failure::Protocol,
-                false,
-                Some("missing-chat-content"),
-            )
-        })?
-        .to_string();
-    Ok(content)
+    super::response_json::content(&response, attempt)
 }

@@ -26,6 +26,9 @@ pub fn occupy_for_test() -> tokio::sync::RwLockWriteGuard<'static, ()> {
     SLOT.blocking_write()
 }
 
+mod background;
+pub use background::background;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-05 JST",
+  "baseCommit": "86826f02fe0e14ef2ada1526797e156f68b57727",
+  "cliVersions": {
+    "claude": "2.1.289",
+    "codex": "0.155.1"
+  },
+  "nativeHelperSha256": "fed4ee7f2c3f825033b21c3193dacc6d66a7eb11f185f61984b74001fd66f920",
+  "isolation": "temporary Git workspaces and isolated databases; no provider/auth/global CLI configuration reset",
+  "checks": {
+    "coding": [
+      "test result: ok. 38 passed; 0 failed; 4 ignored; 0 measured; 1738 filtered out; finished in 10.55s"
+    ],
+    "nativeHostRoundtrip": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1779 filtered out; finished in 3.57s"
+    ],
+    "helperRuntime": [
+      "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ],
+    "ipcAndSpeechContracts": [
+      "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ],
+    "frontend": [
+      "Frontend contracts: 143/143 files, 433 passing cases."
+    ]
+  }
+}

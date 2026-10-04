@@ -1,0 +1,20 @@
+running 1 test
+test tests::typed_memory_tools_are_routed_only_from_a_valid_::typed_memory_tools_are_routed_only_from_a_valid_typed_manifest ... FAILED
+
+failures:
+
+---- tests::typed_memory_tools_are_routed_only_from_a_valid_::typed_memory_tools_are_routed_only_from_a_valid_typed_manifest stdout ----
+
+thread 'tests::typed_memory_tools_are_routed_only_from_a_valid_::typed_memory_tools_are_routed_only_from_a_valid_typed_manifest' (20411974) panicked at src/tests/typed_memory_tools_are_routed_only_from_a_valid_.rs:75:5:
+assertion `left == right` failed
+  left: ["recall_conversation", "recall_experience", "recall_rule", "recall_skill", "web_search", "fetch_content", "lookup_tts_pronunciation", "set_tts_pronunciation", "read_record", "recall_activity", "update_conversation_voice_behavior"]
+ right: ["recall_conversation", "recall_experience", "recall_rule", "recall_skill", "web_search", "fetch_content", "continue_work", "read_record", "recall_activity", "update_conversation_voice_behavior"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::typed_memory_tools_are_routed_only_from_a_valid_::typed_memory_tools_are_routed_only_from_a_valid_typed_manifest
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1769 filtered out; finished in 0.11s
+
+error: test failed, to rerun pass `--lib`

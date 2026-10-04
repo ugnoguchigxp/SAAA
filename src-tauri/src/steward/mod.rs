@@ -187,3 +187,5 @@ mod sc_tests {
     pub(super) use std::time::{Duration, Instant};
     include!("tests/sc.rs");
 }
+
+pub(crate) use repository::enqueue_report as enqueue_terminal_report;

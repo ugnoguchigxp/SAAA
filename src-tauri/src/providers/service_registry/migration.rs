@@ -17,6 +17,8 @@ fn harness_resource_id(capability: Capability) -> String {
         Capability::TextGeneration => "llm",
         Capability::Transcription => "asr",
         Capability::Speech => "tts",
+        Capability::ImageGeneration => "image",
+        Capability::MusicGeneration => "music",
     };
     format!("res:harness-{suffix}")
 }
@@ -50,12 +52,15 @@ pub(crate) fn migrate_legacy(
         Capability::TextGeneration,
         Capability::Transcription,
         Capability::Speech,
+        Capability::ImageGeneration,
+        Capability::MusicGeneration,
     ] {
         snapshot.resources.push(ServiceResource {
             resource_id: harness_resource_id(capability),
             connection_id: HARNESS_CONNECTION_ID.to_string(),
             capability,
             model: String::new(),
+            request_options: None,
             detail: providers
                 .harness
                 .tts_voice
@@ -131,6 +136,15 @@ pub(crate) fn migrate_legacy(
             capability,
             model,
             detail,
+            request_options: match provider {
+                ModelProviderSettings::OpenAiCompatible(p) => p
+                    .request_options
+                    .as_ref()
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .map_err(|e| e.to_string())?,
+                _ => None,
+            },
             enabled: provider.enabled(),
         });
     }
@@ -164,6 +178,7 @@ pub(crate) fn migrate_legacy(
         } else {
             Vec::new()
         },
+        cloud_allowed: true,
         timeout_ms: conversation.timeout_ms,
         attempt_timeout_ms: conversation.attempt_timeout_ms,
         stored_primary_resource_id: stored_primary.filter(|_| conversation_from_provider),
@@ -192,8 +207,25 @@ pub(crate) fn migrate_legacy(
             enabled: primary.is_some(),
             primary_resource_id: primary,
             fallback_resource_ids: fallbacks(&route.fallback_provider_ids)?,
+            cloud_allowed: true,
             timeout_ms: route.timeout_ms,
             attempt_timeout_ms: route.attempt_timeout_ms,
+            stored_primary_resource_id: None,
+            review: BindingReview::Ready,
+        });
+    }
+    for (purpose, capability) in [
+        (Purpose::MediaImageGenerate, Capability::ImageGeneration),
+        (Purpose::MediaMusicGenerate, Capability::MusicGeneration),
+    ] {
+        snapshot.bindings.push(PurposeBinding {
+            purpose,
+            enabled: true,
+            primary_resource_id: Some(harness_resource_id(capability)),
+            fallback_resource_ids: Vec::new(),
+            timeout_ms: 1_800_000,
+            attempt_timeout_ms: Some(120_000),
+            cloud_allowed: false,
             stored_primary_resource_id: None,
             review: BindingReview::Ready,
         });

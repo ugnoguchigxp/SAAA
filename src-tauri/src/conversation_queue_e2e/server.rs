@@ -1,4 +1,6 @@
 //! Local deterministic provider server, isolated from real-model acceptance.
+#[path = "request_options.rs"]
+mod request_options;
 use super::*;
 
 pub(super) async fn serve(
@@ -58,11 +60,26 @@ pub(super) async fn serve(
         }
         return Json(json!({"text":"今日の事実を調べて","language":"ja"})).into_response();
     }
-    if path.ends_with("/v1/chat/completions") {
+    if path == "/rejected/v1/chat/completions" {
+        return if fixture.cloud_auth_rejection.load(Ordering::SeqCst) {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        .into_response();
+    }
+    if path.ends_with("/v1/chat/completions") || path.ends_with("/v1/messages") {
+        if fixture.cloud_deadline.load(Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        }
         let bytes = to_bytes(request.into_body(), 1_000_000)
             .await
             .expect("LLM fixture body");
-        let body: Value = serde_json::from_slice(&bytes).expect("LLM fixture JSON");
+        let mut body: Value = serde_json::from_slice(&bytes).expect("LLM fixture JSON");
+        let native = path.ends_with("/v1/messages");
+        if native {
+            request_options::normalize_native(&mut body);
+        }
         if path.starts_with("/llm/") {
             fixture
                 .requests
@@ -90,18 +107,22 @@ pub(super) async fn serve(
                 tokio::time::sleep(std::time::Duration::from_millis(11_000)).await;
             }
             let mut count = fixture.llm_calls.lock().expect("LLM fixture count");
-            if *count == 0 {
-                assert_eq!(
-                    body["max_tokens"], 4_096,
-                    "initial Ornith call keeps its output reserve"
-                );
+            if fixture.cloud_options.load(Ordering::SeqCst) {
+                request_options::validate(&body);
             } else {
-                assert_eq!(
-                    body["max_tokens"], 4_096,
-                    "tool follow-up keeps the advertised output reserve"
-                );
-                if serialized.contains("TOOL_RESULT:") {
-                    assert_ne!(body["chat_template_kwargs"]["enable_thinking"], false);
+                if *count == 0 {
+                    assert_eq!(
+                        body["max_tokens"], 4_096,
+                        "initial Ornith call keeps its output reserve"
+                    );
+                } else {
+                    assert_eq!(
+                        body["max_tokens"], 4_096,
+                        "tool follow-up keeps the advertised output reserve"
+                    );
+                    if serialized.contains("TOOL_RESULT:") {
+                        assert_ne!(body["chat_template_kwargs"]["enable_thinking"], false);
+                    }
                 }
             }
             if *count > 0 && fixture.fail_after_search.load(Ordering::SeqCst) {
@@ -216,6 +237,9 @@ pub(super) async fn serve(
                 "調査結果は42です。補足です。これ以上の説明は不要です。".into()
             }
         };
+        if native {
+            return Json(json!({"id":"msg_fixture","type":"message","role":"assistant","model":body["model"],"stop_reason":"end_turn","content":[{"type":"text","text":content}],"usage":{"input_tokens":20,"output_tokens":30}})).into_response();
+        }
         if body["stream"] == true {
             let model = body["model"].as_str().unwrap_or("fixture-ornith");
             if let Some(split_at) = content.find("資料では確認済みの事実は42です。")

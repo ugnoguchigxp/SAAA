@@ -70,6 +70,18 @@ pub(crate) fn project_voice_bindings(
         let binding = snapshot
             .binding(purpose)
             .ok_or("Voice binding is missing")?;
+        if binding
+            .primary_resource_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("res:svc-"))
+        {
+            if !binding.enabled || !binding.fallback_resource_ids.is_empty() {
+                return Err("登録した音声サービスの無効化・代替先にはまだ対応していません".into());
+            }
+            // The purpose registry is authoritative for new resources. Legacy
+            // settings cannot losslessly express their credential references.
+            continue;
+        }
         let route = route_from_binding(binding, harness)?;
         match purpose {
             Purpose::VoiceTranscribe => routing.voice_transcribe = route,

@@ -5,6 +5,20 @@ use ts_rs::TS;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CodingSettings {
     pub enabled: bool,
+    #[serde(default)]
+    pub terminal_kind: String,
+    #[serde(default)]
+    pub terminal_cli: String,
+    #[serde(default)]
+    pub terminal_executable: String,
+    #[serde(default)]
+    pub terminal_model: String,
+    #[serde(default)]
+    pub terminal_checks: Vec<Vec<String>>,
+    #[serde(default)]
+    pub terminal_auto_answer: bool,
+    #[serde(default)]
+    pub terminal_retry_limit: u8,
     #[serde(default = "default_implementation_method")]
     pub implementation_method: String,
     #[serde(default = "default_codex_model")]
@@ -21,6 +35,13 @@ impl Default for CodingSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            terminal_kind: String::new(),
+            terminal_cli: String::new(),
+            terminal_executable: String::new(),
+            terminal_model: String::new(),
+            terminal_checks: Vec::new(),
+            terminal_auto_answer: false,
+            terminal_retry_limit: 0,
             implementation_method: default_implementation_method(),
             codex_model: default_codex_model(),
             executable: String::new(),
@@ -39,7 +60,10 @@ fn default_codex_model() -> String {
     "gpt-5.6-luna".into()
 }
 pub fn valid_implementation(settings: &CodingSettings) -> bool {
-    matches!(settings.implementation_method.as_str(), "pi" | "codex-sdk")
+    matches!(
+        settings.implementation_method.as_str(),
+        "pi" | "codex-sdk" | "terminal"
+    ) && (settings.implementation_method != "terminal" || super::terminal::validate(settings))
         && !settings.codex_model.trim().is_empty()
         && settings.codex_model.len() <= 160
 }

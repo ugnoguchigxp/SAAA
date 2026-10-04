@@ -32,5 +32,7 @@ pub(crate) use terminal_report::{
 };
 #[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use terminal_report::{
-    enqueue_report, map_coding_state, request_forbidden, start_request, PendingSpeech,
+    map_coding_state, request_forbidden, start_request, PendingSpeech,
 };
+
+pub(crate) use terminal_report::enqueue_report;

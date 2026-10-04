@@ -1,3 +1,4 @@
+pub use saaa_terminal_agent_runtime::helper as terminal_agent_helper;
 mod app_state;
 use app_state::{AppState, ProviderProbeStatus, RunCancellation};
 use std::{
@@ -394,6 +395,7 @@ pub fn run() {
             })
                 .map_err(|error| format!("conversation queue recovery: {error}"))?;
             runtime::conversation_check::spawn_queue_workers(app.handle().clone());
+            coding::terminal::start(app.handle().clone());
             providers::reachability_watcher::spawn(&app.state::<AppState>());
             adaptive_improvement::start_worker(
                 app.state::<AppState>().sqlite_writer.clone(),

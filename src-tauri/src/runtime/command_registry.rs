@@ -2,8 +2,8 @@
 
 macro_rules! saaa_invoke_handler {
     () => {
-        voice::qwen_realtime_asr::with_handler(tts_dictionary::with_handler(
-            media_generation::with_handler(
+        crate::providers::service_registry::with_handler(voice::qwen_realtime_asr::with_handler(
+            tts_dictionary::with_handler(media_generation::with_handler(
                 memory::personal_state::retrospective::commands::with_handler(
                     tauri::generate_handler![
                         memory::personal_state::commands::personal_state_snapshot,
@@ -61,10 +61,6 @@ macro_rules! saaa_invoke_handler {
                         test_model_provider,
                         load_tts_voice_catalog,
                         resolve_service_harness,
-                        crate::providers::service_registry::commands::get_service_registry,
-                        crate::providers::service_registry::commands::save_service_registry,
-                        crate::providers::service_registry::commands::set_service_connection_secret,
-                        crate::providers::service_registry::commands::get_service_connection_secret_state,
                         window_shutdown_grace::set_provider_api_key,
                         window_shutdown_grace::delete_provider_api_key,
                         window_shutdown_grace::get_provider_credential_state,
@@ -82,6 +78,10 @@ macro_rules! saaa_invoke_handler {
                         coding::commands::register_coding_workspace,
                         coding::commands::coding_snapshot,
                         coding::commands::cancel_coding_job,
+                        coding::terminal::commands::answer_terminal_question,
+                        coding::terminal::commands::open_terminal_progress,
+                        coding::terminal::commands::confirm_terminal_completion,
+                        coding::terminal::commands::recover_terminal_job,
                         steward::commands::register_steward_goal,
                         steward::commands::withdraw_steward_delegation,
                         steward::commands::list_steward_tasks,
@@ -142,7 +142,7 @@ macro_rules! saaa_invoke_handler {
                         adaptive_evaluation::evaluation_pair::activate_adaptive_artifact
                     ],
                 ),
-            ),
+            )),
         ))
     };
 }

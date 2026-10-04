@@ -130,8 +130,7 @@ pub fn execute(
         Ok(value)
     })?;
     if let Some(run) = launch {
-        let writer = Arc::clone(&state.sqlite_writer);
-        std::thread::spawn(move || crate::runtime::pi::runner::run(writer, run));
+        spawn_run(state, run);
     }
     Ok(result)
 }
@@ -151,6 +150,9 @@ pub fn execute_delegated(
     let settings = state.sqlite_readers.read(repo::settings)?;
     if !settings.enabled {
         return Err("coding_disabled".into());
+    }
+    if settings.implementation_method == "terminal" {
+        return Err("terminal_requires_explicit_coding_request".into());
     }
     probe_implementation(&settings, &state.data_directory)?;
     let mut launch = None;
@@ -273,6 +275,10 @@ pub fn commit_delegated_job(
 }
 
 pub fn spawn_run(state: &AppState, run: String) {
+    let terminal = state.sqlite_readers.read(|c| c.query_row("SELECT j.settings_json FROM coding_jobs j JOIN coding_runs r ON r.job_id=j.id WHERE r.id=?1", [&run], |r| r.get::<_, String>(0)).map_err(database_error)).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).is_some_and(|s| s["implementationMethod"] == "terminal");
+    if terminal {
+        return super::terminal::spawn(state, run);
+    }
     let writer = Arc::clone(&state.sqlite_writer);
     std::thread::spawn(move || crate::runtime::pi::runner::run(writer, run));
 }
@@ -284,7 +290,9 @@ fn probe_implementation(
     if !super::contracts::valid_implementation(settings) {
         return Err("coding_configuration_invalid".into());
     }
-    if settings.implementation_method == "codex-sdk" {
+    if settings.implementation_method == "terminal" {
+        super::terminal::probe(settings).map(|_| ())
+    } else if settings.implementation_method == "codex-sdk" {
         let mut child = crate::runtime::codex_cli::spawn_codex_app_server()?;
         child.kill().map_err(|_| "codex_probe_failed")?;
         child.wait().map_err(|_| "codex_probe_failed")?;
@@ -303,6 +311,23 @@ pub fn cancel(
 ) -> Result<Value, String> {
     repo::authorize(c, job, conversation)?;
     let (status, run) = repo::revision(c, job, revision)?;
+    if status == "awaiting_user" {
+        let paused: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM terminal_runs WHERE run_id=?1 AND phase IN ('paused','review'))", [&run], |r| r.get(0)).map_err(database_error)?;
+        if paused {
+            c.execute("UPDATE terminal_questions SET state='cancelled' WHERE job_id=?1 AND state IN ('pending','awaiting_user')", [job]).map_err(database_error)?;
+            c.execute(
+                "UPDATE terminal_runs SET phase='cancelled' WHERE run_id=?1",
+                [&run],
+            )
+            .map_err(database_error)?;
+            c.execute(
+                "UPDATE coding_jobs SET state='interrupted',revision=revision+1 WHERE id=?1",
+                [job],
+            )
+            .map_err(database_error)?;
+            return repo::inspect(c, conversation, job, 0, 1);
+        }
+    }
     if matches!(status.as_str(), "settled" | "failed" | "interrupted") {
         return Ok(json!({"jobId":job,"runId":run,"revision":revision,"state":status}));
     }
@@ -343,4 +368,17 @@ pub fn register(state: &AppState, conversation: &str, path: &str) -> Result<Valu
         let id = workspace::replace(c, conversation, &canonical.to_string_lossy())?;
         Ok(json!({"workspaceId":id,"path":canonical.to_string_lossy()}))
     })
+}
+
+// Background decisions have an explicit terminal event origin instead of a user turn.
+pub(super) fn insert_terminal_resume(
+    c: &rusqlite::Connection,
+    job: &str,
+    run: &str,
+    source: &str,
+    prompt: &str,
+    decision: &str,
+) -> Result<(), String> {
+    queries::insert_run(c, job, run, source, decision, prompt, decision)?;
+    queries::queue_continuation(c, job, run)
 }

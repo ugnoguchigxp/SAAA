@@ -183,7 +183,7 @@ pub(crate) async fn request_audio_with_api_key(
     if let Some(api_key) = api_key {
         request = request.bearer_auth(api_key);
     }
-    let response = crate::providers::http::send(request, &cancellation, true)
+    let response = crate::providers::http::send(request, &cancellation, false)
         .await
         .map_err(|kind| kind.public_message().as_str().to_string())?;
     Ok(response)

@@ -1,0 +1,47 @@
+$ bun scripts/module-size.ts check
+scripts/clippy-ratchet.ts: 78 exceeds ratchet 72 (baseline 65)
+scripts/frontend-tests.ts: missing baseline; run bun run size:register
+src-tauri/src/conversation_queue_e2e/request_options.rs: missing baseline; run bun run size:register
+src-tauri/src/conversation_queue_e2e/server.rs: 300 exceeds ratchet 297 (baseline 270)
+src-tauri/src/memory/context_still_search.rs: 31 exceeds ratchet 30 (baseline 27)
+src-tauri/src/persistence/mod.rs: 27 exceeds ratchet 25 (baseline 22)
+src-tauri/src/persistence/sqlite/readers_test_access.rs: missing baseline; run bun run size:register
+src-tauri/src/persistence/sqlite/readers_tests.rs: missing baseline; run bun run size:register
+src-tauri/src/providers/agent_session/sse/coding_bridge.rs: 50 exceeds ratchet 44 (baseline 40)
+src-tauri/src/providers/agent_session/sse/generation/round.rs: 60 exceeds ratchet 59 (baseline 53)
+src-tauri/src/providers/agent_session/sse/ui_bridge.rs: 97 exceeds ratchet 91 (baseline 82)
+src-tauri/src/providers/dynamic_lan/validate.rs: 476 exceeds ratchet 475 (baseline 431)
+src-tauri/src/providers/routing/service_harness.rs: 87 exceeds ratchet 82 (baseline 74)
+src-tauri/src/providers/session_store.rs: 418 exceeds ratchet 408 (baseline 370)
+src-tauri/src/providers/stream/artifact_webview_dispatch.rs: missing baseline; run bun run size:register
+src-tauri/src/providers/stream/dynamic_lan/initialization.rs: 63 exceeds ratchet 59 (baseline 53)
+src-tauri/src/quality_eval/control.rs: missing baseline; run bun run size:register
+src-tauri/src/role_routing/availability.rs: 35 exceeds ratchet 32 (baseline 29)
+src-tauri/src/role_routing/ipc.rs: 26 exceeds ratchet 25 (baseline 22)
+src-tauri/src/role_routing/repository_turns/mod.rs: 35 exceeds ratchet 31 (baseline 28)
+src-tauri/src/runtime/context/world/compose_fixture.rs: missing baseline; run bun run size:register
+src-tauri/src/situation/health_signals.rs: 88 exceeds ratchet 86 (baseline 78)
+src-tauri/src/tts_dictionary/dispatch.rs: missing baseline; run bun run size:register
+src-tauri/src/voice/audio_backend/macos.rs: 545 exceeds ratchet 536 (baseline 487)
+src-tauri/src/voice/network_asr/runtime.rs: 113 exceeds ratchet 111 (baseline 100)
+src-tauri/src/voice/qwen_realtime_asr/dispatch.rs: missing baseline; run bun run size:register
+src/features/chat/artifacts/ArtifactTabs.tsx: missing baseline; run bun run size:register
+src/features/settings/ApiKeyControl.tsx: 162 exceeds ratchet 161 (baseline 146)
+src/lib/conversationAsrDelivery.ts: missing baseline; run bun run size:register
+tests/browser-voice-capture.test.ts: 109 exceeds ratchet 101 (baseline 91)
+tests/clippy-ratchet.test.ts: 32 exceeds ratchet 31 (baseline 28)
+tests/conversation-asr-lifecycle.test.ts: missing baseline; run bun run size:register
+tests/ambient-voice-capture.test.ts: stale baseline; review deletion or transfer its baseline when moving a file
+tests/ambient-voice-session-failure.test.tsx: stale baseline; review deletion or transfer its baseline when moving a file
+tests/ambient-voice-session.test.tsx: stale baseline; review deletion or transfer its baseline when moving a file
+tests/larm-voice-drain.test.ts: stale baseline; review deletion or transfer its baseline when moving a file
+tests/larm-voice-lifetime.test.tsx: stale baseline; review deletion or transfer its baseline when moving a file
+tests/larm-voice-owner.test.ts: stale baseline; review deletion or transfer its baseline when moving a file
+tests/reasoning-run.test.ts: stale baseline; review deletion or transfer its baseline when moving a file
+tests/required-context-recovery.test.ts: stale baseline; review deletion or transfer its baseline when moving a file
+tests/voice-capture-races.test.ts: stale baseline; review deletion or transfer its baseline when moving a file
+tests/voice-capture-resources.test.ts: stale baseline; review deletion or transfer its baseline when moving a file
+tests/voice-final-delivery.test.ts: stale baseline; review deletion or transfer its baseline when moving a file
+tests/world-scope-component.test.tsx: stale baseline; review deletion or transfer its baseline when moving a file
+tests/world-scope.test.ts: stale baseline; review deletion or transfer its baseline when moving a file
+error: script "size:check" exited with code 1

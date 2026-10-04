@@ -1,0 +1,23 @@
+{
+  "consult": {
+    "questionReceived": true,
+    "sessionReceived": true,
+    "helperExit": 0,
+    "candidateReceived": false,
+    "exit": {
+      "code": 0,
+      "outputError": false,
+      "stopped": true
+    }
+  },
+  "resume": {
+    "exactSession": true,
+    "helperExit": 0,
+    "candidateReceived": true,
+    "exit": {
+      "code": 0,
+      "outputError": false,
+      "stopped": false
+    }
+  }
+}

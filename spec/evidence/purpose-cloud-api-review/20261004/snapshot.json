@@ -1,0 +1,21 @@
+{
+  "commit": "86826f02fe0e14ef2ada1526797e156f68b57727",
+  "scratch": "/var/folders/mx/jbv8qfwd52z14q0mby_273lhlp5gd2/T/saaa-cloud-review-5oun_omo",
+  "files": {
+    "src-tauri/src/providers/service_registry/types.rs": "afb0ccb984f264286b016ce26dbda0cb3a6ba75254b9fb3862afb44e554627e7",
+    "src-tauri/src/providers/service_registry/resolve.rs": "77fa691f2c2654934fe3f937736f4554b610667b10d1f341435a8cfbe0471057",
+    "src-tauri/src/providers/service_registry/commands.rs": "278590b524b2c69d75133edebfcb4982034d7c78a4924ce72796856b8086c57f",
+    "src-tauri/src/providers/service_registry/migration.rs": "a0e8de10f093939900823667f0fd3d9797f724b47cba92c09eae420398b50dcf",
+    "src-tauri/src/providers/service_registry/tests.rs": "da0c627cd279b78ced427812858a0c40d9b518805554facaeda6880b43ebc512",
+    "src-tauri/src/providers/service_registry/validate.rs": "f54c6821a564a49d306df6c058496960dd6c4f157cd4d7d2aec87ec5c0714a17",
+    "src-tauri/src/providers/service_registry.rs": "89f0d0bc46690bb35d493288ad20f39a5c5d19e10037475c4d6a5f4be342c7b7",
+    "src-tauri/src/persistence/service_registry_store.rs": "ceafe99c72d2eb291b9c9fbf8aefd96a4cf2680a816f0ac04b10e9aab2402a17",
+    "src-tauri/src/persistence/settings/registry_projection.rs": "f9b56e33a4aefa1adfac282c72ee3814cff6fdb501b4b7156750ab3b86387699",
+    "src-tauri/src/runtime/conversation_check/direct_route.rs": "683b17b817d00fdb325662e03f4de279db3ee46ee2559c85ca783d27283b2cc0",
+    "src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs": "69fcb95ae1f5f5d42cc7c2d080268414981caa886d01f6ed925a46f251062c16",
+    "src/features/settings/PurposeRoutesSection.tsx": "53dd5d1a5b596350614b17e260b00f5d712a0de2e1f134d4369db6bdb5964f0c",
+    "src/lib/serviceRegistry.ts": "05923508fe4674078196f95d68df15a5c207985c9a8b8104bd67f17232e611bf",
+    "src-tauri/src/conversation_queue_e2e/cloud_route.rs": "363f9997ca7e7b79d715a6564856f4d8f700a7aa600fcffba41c5789babf68d4",
+    "docs/plans/purpose-based-cloud-api-switching.md": "d8180357d3ca59c133b5bfee3baa10d0a11ff40927f388cf2d75be7827f5a455"
+  }
+}

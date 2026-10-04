@@ -1,53 +1,24 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
-const kindSchema = z.enum(["image", "music"]);
-const artifactSchema = z.object({
-  id: z.string(),
-  contentUrl: z.string(),
-  metadataUrl: z.string().nullable(),
-  mimeType: z.enum(["image/png", "image/webp", "audio/mpeg", "audio/wav", "audio/flac"]),
-  metadata: z.unknown(),
-});
-const resultSchema = z.object({
-  kind: kindSchema,
-  model: z.string(),
-  jobId: z.string().nullable(),
-  artifacts: z.array(artifactSchema).min(1).max(8),
-});
-const failureSchema = z.object({
-  kind: z.enum([
-    "discovery",
-    "conflict",
-    "startupFailed",
-    "generationFailed",
-    "timeout",
-    "cancelled",
-    "outcomeUnknown",
-    "artifactFailed",
-    "protocol",
-  ]),
-  code: z.string(),
-  retryable: z.boolean(),
-  mayHaveGenerated: z.boolean(),
-  jobId: z.string().nullable(),
-});
-const outputSchema = z
-  .object({ runId: z.string(), result: resultSchema.nullable(), error: failureSchema.nullable() })
-  .refine(
-    (value) => Boolean(value.result) !== Boolean(value.error),
-    "生成結果または失敗情報が必要です。",
-  );
-const progressSchema = z.object({
-  phase: z.string(),
-  jobId: z.string().nullable(),
-  progress: z.number().min(0).max(1).nullable(),
-});
-export type MediaKind = z.infer<typeof kindSchema>;
-export type MediaResult = z.infer<typeof resultSchema>;
-export type MediaFailure = z.infer<typeof failureSchema>;
-export type MediaProgress = z.infer<typeof progressSchema>;
-export type MediaOutput = z.infer<typeof outputSchema>;
+import {
+  kindSchema,
+  resultSchema,
+  failureSchema,
+  outputSchema,
+  progressSchema,
+  type MediaKind,
+  type MediaOutput,
+  type MediaProgress,
+  type MediaFailure,
+} from "./mediaContracts";
+export type {
+  MediaKind,
+  MediaResult,
+  MediaFailure,
+  MediaProgress,
+  MediaOutput,
+} from "./mediaContracts";
 
 export async function generateMedia(
   input: { runId: string; kind: MediaKind; prompt: string },
@@ -104,4 +75,37 @@ export function mediaProgressMessage(phase: string): string {
     completed: "生成が完了しました。成果物を取得しています…",
   };
   return labels[phase] ?? "生成を処理中…";
+}
+
+const historySchema = z.array(
+  z.object({
+    runId: z.string(),
+    kind: kindSchema.nullable(),
+    connectionLabel: z.string().nullable(),
+    model: z.string().nullable(),
+    status: z.string(),
+    jobId: z.string().nullable(),
+    result: resultSchema.nullable(),
+    error: failureSchema.nullable(),
+    updatedAt: z.string(),
+  }),
+);
+export type MediaHistory = z.infer<typeof historySchema>;
+export async function listMediaGenerations(): Promise<MediaHistory> {
+  return historySchema.parse(await invoke("list_media_generations"));
+}
+export async function reconcileMedia(
+  runId: string,
+  onProgress: (value: MediaProgress) => void,
+): Promise<MediaOutput> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = (value) => {
+    const parsed = progressSchema.safeParse(value);
+    if (parsed.success) onProgress(parsed.data);
+  };
+  const result = outputSchema.parse(
+    await invoke("reconcile_media_generation", { runId, onProgress: channel }),
+  );
+  if (result.runId !== runId) throw new Error("生成結果の識別子が一致しません。");
+  return result;
 }

@@ -1,0 +1,682 @@
+{
+  "rubric_version": "1.1.0",
+  "mode": "technical",
+  "depth": "deep",
+  "technical_profile": "agent",
+  "assessment_kind": "current",
+  "target": {
+    "locator": "/Users/y.noguchi/Code/SAAA",
+    "snapshot": "86826f02fe0e14ef2ada1526797e156f68b57727",
+    "reviewed_at": "2026-10-04",
+    "stage": "pilot / initial implementation",
+    "scope": "用途別クラウドAPI切替機能と計画達成度。登録・保存・移行・会話queue transport・音声binding射影・React設定UIをレビュー。commit全体の無関係変更、配布/更新経路、依存脆弱性調査、実API、実機AEC、負荷測定は範囲外または未検証。実DB/secretは開かずgit archiveの一時コピー、in-memory SQLite、localhost fixtureとmock IPCで検証。backend故障probeの変更は一時コピーだけで、原本には適用していない。"
+  },
+  "evidence": [
+    {
+      "id": "E01",
+      "kind": "primary_doc",
+      "locator": "docs/plans/purpose-based-cloud-api-switching.md:307-341 @ 86826f02fe0e14ef2ada1526797e156f68b57727",
+      "observed_at": "2026-10-04",
+      "observation": "初期提供はP1-P4と対応adapterのP8受入が必要。実装状況欄自身が最小実装、P5-P7/native/P8未実装を明記。",
+      "scope": "実装計画の正本。実行成功の証明には使わない。"
+    },
+    {
+      "id": "E02",
+      "kind": "code",
+      "locator": "src-tauri/src/providers/service_registry/types.rs; resolve.rs; validate.rs; src-tauri/src/persistence/service_registry_store.rs:144-172; settings/registry_projection.rs @ 86826f02fe0e14ef2ada1526797e156f68b57727",
+      "observed_at": "2026-10-04",
+      "observation": "3層データ構造、純粋な解決、単一writerのtransaction、expectedRevision競合検出、音声の同transaction射影がある。",
+      "scope": "今回追加部分の責務・保存境界を追跡。"
+    },
+    {
+      "id": "E03",
+      "kind": "execution",
+      "locator": "registry-unit.log; snapshot.json",
+      "observed_at": "2026-10-04",
+      "observation": "macOS/aarch64, Bun 1.4.2, git archive copy. CARGO_TARGET_DIR=<repo>/src-tauri/target cargo test --locked --manifest-path src-tauri/Cargo.toml --features conversation-queue-e2e --lib service_registry -- --nocapture: exit 0、既存14テスト通過。追加probeコードは同libに存在するがこのフィルタでは実行されない。",
+      "scope": "in-memory DB、旧設定保持・競合・無効設定・voice射影・ID/能力の検査。実機音声は検査しない。"
+    },
+    {
+      "id": "E04",
+      "kind": "execution",
+      "locator": "frontend-tests.log; typecheck.log; frontend-build.log",
+      "observed_at": "2026-10-04",
+      "observation": "一時コピーで bun test tests/service-registry-helpers.test.ts tests/settings-review.test.ts tests/settings-regressions.test.ts tests/settings-ui-contracts.test.ts tests/http-audio-provider-settings.test.ts: exit 0, 21 pass. bun run typecheck: exit 0. bun run build:frontend: exit 0.",
+      "scope": "フロント関連単体、型、生成Context検査、frontendビルド。大きなchunk警告あり。"
+    },
+    {
+      "id": "E05",
+      "kind": "execution",
+      "locator": "cloud-revoked.log; cloud-control-probe.rs.txt; cloud-fixture-probe.rs.txt; cloud-fixed-fixture.log",
+      "observed_at": "2026-10-04",
+      "observation": "一時コピーのみfixture IDをsvc-prefixに修正、登録・binding・actual queueは元コード。最初の推論のweb_search時にsave_registryで接続enabled=falseを保存。その後もllmCalls=4、connectionEnabledAtEnd=false、回答採用。SAAA_REVIEW_REVOKE=1 CARGO_TARGET_DIR=<repo>/src-tauri/target cargo test --locked --manifest-path src-tauri/Cargo.toml --features conversation-queue-e2e --test cloud_review_probe -- --nocapture: exit 0（欠陥挙動の観察probeであり受入合格ではない）。比較の未無効化caseも4calls,0LARM,exit0。",
+      "scope": "localhostとin-memory DB、fake provider/no authのみ。送信権限全般やsecret削除を試したとの主張はしない。"
+    },
+    {
+      "id": "E06",
+      "kind": "code",
+      "locator": "src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs:26-33,80-83,162-173; direct_route.rs:46-108; queue_context.rs:35-51 @ 86826f02fe0e14ef2ada1526797e156f68b57727",
+      "observed_at": "2026-10-04",
+      "observation": "job開始時に一度select_transport。各stepはContext/scope/Worldのみ再検査し、接続/resource enabledを現在のregistryから再検査しない。secret本文は各stepで読み直す。",
+      "scope": "無効化の再確認と通常の選択変更固定を区別する。secret削除も無視されるとの指摘は除外。"
+    },
+    {
+      "id": "E07",
+      "kind": "execution",
+      "locator": "backend-probes.log; backend-probes.rs.txt",
+      "observed_at": "2026-10-04",
+      "observation": "一時コピー: CARGO_TARGET_DIR=<repo>/src-tauri/target cargo test --locked --manifest-path src-tauri/Cargo.toml --features conversation-queue-e2e --lib review_ -- --nocapture: exit 0, 41 pass。そのうち追加3probeが、AgentSession選択の保存成功→transport拒否、非harness Larm選択のendpoint破棄、svc-prefix以外の保存成功→接続消失/Binding無効化を確認。残り38テストは既存の同名フィルタ対象で評価を一般化しない。",
+      "scope": "意図的に欠陥挙動をassertした観察probe。fixtureなどの制御変更は一時コピーのみ。"
+    },
+    {
+      "id": "E08",
+      "kind": "code",
+      "locator": "src/lib/serviceRegistry.ts:181-190; providers/service_registry/migration.rs:77-91; runtime/conversation_check/direct_route.rs:32-36; queue_runtime/ornith.rs:26-33; conversation_check.rs:830-832; persistence/settings/registry_projection.rs:26-34 @ 86826f02fe0e14ef2ada1526797e156f68b57727",
+      "observed_at": "2026-10-04",
+      "observation": "候補はcapabilityのみで絞る。AgentSessionはtext-generationとして候補になり保存されるがruntimeは未対応。DynamicLanはLarmとして解決されるがtransportがendpointを捨て、実行はproviders.harness.address。voiceの使わない候補も保存時に拒否。",
+      "scope": "移行済み旧ProviderとUI選択→保存→会話実行を追跡。"
+    },
+    {
+      "id": "E09",
+      "kind": "execution",
+      "locator": "registration-probe.log; registration-probe.tsx.txt",
+      "observed_at": "2026-10-04",
+      "observation": "bun test tests/cloud-review-probe.test.tsx: exit0,1pass,7assertions。React画面を実際にrenderしてキー保存故障をmock。最初のdraft保存でrevision1、再試行はrevision0を送り競合。再読込でdraftはdisabled候補、登録/再読込以外の再開操作なし。",
+      "scope": "mock IPCはrevisionと永続draftを再現。実credential backendの故障頻度は評価していない。"
+    },
+    {
+      "id": "E10",
+      "kind": "code",
+      "locator": "src/features/settings/PurposeRoutesSection.tsx:65-88,150-159,228-237 @ 86826f02fe0e14ef2ada1526797e156f68b57727",
+      "observed_at": "2026-10-04",
+      "observation": "disabled draftの保存後、UI viewはsecret保存と有効化の両方の完了まで更新されない。既存draftに対するキー再登録/有効化/削除操作なし。",
+      "scope": "初期保存が失敗した場合は問題なし。途中成功後の失敗だけを指摘。"
+    },
+    {
+      "id": "E11",
+      "kind": "execution",
+      "locator": "cloud-original.log; cloud-probe.rs.txt; backend-probes.log",
+      "observed_at": "2026-10-04",
+      "observation": "元のcloud_route::run_with_serverを公開run_cloud_conversation経由で単独実行: CARGO_TARGET_DIR=<repo>/src-tauri/target cargo test --locked --manifest-path src-tauri/Cargo.toml --features conversation-queue-e2e --test cloud_review_probe -- --nocapture: exit101、30.10秒timeout、calls=[]。fixture IDだけsvc-prefixへ修正したコピーでは回答採用、0 LARM、4LLM、218ms,exit0。",
+      "scope": "既存E2Eのクラウド分岐と同一関数。既存E2Eの全variantを実行したとの主張はしない。"
+    },
+    {
+      "id": "E12",
+      "kind": "code",
+      "locator": "src-tauri/src/persistence/service_registry_store.rs:47-59,82-90,144-172; providers/service_registry/validate.rs:8-21; conversation_queue_e2e/cloud_route.rs:20-31 @ 86826f02fe0e14ef2ada1526797e156f68b57727",
+      "observed_at": "2026-10-04",
+      "observation": "validate_snapshotは非empty/重複のみでIDを受理するが、load overlayはsvc-prefix以外の新規接続/resourceを除外。saveはcommit成功後loadした結果を返す。新fixtureのcloud-llmはこの条件で消失する。",
+      "scope": "通常UI addChatServiceはsvc-prefixを使うため正常登録は消失しない。直接IPC/fixtureとの契約不一致。"
+    },
+    {
+      "id": "E13",
+      "kind": "code",
+      "locator": "providers/service_registry/migration.rs:69-76,128-135; types.rs:91-107; runtime/conversation_check/direct_route.rs:87-100; conversation_check.rs:1256-1259; crates/larm-session/src/http_api.rs:48-101 @ 86826f02fe0e14ef2ada1526797e156f68b57727",
+      "observed_at": "2026-10-04",
+      "observation": "旧LLM request_optionsをResource/ResolvedRouteへ移さず、会話はDefaultのLlmOptionsを渡しreasoning effortもprovider-default。tokenLimit=Completion/thinking/temperature等を設定済みでも会話requestに適用されない。",
+      "scope": "wire bodyの契約をsourceで追跡。外部実APIの400エラーを実行確認したとの主張はしない。"
+    },
+    {
+      "id": "E14",
+      "kind": "execution",
+      "locator": "cloud-deadline.log; cloud-server-probe.rs.txt; cloud-fixture-probe.rs.txt",
+      "observed_at": "2026-10-04",
+      "observation": "同一コピー: route.timeout_ms=1000/attempt_timeout_ms=1000、fake LLM応答を各400ms遅延。SAAA_REVIEW_DEADLINE=1 CARGO_TARGET_DIR=<repo>/src-tauri/target cargo test --locked --manifest-path src-tauri/Cargo.toml --features conversation-queue-e2e --test cloud_review_probe -- --nocapture: exit0、4LLM、1901ms、回答採用。",
+      "scope": "期限違反挙動の観察。live performance benchmarkではない。"
+    },
+    {
+      "id": "E15",
+      "kind": "code",
+      "locator": "runtime/conversation_check/direct_route.rs:87-108; queue_runtime/ornith.rs:80-83,305,342,367; conversation_check.rs:1280,1306 @ 86826f02fe0e14ef2ada1526797e156f68b57727",
+      "observed_at": "2026-10-04",
+      "observation": "attempt_timeoutは各推論ごとに再利用。job全体deadlineがなく、Toolは旧routingのtimeoutを使う。SSE→JSON再要求も同じtimeoutを再利用。",
+      "scope": "複数stepの合計期限。単発timeoutがないとの誤指摘はしない。"
+    },
+    {
+      "id": "E16",
+      "kind": "execution",
+      "locator": "provider-unit.log; continuous-asr.log; voice-frontend.log; queue-e2e.log",
+      "observed_at": "2026-10-04",
+      "observation": "bun run test:provider-unit: exit0,3pass. bun test tests/conversation-asr-continuous.test.ts tests/voice-asr-packetizer.test.ts tests/qwen-realtime-asr-ipc.test.ts: exit0,21pass。一括6file実行時はmock干渉でNode.current.port undefinedが1件出たが、定義済み分割で再実行して解消。最初のRust compileはコピーにdistがなく失敗したがbuild:frontend後にcompile/test実行可。",
+      "scope": "環境準備/テスト混載に由来する失敗を実装の回帰として数えない。実機AEC未検証。"
+    },
+    {
+      "id": "E17",
+      "kind": "code",
+      "locator": "runtime/conversation_check/direct_route.rs:57-66,109-118; src/lib/serviceRegistry.ts:117-153; providers/service_registry/commands.rs:40-66 @ 86826f02fe0e14ef2ada1526797e156f68b57727",
+      "observed_at": "2026-10-04",
+      "observation": "Route決定と結果の監査イベントあり。UIはsecret本文をregistryへ入れず、draft→secret backend→enable順。API key入力はpassword、保存後clear。",
+      "scope": "この設計の保存境界を肯定評価。全ログの漏洩やcredential storage攻撃耐性の全面監査ではない。"
+    }
+  ],
+  "claims": [
+    {
+      "id": "C01",
+      "type": "Fact",
+      "statement": "全計画だけでなく初期提供の完了条件も未達。",
+      "evidence_ids": [
+        "E01",
+        "E11"
+      ],
+      "limitations": "計画に記載された受入条件に対する判定。実装者への聞き取りは行っていない。"
+    },
+    {
+      "id": "C02",
+      "type": "Fact",
+      "statement": "fixture IDを修正したコピーではLARM要求なしに4stepの直接LLM会話が完了。",
+      "evidence_ids": [
+        "E11"
+      ],
+      "limitations": "原本E2Eは失敗。実サービス/実機の合格を意味しない。"
+    },
+    {
+      "id": "C03",
+      "type": "Inference",
+      "statement": "既存Providerに互換optionsが必要な場合、単体テストと新会話経路のrequest仕様が異なる。",
+      "evidence_ids": [
+        "E13"
+      ],
+      "limitations": "APIが拒否するかは各サービスの契約次第。設定が会話に反映されないことはcodeで確認。"
+    },
+    {
+      "id": "C04",
+      "type": "Unknown",
+      "statement": "実サービス適合、macOS AEC、再起動と実機の選択一致、レイテンシ/費用の受入品質。",
+      "evidence_ids": [],
+      "limitations": "本レビューではlive credentials・実DB・音声ハードウェアを使わない。P8記録も計画では未実施。"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F01",
+      "status": "confirmed",
+      "severity": "High",
+      "priority": "P1",
+      "priority_reason": "初期提供の出荷前に実行と設定の契約を一致させる。",
+      "confidence": "High",
+      "title": "無効化した接続への送信が同じ会話内で続く",
+      "root_cause": "固定Routeの選択と最新拒否状態の再検査を分離していない。",
+      "evidence_ids": [
+        "E05",
+        "E06"
+      ],
+      "condition": "Tool loop途中で対象接続/resourceを無効化する。",
+      "consequence": "停止したはずのクラウドへTool結果等を追加送信し、回答も採用する。",
+      "counterevidence": "通常のProvider選択変更をjobへ反映しない設計は正しい。secretの再読込とContext/scope再確認は存在する。",
+      "fix": "固定IDの現在の有効状態・最新許可を各外部送信/Tool前に再確認し、拒否なら再送/別Provider選択なしで停止。",
+      "verification": "最初のLLM応答後に無効化し、追加LLM0回、後続Tool停止、未確定回答の採用なしを確認。",
+      "impacts": [
+        {
+          "track": "technical",
+          "dimension": "security",
+          "criterion": "access",
+          "reason": "停止したはずのクラウドへTool結果等を追加送信し、回答も採用する。"
+        },
+        {
+          "track": "technical",
+          "dimension": "correctness",
+          "criterion": "concurrency",
+          "reason": "停止したはずのクラウドへTool結果等を追加送信し、回答も採用する。"
+        }
+      ]
+    },
+    {
+      "id": "F02",
+      "status": "confirmed",
+      "severity": "High",
+      "priority": "P1",
+      "priority_reason": "初期提供の出荷前に実行と設定の契約を一致させる。",
+      "confidence": "High",
+      "title": "選択候補と実行できる接続方式が一致しない",
+      "root_cause": "UI/saveはcapabilityのみ、adapter実行契約を確認しない。Larm transportはResolvedRouteを保持しない。",
+      "evidence_ids": [
+        "E07",
+        "E08"
+      ],
+      "condition": "既存AgentSessionまたはDynamicLan Providerを会話用途に選ぶ。音声の使わないも同型のUI不整合。",
+      "consequence": "AgentSessionは保存成功後に会話失敗。DynamicLanは選択endpointが捨てられ別のharnessへ接続する。",
+      "counterevidence": "ChatCompletionsと本来のharness選択は動く。非対応サービスを保存しないのではなく非対応理由付き表示にできる。",
+      "fix": "共通の用途×adapter実行可否を候補と保存で使う。harness以外Larmを禁止/非対応表示するかRoute endpointで接続する。voice未選択は候補から外す。",
+      "verification": "各adapterのUI→保存→再起動→実送信先を確認。未対応は保存前に理由付き拒否、別endpointへの要求0。",
+      "impacts": [
+        {
+          "track": "technical",
+          "dimension": "correctness",
+          "criterion": "contracts",
+          "reason": "AgentSessionは保存成功後に会話失敗。DynamicLanは選択endpointが捨てられ別のharnessへ接続する。"
+        },
+        {
+          "track": "technical",
+          "dimension": "architecture",
+          "criterion": "flow",
+          "reason": "AgentSessionは保存成功後に会話失敗。DynamicLanは選択endpointが捨てられ別のharnessへ接続する。"
+        },
+        {
+          "track": "technical",
+          "dimension": "operability",
+          "criterion": "interaction",
+          "reason": "AgentSessionは保存成功後に会話失敗。DynamicLanは選択endpointが捨てられ別のharnessへ接続する。"
+        }
+      ]
+    },
+    {
+      "id": "F03",
+      "status": "confirmed",
+      "severity": "Medium",
+      "priority": "P1",
+      "priority_reason": "初期提供の出荷前に実行と設定の契約を一致させる。",
+      "confidence": "High",
+      "title": "登録途中の失敗から同じdraftを再開できない",
+      "root_cause": "setViewが全3段階成功後だけ。既存draftの再開操作がない。",
+      "evidence_ids": [
+        "E09",
+        "E10"
+      ],
+      "condition": "無効draft保存は成功し、secret保存/確認または最後の有効化に失敗。",
+      "consequence": "再試行は古いrevisionで競合。再読込後もdisabled登録を有効化できず、再登録すると別IDの重複draftが残る。",
+      "counterevidence": "初回保存の失敗は問題なし。draftを先に保存する方針自体は妥当でsecretを勝手に削除しない。",
+      "fix": "成功した各保存のview/revisionを即反映し、保存済draftにキー登録・確認・有効化を再開できるUIを設ける。",
+      "verification": "2段階目と3段階目に故障注入し、再読込/画面再表示後も同じIDで完了、重複なし、成功表示なし。",
+      "impacts": [
+        {
+          "track": "technical",
+          "dimension": "reliability",
+          "criterion": "recovery",
+          "reason": "再試行は古いrevisionで競合。再読込後もdisabled登録を有効化できず、再登録すると別IDの重複draftが残る。"
+        },
+        {
+          "track": "technical",
+          "dimension": "operability",
+          "criterion": "lifecycle",
+          "reason": "再試行は古いrevisionで競合。再読込後もdisabled登録を有効化できず、再登録すると別IDの重複draftが残る。"
+        }
+      ]
+    },
+    {
+      "id": "F04",
+      "status": "confirmed",
+      "severity": "Medium",
+      "priority": "P1",
+      "priority_reason": "初期提供の出荷前に実行と設定の契約を一致させる。",
+      "confidence": "High",
+      "title": "受理した接続IDを保存直後に除外し、クラウド受入が失敗する",
+      "root_cause": "validationとoverlayのID所有規則が異なる。",
+      "evidence_ids": [
+        "E07",
+        "E11",
+        "E12"
+      ],
+      "condition": "svc-prefix以外の新規IDをIPC/fixtureから保存。現在のcloud fixtureが該当。",
+      "consequence": "save成功なのに戻り値から接続が消失しBinding無効化。クラウド受入fixtureはrequests0で30秒timeout。",
+      "counterevidence": "通常UIはsvc-prefixを使う。fixture IDだけ修正したコピーでは実会話4LLM/0LARMが完了する。",
+      "fix": "新規ID規則を保存前のvalidatorで統一して不正ならcommitしない、または明示originでstored新規を保持。fixtureは正しいIDを使い保存直後のroundtripをassert。",
+      "verification": "受理された接続/resource/Bindingのroundtripを保証し、元のe2e:conversation-queueクラウド分岐を通す。",
+      "impacts": [
+        {
+          "track": "technical",
+          "dimension": "correctness",
+          "criterion": "edge_cases",
+          "reason": "save成功なのに戻り値から接続が消失しBinding無効化。クラウド受入fixtureはrequests0で30秒timeout。"
+        },
+        {
+          "track": "technical",
+          "dimension": "testing",
+          "criterion": "risk_coverage",
+          "reason": "save成功なのに戻り値から接続が消失しBinding無効化。クラウド受入fixtureはrequests0で30秒timeout。"
+        }
+      ]
+    },
+    {
+      "id": "F05",
+      "status": "confirmed",
+      "severity": "Medium",
+      "priority": "P1",
+      "priority_reason": "初期提供の出荷前に実行と設定の契約を一致させる。",
+      "confidence": "Medium",
+      "title": "既存LLMの互換設定が会話requestへ渡らない",
+      "root_cause": "移行Resource/ResolvedRouteにrequest_optionsがなく、送信でDefaultを新規生成。",
+      "evidence_ids": [
+        "E13"
+      ],
+      "condition": "既存ProviderにtokenLimit=completion、thinking/temperature等の明示設定が必要。",
+      "consequence": "単体で使用できるProviderでも会話は異なるtoken項目/思考設定で送信し、サービスによって失敗または意図しない挙動。",
+      "counterevidence": "Legacy documentの設定自体は保全され、標準optionsで動くAPIは正常。live失敗を確認したとは主張しない。",
+      "fix": "Provider optionsをResolvedRouteにlosslessで固定し、会話用tools=falseのみ明示上書き。用途reasoningも適用契約を定義。",
+      "verification": "非標準model名+Completion、thinking disabled、temperatureを保存・再読込・会話送信まで検査し単体pathと一致。",
+      "impacts": [
+        {
+          "track": "technical",
+          "dimension": "correctness",
+          "criterion": "contracts",
+          "reason": "単体で使用できるProviderでも会話は異なるtoken項目/思考設定で送信し、サービスによって失敗または意図しない挙動。"
+        },
+        {
+          "track": "technical",
+          "dimension": "common_components",
+          "criterion": "duplication",
+          "reason": "単体で使用できるProviderでも会話は異なるtoken項目/思考設定で送信し、サービスによって失敗または意図しない挙動。"
+        }
+      ]
+    },
+    {
+      "id": "F06",
+      "status": "confirmed",
+      "severity": "Medium",
+      "priority": "P2",
+      "priority_reason": "期限設定を公開する前に保証を実装する。",
+      "confidence": "High",
+      "title": "用途の全体期限を複数推論で超過する",
+      "root_cause": "attemptごとにtimeoutを再設定し、jobの残り全体deadlineを消費しない。Toolは旧設定timeout。",
+      "evidence_ids": [
+        "E14",
+        "E15"
+      ],
+      "condition": "Tool loopで複数回推論し、各attemptは制限内だが合計がtimeout_msを超える。",
+      "consequence": "全体1秒設定でも約1.9秒の4stepで正常採用。最大7stepやprotocol再要求で超過が拡大する。",
+      "counterevidence": "単一attemptのtimeoutとstep上限は存在する。今回の1.9秒は性能測定でなく契約再現。",
+      "fix": "job開始でdeadlineを固定し、各request/Tool/再要求のtimeoutは残量とattempt上限のmin。",
+      "verification": "遅延fixtureで期限以内のみ採用、全体期限後の追加送信/Toolなし、単発も全体残量を超えない。",
+      "impacts": [
+        {
+          "track": "technical",
+          "dimension": "reliability",
+          "criterion": "failure",
+          "reason": "全体1秒設定でも約1.9秒の4stepで正常採用。最大7stepやprotocol再要求で超過が拡大する。"
+        }
+      ]
+    }
+  ],
+  "tracks": {
+    "technical": {
+      "dimensions": {
+        "architecture": {
+          "criteria": {
+            "boundaries": {
+              "status": "assessed",
+              "value": 2,
+              "confidence": "Medium",
+              "evidence_ids": [
+                "E02"
+              ],
+              "rationale": "純粋型/解決、単一writer保存、transport、UIの責務を追える。"
+            },
+            "flow": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "Medium",
+              "evidence_ids": [
+                "E02",
+                "E07",
+                "E08",
+                "E12"
+              ],
+              "rationale": "保存の正本/overlay/実行pathの整合性が重要な条件で崩れる。"
+            },
+            "fit": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "Medium",
+              "evidence_ids": [
+                "E01",
+                "E05"
+              ],
+              "rationale": "初期提供に必要な取消と受入が未達で多用途の適合契約も最小限。"
+            }
+          }
+        },
+        "correctness": {
+          "criteria": {
+            "contracts": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "High",
+              "evidence_ids": [
+                "E07",
+                "E08",
+                "E13"
+              ],
+              "rationale": "有効な保存済み候補がruntimeで実行不可または別endpoint、明示optionsが失われる。"
+            },
+            "edge_cases": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "High",
+              "evidence_ids": [
+                "E07",
+                "E11",
+                "E12"
+              ],
+              "rationale": "accepted IDの保存roundtripという基本不変条件が破れる。"
+            },
+            "concurrency": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "High",
+              "evidence_ids": [
+                "E05",
+                "E06"
+              ],
+              "rationale": "job途中の拒否操作より後の外部送信を抑止できない。保存revisionの競合検出自体はE03で通過。"
+            }
+          }
+        },
+        "security": {
+          "criteria": {
+            "access": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "High",
+              "evidence_ids": [
+                "E05",
+                "E06"
+              ],
+              "rationale": "接続無効化の最新拒否条件を各外部送信前に確認しない。"
+            },
+            "input_secrets": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "secret参照/入力保護とagent abuseの全面検証は今回未完。肯定的断片だけでbaselineを採点しない。"
+            },
+            "abuse": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "secret参照/入力保護とagent abuseの全面検証は今回未完。肯定的断片だけでbaselineを採点しない。"
+            }
+          }
+        },
+        "reliability": {
+          "criteria": {
+            "failure": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "High",
+              "evidence_ids": [
+                "E14",
+                "E15"
+              ],
+              "rationale": "単発timeoutはあるが宣言された用途全体deadlineを守らない。"
+            },
+            "recovery": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "High",
+              "evidence_ids": [
+                "E09",
+                "E10"
+              ],
+              "rationale": "通常の途中成功後の失敗から同一draftを再開できない。"
+            },
+            "resilience": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "停止・飽和・再起動のdependency境界全般を未検証。"
+            }
+          }
+        },
+        "maintainability": {
+          "criteria": {
+            "clarity": {
+              "status": "assessed",
+              "value": 2,
+              "confidence": "Medium",
+              "evidence_ids": [
+                "E02",
+                "E06",
+                "E10"
+              ],
+              "rationale": "主要pathを追跡でき、機能は小さい単位に分割。service_registry.rsヘッダに未保存との古い記述は残る。"
+            },
+            "change": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "代表変更の局所性/長期維持コストを現snapshotだけで証明できない。"
+            },
+            "debt": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "代表変更の局所性/長期維持コストを現snapshotだけで証明できない。"
+            }
+          }
+        },
+        "common_components": {
+          "criteria": {
+            "duplication": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "Medium",
+              "evidence_ids": [
+                "E08",
+                "E13"
+              ],
+              "rationale": "用途候補とadapter対応、旧optionsと新Routeに同じ契約の不一致がある。"
+            },
+            "reuse": {
+              "status": "assessed",
+              "value": 2,
+              "confidence": "Medium",
+              "evidence_ids": [
+                "E02",
+                "E17"
+              ],
+              "rationale": "既存single writer、voice routing、named secrets、ChatCompletions実装を再利用し、同じqueueとcontext/tool loopを保持。"
+            },
+            "abstraction": {
+              "status": "assessed",
+              "value": 2,
+              "confidence": "Medium",
+              "evidence_ids": [
+                "E02"
+              ],
+              "rationale": "3層registryは3つの実際の用途に対応し、純粋データとtransportを分ける合理的な小規模interface。"
+            }
+          }
+        },
+        "testing": {
+          "criteria": {
+            "risk_coverage": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "Medium",
+              "evidence_ids": [
+                "E03",
+                "E04",
+                "E09",
+                "E11"
+              ],
+              "rationale": "unit14+frontend21は通るが主会話受入fixtureが壊れ、途中失敗/取消を既存testが検出していない。"
+            },
+            "quality": {
+              "status": "assessed",
+              "value": 2,
+              "confidence": "Medium",
+              "evidence_ids": [
+                "E03",
+                "E04",
+                "E11"
+              ],
+              "rationale": "ID/能力/競合、migration、tool実行回数/0LARM等に意味のあるassertがあり、fixture障害を実際に検出する。"
+            },
+            "automation": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "現設定のCI実行/リリースゲートの継続運用を未確認。"
+            }
+          }
+        },
+        "supply_chain": {
+          "criteria": {
+            "dependencies": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "配布・更新・依存脆弱性・license調査は機能コードレビューの範囲外で未評価。N/A扱いにしない。"
+            },
+            "build_release": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "配布・更新・依存脆弱性・license調査は機能コードレビューの範囲外で未評価。N/A扱いにしない。"
+            },
+            "license": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "配布・更新・依存脆弱性・license調査は機能コードレビューの範囲外で未評価。N/A扱いにしない。"
+            }
+          }
+        },
+        "performance": {
+          "criteria": {
+            "budget": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "liveデータの費用、Context容量、tail latency、メモリ/音声負荷の代表測定がない。"
+            },
+            "hot_path": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "liveデータの費用、Context容量、tail latency、メモリ/音声負荷の代表測定がない。"
+            },
+            "measurement": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "liveデータの費用、Context容量、tail latency、メモリ/音声負荷の代表測定がない。"
+            }
+          }
+        },
+        "operability": {
+          "criteria": {
+            "signals": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "High",
+              "evidence_ids": [
+                "E01",
+                "E17"
+              ],
+              "rationale": "個別決定イベントはあるが計画のactual-route永続記録/利用実績表示がなく、保存成功表示でも実行不可候補が残る。"
+            },
+            "lifecycle": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "High",
+              "evidence_ids": [
+                "E09",
+                "E10"
+              ],
+              "rationale": "登録途中からの再開と既存draftの有効化が不可。削除も未実装。"
+            },
+            "interaction": {
+              "status": "assessed",
+              "value": 1,
+              "confidence": "High",
+              "evidence_ids": [
+                "E08",
+                "E09",
+                "E10"
+              ],
+              "rationale": "対象ユーザーに必要な選択と復旧で使えない候補/操作が表示される。"
+            }
+          }
+        }
+      }
+    }
+  }
+}

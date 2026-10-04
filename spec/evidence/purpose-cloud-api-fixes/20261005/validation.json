@@ -1,0 +1,508 @@
+{
+  "date": "2026-10-05",
+  "baseCommit": "86826f02fe0e14ef2ada1526797e156f68b57727",
+  "environment": "macOS, isolated SQLite/localhost fixtures/mock IPC; no user DB reset, live API calls or microphone capture",
+  "sharedCargoTarget": "/Users/y.noguchi/Code/SAAA/src-tauri/target",
+  "checks": [
+    {
+      "name": "main-frontend",
+      "command": "bun run test:frontend",
+      "scope": "main",
+      "status": "passed",
+      "passingCases": 433,
+      "sourceLogSHA256": "8e6aaaa9d4bd66a6dd42c3b6843b786cf65bac93d808ab5f84398c1eadb8ddd5",
+      "savedLog": "main-frontend.log",
+      "logKind": "full"
+    },
+    {
+      "name": "worktree-frontend",
+      "command": "bun run test:frontend",
+      "scope": "isolated",
+      "status": "passed",
+      "passingCases": 431,
+      "sourceLogSHA256": "158382a9b8292c82578e6f78a5de0485d41a5548b0799932b75659fc76f281f0",
+      "savedLog": "worktree-frontend.log",
+      "logKind": "full"
+    },
+    {
+      "name": "registry",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib providers::service_registry",
+      "scope": "isolated",
+      "status": "passed",
+      "passingCases": 16,
+      "sourceLogSHA256": "f400a8228ddb01b0a59598e62808f706fee27d3cecffdb5217fedbef86dd121c",
+      "savedLog": "registry.log",
+      "logKind": "summary; compiler warnings omitted"
+    },
+    {
+      "name": "native",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib providers::anthropic_messages",
+      "scope": "isolated",
+      "status": "passed",
+      "passingCases": 2,
+      "sourceLogSHA256": "9ad91bdbc6c48cb1e3711fdcf8739fcefc9b9628bd7f74e4cd4276372dcf2720",
+      "savedLog": "native.log",
+      "logKind": "summary; compiler warnings omitted"
+    },
+    {
+      "name": "media",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib media_generation",
+      "scope": "main",
+      "status": "passed",
+      "passingCases": 6,
+      "sourceLogSHA256": "23c3dc34277bc8b437163d68a8b39b19ef1feda4fbc60216d7a422eb507948cf",
+      "savedLog": "media.log",
+      "logKind": "summary; compiler warnings omitted"
+    },
+    {
+      "name": "voice",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib voice_routes",
+      "scope": "main",
+      "status": "passed",
+      "passingCases": 3,
+      "sourceLogSHA256": "56eb8447f5db75deab143882bb5c0d4fc7850ac1c10582c0a7bd2ed42e3b52d5",
+      "savedLog": "voice.log",
+      "logKind": "summary; compiler warnings omitted"
+    },
+    {
+      "name": "terminal-route",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib model_route_revocation_or_deadline_blocks_automatic_terminal_answer_adoption",
+      "scope": "main",
+      "status": "passed",
+      "passingCases": 1,
+      "sourceLogSHA256": "7cc641e91d390ded68d92f0305db8e8110562865e9850241a76a81b8ab19a756",
+      "savedLog": "terminal-route.log",
+      "logKind": "summary; compiler warnings omitted"
+    },
+    {
+      "name": "echo-reference",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib subtracts_matching_playback_and_preserves_overlapping_speech",
+      "scope": "main",
+      "status": "passed",
+      "passingCases": 1,
+      "sourceLogSHA256": "8b6c7d697e6490563e86ed0d7d022508feb4b3c4337b0d48e9442191a1127947",
+      "savedLog": "echo-reference.log",
+      "logKind": "summary; compiler warnings omitted"
+    },
+    {
+      "name": "queue",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --features conversation-queue-e2e --test conversation_queue_e2e --test conversation_queue_followup_failure",
+      "scope": "main",
+      "status": "passed",
+      "passingCases": 4,
+      "sourceLogSHA256": "6416131fdad04bc80feb35a871301fda216603d7e39763849996d468f29a06cd",
+      "savedLog": "queue.log",
+      "logKind": "summary; compiler warnings omitted"
+    },
+    {
+      "name": "larm",
+      "command": "cargo test --locked --manifest-path crates/larm-session/Cargo.toml",
+      "scope": "isolated",
+      "status": "passed",
+      "passingCases": 82,
+      "sourceLogSHA256": "6c83bf90259b696b87eda9829d48d4f15bbc47dfab231a26e6a0bfd01c7a77be",
+      "savedLog": "larm.log",
+      "logKind": "full"
+    },
+    {
+      "name": "build-ipc",
+      "command": "bun run build",
+      "scope": "main",
+      "status": "passed",
+      "passingCases": 8,
+      "sourceLogSHA256": "d7785baa5dd6f204622fcf75546fabdbc7f0a28c147ed025741f41ae6fdfce88",
+      "savedLog": "build-ipc.log",
+      "logKind": "summary; compiler warnings omitted"
+    },
+    {
+      "name": "lint",
+      "command": "bun run lint",
+      "scope": "isolated",
+      "status": "passed",
+      "passingCases": null,
+      "sourceLogSHA256": "1aab376db75e274f5114b50c96dffff697b52bd926b37864505d72978fb98a89",
+      "savedLog": "lint.log",
+      "logKind": "full"
+    },
+    {
+      "name": "types",
+      "command": "bun run typecheck",
+      "scope": "isolated",
+      "status": "passed",
+      "passingCases": null,
+      "sourceLogSHA256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "savedLog": "types.log",
+      "logKind": "full"
+    },
+    {
+      "name": "check-local",
+      "command": "bun run check:local",
+      "scope": "main",
+      "status": "failed-size-gate",
+      "passingCases": null,
+      "sourceLogSHA256": "369871dbce1b0efc8bc1109e58d06ad5b0daa30cc6daa3eed108a0979870e67f",
+      "savedLog": "check-local.log",
+      "logKind": "full"
+    },
+    {
+      "name": "clippy",
+      "command": "bun run clippy:check",
+      "scope": "isolated",
+      "status": "failed-repository-ratchet",
+      "passingCases": null,
+      "sourceLogSHA256": "159fa13fdc20cc2065958393c342aca388190b64b0a5f86c52baa1aec769454f",
+      "savedLog": "clippy.log",
+      "logKind": "full"
+    },
+    {
+      "name": "module-size",
+      "command": "bun run size:check",
+      "scope": "main",
+      "status": "failed-repository-ratchet",
+      "passingCases": null,
+      "sourceLogSHA256": "8ecf86eb406d1a6ce73b397a310811c351276b67a0a1881a054e7595cc01ce27",
+      "savedLog": "module-size.log",
+      "logKind": "full"
+    }
+  ],
+  "scopeSizeGate": {
+    "changedModules": 63,
+    "status": "passed",
+    "existingBaselines": "preserved; only new modules registered"
+  },
+  "planStatus": {
+    "reviewFindings": "F01-F06 fixed and regression verified",
+    "P1-P4": "implemented fixture scope; P8 live voice acceptance pending",
+    "native": "Anthropic Messages fixture scope",
+    "P5": "LARM/Replicate media including durable recovery fixture scope",
+    "P6": "not implemented",
+    "P7": "existing settings navigation only; dedicated bindings not implemented",
+    "P8": "live API and physical AEC acceptance not run"
+  },
+  "formalQualityScore": "withheld",
+  "files": [
+    {
+      "path": "crates/larm-session/src/media.rs",
+      "sha256": "1eac91366314b60541e82c65b4b0f694c9b97068885189a718c689b3c30afda5"
+    },
+    {
+      "path": "crates/larm-session/src/media/transport.rs",
+      "sha256": "9d9cdeff8f60d3ed684e7062da7d12841c3f8cd3e1c3a9787b30be4bbe30e18d"
+    },
+    {
+      "path": "docs/plans/purpose-based-cloud-api-switching.md",
+      "sha256": "b70fdc877f94aaa1f0609697ed08e6f0835c4f7e14de1d35f9b065073a7e162f"
+    },
+    {
+      "path": "scripts/module-size-baseline.json",
+      "sha256": "99e3d2d2a2dc6df0a7df85e5f7aec4d57fc5b8617620005d2330459e25969762"
+    },
+    {
+      "path": "src-tauri/src/conversation_queue_e2e.rs",
+      "sha256": "28a4c54a1e5dd0006aadfe817fe3940e5463f2d563679cc7e10986f8eeb05e87"
+    },
+    {
+      "path": "src-tauri/src/conversation_queue_e2e/cloud_route.rs",
+      "sha256": "ffa1e4571017812a2b75cee56fa35a822dec3d4a61ea1298ebe8f60068d5ba90"
+    },
+    {
+      "path": "src-tauri/src/conversation_queue_e2e/request_options.rs",
+      "sha256": "26458aef6a060bd32d5e479a6de63022e8bfa453e3bd26ae8e61fff643252ab2"
+    },
+    {
+      "path": "src-tauri/src/conversation_queue_e2e/server.rs",
+      "sha256": "f7587733dae93e42b4324a664d2c09ffe010367fa8dce2910d8896e6382dfec2"
+    },
+    {
+      "path": "src-tauri/src/credentials.rs",
+      "sha256": "bde8e41397b1069dd02d67fe292e710124ae1064e698ae13c9a9ee64938f0035"
+    },
+    {
+      "path": "src-tauri/src/media_generation/artifacts.rs",
+      "sha256": "9c452bdd66d0b3fd84a2185d134093b499764f35f796f509e59d7dfbf5fa6e9f"
+    },
+    {
+      "path": "src-tauri/src/media_generation/generation.rs",
+      "sha256": "e207c396ce1de1c7bfcc32467a5931260d1712981f0844b14c6425c62a449993"
+    },
+    {
+      "path": "src-tauri/src/media_generation/ledger.rs",
+      "sha256": "5b74d73e435f79cf3a00a60aca66ce7df51479efaaef29366c411448e062fa14"
+    },
+    {
+      "path": "src-tauri/src/media_generation/mod.rs",
+      "sha256": "cb267bf115936957ffa0e738f84a5b462122f19f75fd4311bee21f7f32eaf7d3"
+    },
+    {
+      "path": "src-tauri/src/media_generation/recovery.rs",
+      "sha256": "7d63b6f9fd000d43032751bae536a2879f20d74402d6f4aac251526b193a3e84"
+    },
+    {
+      "path": "src-tauri/src/media_generation/replicate.rs",
+      "sha256": "6630feef848eb50b275e3f652e159e433dd1906d4c5fdcf40951200c7e76b895"
+    },
+    {
+      "path": "src-tauri/src/media_generation/replicate_tests.rs",
+      "sha256": "a383230e3c1ebe10c54e89129a840291ce911340236fde760e4607cf58f325e7"
+    },
+    {
+      "path": "src-tauri/src/persistence/service_registry_store.rs",
+      "sha256": "295acf97d7d6da2c3db1ab97f4ef7d183c65de88f7812a56fc8dbfd1307c72bd"
+    },
+    {
+      "path": "src-tauri/src/persistence/settings/registry_projection.rs",
+      "sha256": "333d6b435c05393031e02bbc596559a5aad4c5e88dca58a410a5529b9ff08814"
+    },
+    {
+      "path": "src-tauri/src/providers/anthropic_messages.rs",
+      "sha256": "e83deb565de4b7b2fce44af9806f8f7672a6b15f33dca85d3279d0eb9db116e2"
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/json_response.rs",
+      "sha256": "4d523b720976d786e513cc921037870e971c5b545124484be585fd765a592bab"
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/mod.rs",
+      "sha256": "1030659fcfecaebc2abbc96d40af961370822c9d2c7b9bc2bbb2c426b33ab41d"
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/response_json.rs",
+      "sha256": "71cb91241e57abef860bbeecccaffcb1fe2b3b39681907386473031906cf6cc5"
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/stream_response.rs",
+      "sha256": "175dcd7cdf10e3bf8efe92e90ce07b54ac580da84e2d21ad24c1758c46726b20"
+    },
+    {
+      "path": "src-tauri/src/providers/mod.rs",
+      "sha256": "c389214d4bd51c54f4a7d8fda02501fc98ac582dc64620ffe6105de4bfc11225"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry.rs",
+      "sha256": "1d6e3a026bd188a85f9668dc5e4201c682b3896e1313139c502be5b3f31df7b1"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/active.rs",
+      "sha256": "b8cbc00e22efdd742c70fe5a5c4e1704d76bd738fb794596444dd0bdc580f432"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/commands.rs",
+      "sha256": "d64fcc7832206ffd53b73a5ebba38a40c12858d238a48f639c3594df4e7d1360"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/compatibility.rs",
+      "sha256": "e4e4616ac3d8864995e9e142460a13e7dad53e5dea86ebb08db1ca9a019a28f8"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/migration.rs",
+      "sha256": "3b66e167f150c639590e572bd86e82eb54d3055e1de223e29d000a8c34504376"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/operations.rs",
+      "sha256": "9cc7bacff417a7fe8cc7d3bd7a5a78c5b51b5e75ef2cd0d15ac24f7c13151dc6"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/probe.rs",
+      "sha256": "a83dc0d3c4801d822f1effab8d993bc9e1a9929be91f0542787be54d90b51ef8"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/resolve.rs",
+      "sha256": "a92c40ac29e3ab57d247cd7315da0565ece460eeb8797eebb180fa36558ff2eb"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/tests.rs",
+      "sha256": "f4f94da3fa70bc666ba0ae8ffaa40925536287b97751bbc8648ac890a2c29fa1"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/types.rs",
+      "sha256": "9e8cd777454ec47145494b8d08ee5d17e5f941a8bd8d3d4fb06f97a8c9d05d6e"
+    },
+    {
+      "path": "src-tauri/src/providers/service_registry/validate.rs",
+      "sha256": "51ba4ac6e3609d0b9ecdea881aa096bdb2c790dbb2b5ce0694850138a51cbc83"
+    },
+    {
+      "path": "src-tauri/src/runtime/command_registry.rs",
+      "sha256": "d939458ba49d0fbc22b8e8aec6bedd1157aa7fbc87e14a47ef8731de1dd4def8"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check.rs",
+      "sha256": "dacc6000de9ac201b2827f39ba6fef75e5a0003f6b27f44efc57f98488491097"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/context_metrics.rs",
+      "sha256": "865371d03d1820792f2613364a09f92d97edf082fe23e73d1b9cc3bd52537f4a"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/direct_route.rs",
+      "sha256": "383e218f38018ab62782dc1631f139342c6ab72bbdceddf551f8f854a8532a75"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime.rs",
+      "sha256": "146b7ac0a94fea616f43cae20d5218b6304f45ed758713802532e7b11fd71107"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs",
+      "sha256": "982977c86b3ada7bc108e7750dc5483d1a5450e01d2cd1fa3b98f10aa0f1ab3c"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime/purpose_completion.rs",
+      "sha256": "134530859395d437a248b9d465eab1313bb6340c01ea31345f7c73b414fd64bf"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime/purpose_deadline.rs",
+      "sha256": "e54e50affe0440ea79c8162b2cec115fcdeaa7b2b4c5a5f29f9744f428df0e69"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime/web_result.rs",
+      "sha256": "a81bcb69fb71145353af0acd58fbcd91d12b4caf1f3664e59df01505a6df81e6"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/speech_playback.rs",
+      "sha256": "692a1ed326fc08a0ef63f980dd9a8cb1ad025c2ab424f30c205811f6e5265dbb"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/streaming_progress.rs",
+      "sha256": "7e995102647cb8b1780c2574a85b567e748a2398665553b70ee2bd9518d587c8"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/streaming_speech.rs",
+      "sha256": "4bbbcf9d68842306afbf579504c8556495dafea62971e677758f877a93152592"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/voice_routes.rs",
+      "sha256": "5379c6ab2fef1a5095ead68a2245e356bc16545cf5e0ea51f346809cadf9f7ed"
+    },
+    {
+      "path": "src-tauri/src/voice/cloud_asr.rs",
+      "sha256": "c790de9d13efb94e31b7f42809aee4d4c96452148b9baae26afd519949138bd5"
+    },
+    {
+      "path": "src-tauri/src/voice/cloud_tts.rs",
+      "sha256": "59c20e1d323c0977a6426bd442549683b0e2324b7035b1b343a5473ddf88a3d7"
+    },
+    {
+      "path": "src-tauri/src/voice/qwen_realtime_asr.rs",
+      "sha256": "2753b2b99ad36ce8cebb3a9c924e2d97367515a0aa7c49b9616aae3dc05f1158"
+    },
+    {
+      "path": "src-tauri/src/voice/qwen_realtime_asr/selection.rs",
+      "sha256": "aeffa810a09776d91137506b2ba748700f4bd6e011dfaa924a7b7c9e603c8ac9"
+    },
+    {
+      "path": "src-tauri/tests/conversation_queue_e2e.rs",
+      "sha256": "7f362648b7bf74d71dae17ca195f86792225dc351f2dcc52f6c77792a635ae27"
+    },
+    {
+      "path": "src/features/media/MediaArtifacts.tsx",
+      "sha256": "2ae5c6266c28201c817598d8f38d428a51584714ae9b5840b3b7611170283c97"
+    },
+    {
+      "path": "src/features/media/MediaGenerationForm.tsx",
+      "sha256": "c9369b0472d85000afbc8f19cb093bacbf5544b76e9b7be79a68d3ffc21173cd"
+    },
+    {
+      "path": "src/features/media/MediaGenerationPanel.tsx",
+      "sha256": "719815adc61660ba8aea3563f5182968f9459da9f57b1a875459585a35c55c6f"
+    },
+    {
+      "path": "src/features/media/MediaHistoryList.tsx",
+      "sha256": "332bc251cb631d840986f90b8d0181c923d464604a96932f1b8b12573c3d774a"
+    },
+    {
+      "path": "src/features/media/mediaApi.ts",
+      "sha256": "9debd3d3d1c65e4f50064932228f05c453fc8b0b4914c3d0dbca34dbbb17c5bb"
+    },
+    {
+      "path": "src/features/media/mediaContracts.ts",
+      "sha256": "99a1fd851bf85823732159c51d20ec2dc92b3c519578eadc55683508a3c2f502"
+    },
+    {
+      "path": "src/features/settings/PurposeRouteDetails.tsx",
+      "sha256": "d047cf5e018d998aef37b6953f3322a964a7259684abe092403844363267ad31"
+    },
+    {
+      "path": "src/features/settings/PurposeRoutesSection.tsx",
+      "sha256": "0317fdc1648777d2ecace42178477ee9a1d3875f33e4ba57bfa2b7a57d8a6641"
+    },
+    {
+      "path": "src/features/settings/RegisteredServices.tsx",
+      "sha256": "5af525c4aa124164f33894db1cfa393201e545701ee7358b0ead91d2f8f9706c"
+    },
+    {
+      "path": "src/features/settings/ServiceResourcesEditor.tsx",
+      "sha256": "a7f8f8590ecb26a7bc6890f1e80bf0192357eabb21f972c226232870021e94fa"
+    },
+    {
+      "path": "src/features/settings/SettingsPage.tsx",
+      "sha256": "4f3cea11e8f7db0f35a4c0d9eea7ad48702cb434e138e75494d009e0eca9cc1a"
+    },
+    {
+      "path": "src/lib/serviceRegistry.ts",
+      "sha256": "5786deeef555bbe5f41f72a67b7d3298cf2cfae9a61006d857ab656150ecd259"
+    },
+    {
+      "path": "tests/media-recovery.test.tsx",
+      "sha256": "d40b37f70ac2729ed9ec9499741920e676cffaf65fcac8f160a7bd93bb8fb9c2"
+    },
+    {
+      "path": "tests/purpose-routes-recovery.test.tsx",
+      "sha256": "61085121c3e0688a479d11d84bc0a21a4220fc2bd96f5ede236a3615dc97754a"
+    },
+    {
+      "path": "tests/service-registry-helpers.test.ts",
+      "sha256": "9cac95e47c84d7d7b9d0922be37cf750b6e85fc2fe44aa0455ab0d426f5fe1d2"
+    }
+  ],
+  "mainOnlyIntegration": [
+    "src-tauri/src/runtime/conversation_check/terminal_decision.rs",
+    "src-tauri/src/coding/terminal/automatic.rs",
+    "src-tauri/src/coding/terminal/tests.rs",
+    "src-tauri/src/coding/terminal/purpose_route_tests.rs"
+  ],
+  "mainIntegrationSnapshot": [
+    {
+      "path": "scripts/module-size-baseline.json",
+      "sha256": "5bc29d8ce1b0d05f4275c547664f68e07b7c0999781eb8087add91ed93d26527"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check.rs",
+      "sha256": "52eff8d731e08a6b43635e6ec4fc6616dd8ac9b34750aeacaae908eb62a6491a"
+    },
+    {
+      "path": "src-tauri/src/runtime/command_registry.rs",
+      "sha256": "d13e9a9b24e1cd0ccee15c9ed6bc2aaa99a0350f7c89de664c839a4c97085028"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime.rs",
+      "sha256": "5b644a01f1b4b905537bc503b71df35cfc7534ecd1b86e23151d576cc220b616"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs",
+      "sha256": "4b5b3b652046b766fa25a14dbcd4068b7d0b0ae0b38bf41d0be49762f983eeef"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/terminal_decision.rs",
+      "sha256": "3e2c5d80673e7db9b04087fe715b340dac48614a7b0271c2ad5bbc9046204842"
+    },
+    {
+      "path": "src-tauri/src/coding/terminal/automatic.rs",
+      "sha256": "85bf2cb658c1627b2a360fbe315a71e65edcd979397ff0d341463e6fbf3c4e84"
+    },
+    {
+      "path": "src-tauri/src/coding/terminal/tests.rs",
+      "sha256": "c991b828356bd9d1c42a258038c45e433c92ae34861229e8387ca9a114903f01"
+    },
+    {
+      "path": "src-tauri/src/coding/terminal/purpose_route_tests.rs",
+      "sha256": "391f8541af8cdcccecd2f26bc490d0d90c1d6614daea4a0cc9d7a6286367eb6d"
+    }
+  ],
+  "preservedConcurrentChanges": [
+    "terminal command registration",
+    "terminal_question queue dispatch",
+    "coding workspace and HOST_CODING_CONTEXT in conversation",
+    "terminal_decision module declaration",
+    "other worktree-independent baseline entries"
+  ]
+}

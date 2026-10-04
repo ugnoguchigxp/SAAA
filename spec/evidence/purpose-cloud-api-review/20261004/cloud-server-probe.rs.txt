@@ -1,0 +1,10 @@
+--- /Users/y.noguchi/Code/SAAA/src-tauri/src/conversation_queue_e2e/server.rs	2026-10-01 20:12:35
++++ /var/folders/mx/jbv8qfwd52z14q0mby_273lhlp5gd2/T/saaa-cloud-review-5oun_omo/src-tauri/src/conversation_queue_e2e/server.rs	2026-10-04 22:59:40
+@@ -59,6 +59,7 @@
+         return Json(json!({"text":"今日の事実を調べて","language":"ja"})).into_response();
+     }
+     if path.ends_with("/v1/chat/completions") {
++        if std::env::var_os("SAAA_REVIEW_DEADLINE").is_some(){tokio::time::sleep(std::time::Duration::from_millis(400)).await;}
+         let bytes = to_bytes(request.into_body(), 1_000_000)
+             .await
+             .expect("LLM fixture body");

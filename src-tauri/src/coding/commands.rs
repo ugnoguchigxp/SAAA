@@ -34,6 +34,9 @@ pub async fn probe_coding(state: tauri::State<'_, AppState>) -> Result<Value, St
     if !super::contracts::valid_implementation(&settings) {
         return Err("coding_configuration_invalid".into());
     }
+    if settings.implementation_method == "terminal" {
+        return super::terminal::probe(&settings);
+    }
     if settings.implementation_method == "codex-sdk" {
         let mut child = crate::runtime::codex_cli::spawn_codex_app_server()?;
         child.kill().map_err(|_| "codex_probe_failed")?;

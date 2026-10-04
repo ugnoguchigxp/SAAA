@@ -1,0 +1,7 @@
+#![cfg(feature = "conversation-queue-e2e")]
+#[tokio::test]
+async fn cloud_only_review_probe() {
+ let report=saaa_lib::conversation_queue_e2e::run_cloud_conversation().await.expect("cloud route works with LARM stopped");
+ println!("cloud report: {report}");
+ assert_eq!(report["larmRequests"],0);assert_eq!(report["llmCalls"],4);
+}

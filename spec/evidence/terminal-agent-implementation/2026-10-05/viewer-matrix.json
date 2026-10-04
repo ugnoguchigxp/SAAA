@@ -1,0 +1,30 @@
+[
+  {
+    "cli": "claude",
+    "terminal": "kitty",
+    "openExit": 0,
+    "viewerStarted": true,
+    "error": ""
+  },
+  {
+    "cli": "claude",
+    "terminal": "ghostty",
+    "openExit": 0,
+    "viewerStarted": true,
+    "error": ""
+  },
+  {
+    "cli": "codex",
+    "terminal": "kitty",
+    "openExit": 0,
+    "viewerStarted": true,
+    "error": ""
+  },
+  {
+    "cli": "codex",
+    "terminal": "ghostty",
+    "openExit": 0,
+    "viewerStarted": true,
+    "error": ""
+  }
+]

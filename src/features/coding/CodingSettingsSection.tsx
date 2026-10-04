@@ -1,3 +1,5 @@
+import { terminalErrorMessage } from "./terminalErrors";
+import { TerminalSettings } from "./TerminalSettings";
 import { CodingConnectionFields } from "./CodingConnectionFields";
 import { useEffect, useState } from "react";
 import { codingApi, type CodingSettings } from "./api";
@@ -8,6 +10,7 @@ export function CodingSettingsSection() {
   const [savedSettings, setSavedSettings] = useState<CodingSettings | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [terminalValid, setTerminalValid] = useState(true);
   useEffect(() => {
     void codingApi
       .settings()
@@ -15,11 +18,11 @@ export function CodingSettingsSection() {
         setSettings(loaded);
         setSavedSettings(loaded);
       })
-      .catch((error: unknown) => setNotice(String(error)));
+      .catch((error: unknown) => setNotice(terminalErrorMessage(error)));
   }, []);
 
   async function save(probe: boolean) {
-    if (!settings) return;
+    if (!settings || !terminalValid) return;
     setBusy(true);
     setNotice("");
     try {
@@ -28,15 +31,17 @@ export function CodingSettingsSection() {
       if (probe) {
         await codingApi.probe();
         setNotice(
-          settings.implementationMethod === "codex-sdk"
-            ? "Codexの起動を確認しました。モデル応答は実行時に確認します。"
-            : "Piの起動・モデル登録を確認しました。モデル応答は実行時に確認します。",
+          settings.implementationMethod === "terminal"
+            ? "端末とCLIの起動を確認しました。モデル応答は実行時に確認します。"
+            : settings.implementationMethod === "codex-sdk"
+              ? "Codexの起動を確認しました。モデル応答は実行時に確認します。"
+              : "Piの起動・モデル登録を確認しました。モデル応答は実行時に確認します。",
         );
       } else {
         setNotice("実装方法の設定を保存しました。");
       }
     } catch (error) {
-      setNotice(String(error));
+      setNotice(terminalErrorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -49,18 +54,20 @@ export function CodingSettingsSection() {
         {notice && <p role="status">{notice}</p>}
       </section>
     );
-  const method = settings.implementationMethod === "codex-sdk" ? "codex-sdk" : "pi";
+  const method = settings.implementationMethod;
   const savedMethod =
-    savedSettings?.implementationMethod === "codex-sdk"
-      ? "Codex SDK"
-      : savedSettings?.profile.includes("codex-sdk")
-        ? "Pi（Codex SDK拡張）"
-        : "Pi";
+    savedSettings?.implementationMethod === "terminal"
+      ? "専用端末"
+      : savedSettings?.implementationMethod === "codex-sdk"
+        ? "Codex SDK"
+        : savedSettings?.profile.includes("codex-sdk")
+          ? "Pi（Codex SDK拡張）"
+          : "Pi";
   const dirty =
     savedSettings !== null && JSON.stringify(settings) !== JSON.stringify(savedSettings);
   return (
     <section className="settings-section coding-method-section" aria-label="実装方法">
-      <p>コード変更を実行する方法を選びます。PiとCodex SDKの設定は別々に保持します。</p>
+      <p>コード変更を実行する方法を選びます。専用端末・Pi・Codex SDKの設定を別々に保持します。</p>
       <div className="coding-method-current">
         保存済みの実装方法: <strong>{savedMethod}</strong>
         {dirty && <span> · 未保存の変更があります</span>}
@@ -137,13 +144,18 @@ export function CodingSettingsSection() {
             選択したGit作業フォルダーへの書き込みを許可し、ネットワークアクセスを無効にします。
           </p>
         </section>
+        <TerminalSettings
+          settings={settings}
+          onChange={setSettings}
+          onValidityChange={setTerminalValid}
+        />
       </div>
       <p className="settings-help">高度推論の役割設定と、コード実装の方法は別々に管理します。</p>
       <div className="coding-method-actions">
-        <button disabled={busy} onClick={() => void save(false)}>
+        <button disabled={busy || !terminalValid} onClick={() => void save(false)}>
           実装設定を保存
         </button>
-        <button disabled={busy} onClick={() => void save(true)}>
+        <button disabled={busy || !terminalValid} onClick={() => void save(true)}>
           保存して接続確認
         </button>
       </div>

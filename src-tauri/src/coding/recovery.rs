@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use serde_json::json;
 // Never resend an ambiguous delivery, and never signal an unverified PID.
 pub fn reconcile(c: &Connection) -> Result<(), String> {
-    let mut stmt=c.prepare("SELECT id,job_id,pid,process_identity,delivery FROM coding_runs WHERE state IN ('starting','running','stopping','outcome_unknown')").map_err(database_error)?;
+    let mut stmt=c.prepare("SELECT id,job_id,pid,process_identity,delivery FROM coding_runs WHERE state IN ('starting','running','stopping','outcome_unknown') AND NOT EXISTS(SELECT 1 FROM terminal_runs t WHERE t.run_id=coding_runs.id)").map_err(database_error)?;
     let rows = stmt
         .query_map([], |r| {
             Ok((

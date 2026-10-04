@@ -1,0 +1,20 @@
+--- /Users/y.noguchi/Code/SAAA/src-tauri/src/conversation_queue_e2e.rs	2026-10-04 19:48:41
++++ /var/folders/mx/jbv8qfwd52z14q0mby_273lhlp5gd2/T/saaa-cloud-review-5oun_omo/src-tauri/src/conversation_queue_e2e.rs	2026-10-04 22:59:40
+@@ -175,6 +175,17 @@
+ }
+ pub(crate) fn web_search(query: &str) -> Option<String> {
+     let fixture = fixture()?;
++    if std::env::var_os("SAAA_REVIEW_REVOKE").is_some() {
++        fixture.context_writer.lock().unwrap().as_ref().unwrap().write(|db| {
++            let loaded=persistence::service_registry_store::load_registry(db)?;
++            let mut snapshot=loaded.snapshot;
++            let c=snapshot.connections.iter_mut().find(|c|c.connection_id=="conn:svc-cloud-llm").unwrap();
++            c.enabled=false;
++            persistence::service_registry_store::save_registry(db,&snapshot,loaded.revision)?;
++            Ok(())
++        }).unwrap();
++        eprintln!("REVIEW: connection disabled immediately after the first LLM call's search action");
++    }
+     fixture
+         .searches
+         .lock()

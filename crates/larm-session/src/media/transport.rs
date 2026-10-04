@@ -15,6 +15,7 @@ impl MediaClient {
         call: reqwest::RequestBuilder,
         accepted: &[u16],
     ) -> Result<(Value, Option<String>), MediaError> {
+        self.check_request()?;
         let is_submission = call
             .try_clone()
             .and_then(|call| call.build().ok())
@@ -66,6 +67,7 @@ impl MediaClient {
         Ok((value, location))
     }
     pub(super) async fn download(&self, artifact: &MediaArtifact) -> Result<Vec<u8>, MediaError> {
+        self.check_request()?;
         let response = crate::authorize(
             self.client
                 .get(self.url(&artifact.content_url)?)

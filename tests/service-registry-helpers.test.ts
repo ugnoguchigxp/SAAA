@@ -58,17 +58,12 @@ describe("service registry helpers", () => {
       authentication: "api-key",
       location: "cloud",
     });
-    const connection = snapshot.connections.find(
-      (item) => item.connectionId === connectionId,
-    )!;
+    const connection = snapshot.connections.find((item) => item.connectionId === connectionId)!;
     expect(connection.enabled).toBe(false);
     expect(connection.endpoint).toBe("https://api.example.test/v1");
     expect(connection.credentialRef?.account).toBe(connectionId);
     expect(JSON.stringify(snapshot).toLowerCase()).not.toContain("apikey");
-    expect(
-      snapshot.resources.find((item) => item.resourceId === resourceId)
-        ?.enabled,
-    ).toBe(false);
+    expect(snapshot.resources.find((item) => item.resourceId === resourceId)?.enabled).toBe(false);
     expect(
       addChatService(snapshot, {
         label: "My Cloud",
@@ -94,17 +89,13 @@ describe("service registry helpers", () => {
     expect(binding.review).toBe("ready");
     expect(binding.primaryResourceId).toBe(resourceId);
     expect(binding.storedPrimaryResourceId).toBeUndefined();
-    expect(purposesUsing(applied, connectionId)).toEqual([
-      "conversation.respond",
-    ]);
+    expect(purposesUsing(applied, connectionId)).toEqual(["conversation.respond"]);
   });
 
   test("candidates only list resources with the purpose capability", () => {
-    expect(
-      candidatesFor(base, "voice.transcribe").map(
-        (item) => item.resource.resourceId,
-      ),
-    ).toEqual(["res:harness-asr"]);
+    expect(candidatesFor(base, "voice.transcribe").map((item) => item.resource.resourceId)).toEqual(
+      ["res:harness-asr"],
+    );
     expect(candidatesFor(base, "voice.speak")).toEqual([]);
   });
 

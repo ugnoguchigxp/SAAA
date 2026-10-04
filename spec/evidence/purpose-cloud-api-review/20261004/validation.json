@@ -1,0 +1,11 @@
+{
+  "reviewed_commit": "86826f02fe0e14ef2ada1526797e156f68b57727",
+  "source_hashes_unchanged": true,
+  "changed_reviewed_files": [],
+  "product_code_modified_by_review": false,
+  "real_settings_or_secrets_used": false,
+  "compile_context_calls_this_turn": 1,
+  "compile_eval_calls_this_turn": 1,
+  "compile_context_calls_cumulative": 3,
+  "compile_eval_calls_cumulative": 3
+}

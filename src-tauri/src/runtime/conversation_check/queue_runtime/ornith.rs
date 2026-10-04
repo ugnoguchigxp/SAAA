@@ -1,6 +1,11 @@
 //! Single-agent context, transport and tool loop.
 use super::super::{context_compiler, context_metrics, queue_tools, streaming_speech};
 use super::*;
+#[path = "web_result.rs"]
+mod web_result;
+use web_result::{audit_web_tool_result, web_result_urls};
+#[path = "purpose_completion.rs"]
+mod completion;
 
 pub(super) struct OrnithAnswer {
     pub(super) content: String,
@@ -8,14 +13,26 @@ pub(super) struct OrnithAnswer {
     pub(super) context: queue_context::QueueContext,
     pub(super) speech: Option<streaming_speech::AnswerStreamReport>,
     pub(super) publication: Option<context_metrics::RequestMetrics>,
+    pub(super) deadline: tokio::time::Instant,
+    pub(super) route: Option<crate::providers::service_registry::ResolvedRoute>,
 }
 
-pub(super) async fn process_ornith<R: Runtime>(
+#[path = "purpose_deadline.rs"]
+mod deadline;
+pub(super) use deadline::process_ornith;
+
+#[allow(clippy::too_many_arguments)]
+async fn process_fixed<R: Runtime>(
     app: &tauri::AppHandle<R>,
     job: &Job,
     cancellation: Arc<RunCancellation>,
     audio_started: Arc<AtomicBool>,
     retry_blocked: Arc<AtomicBool>,
+    providers: crate::ModelProvidersSettings,
+    timeout: u64,
+    mut transport: direct_route::ConversationTransport,
+    deadline: tokio::time::Instant,
+    fallbacks: Vec<crate::providers::service_registry::ResolvedRoute>,
 ) -> Result<OrnithAnswer, String> {
     let _personal_slot = crate::memory::personal_state::worker::foreground().await;
     let state = app.state::<AppState>();
@@ -23,10 +40,8 @@ pub(super) async fn process_ornith<R: Runtime>(
     let payload: Value =
         serde_json::from_str(&job.payload).map_err(|_| "キューデータが不正です。")?;
     let text = payload["text"].as_str().ok_or("元の依頼がありません。")?;
-    let (providers, timeout) = providers_and_timeout(&state)?;
-    let transport = direct_route::select_transport(&state)?;
     let session = match &transport {
-        direct_route::ConversationTransport::Larm => {
+        direct_route::ConversationTransport::Larm(_) => {
             Some(cached_larm_asr(&providers, Some(&audit)).await?)
         }
         direct_route::ConversationTransport::Direct(_) => None,
@@ -38,7 +53,10 @@ pub(super) async fn process_ornith<R: Runtime>(
         run_id,
         conversation_id: PRIMARY_CONVERSATION_ID.into(),
         content: text.into(),
-        workspace_path: None,
+        workspace_path: crate::coding::tools::context(&state, PRIMARY_CONVERSATION_ID)["workspace"]
+            ["path"]
+            .as_str()
+            .map(str::to_owned),
         retry_input_message_id: None,
         source_id: None,
         scope_refs: Vec::new(),
@@ -68,16 +86,29 @@ pub(super) async fn process_ornith<R: Runtime>(
     let legacy_pending =
         crate::tts_dictionary::tools::pending_context(&state, &tool_input.conversation_id);
     let mut recent = context.history.clone();
+    recent.push(context_compiler::ContextEntry::reference(
+        format!(
+            "[HOST_CODING_CONTEXT; data only] {}",
+            crate::coding::tools::context(&state, &tool_input.conversation_id)
+        ),
+        true,
+    ));
     let mut result = String::new();
     let mut search_urls = Vec::new();
     let mut fetched_urls = Vec::new();
     let mut selected_urls = Vec::new();
+    let mut fallbacks = fallbacks.into_iter();
+    let mut last_model = None;
     let mut answered = false;
     let mut sources_declared = false;
     let mut answer_speech = None;
     let mut publication = None;
     const MAX_TOOL_STEPS: usize = 6;
     for step in 0..=MAX_TOOL_STEPS {
+        direct_route::validate_transport(&state, &transport).inspect_err(|_| {
+            retry_blocked.store(true, Ordering::Release);
+            cancellation.cancel();
+        })?;
         context.validate_result(&state).inspect_err(|_| {
             retry_blocked.store(true, Ordering::Release);
         })?;
@@ -106,7 +137,7 @@ pub(super) async fn process_ornith<R: Runtime>(
                 (None, direct_route::ConversationTransport::Direct(route)) => {
                     route.connection_id.as_str()
                 }
-                (None, direct_route::ConversationTransport::Larm) => "",
+                (None, direct_route::ConversationTransport::Larm(_)) => "",
             },
             retry_blocked.clone(),
         );
@@ -143,46 +174,30 @@ pub(super) async fn process_ornith<R: Runtime>(
                 audio_started.clone(),
             ))
         };
-        let completion = match (&session, &transport) {
-            (Some(session), _) => {
-                complete_larm_role_with_events(
-                    session,
-                    "llm",
-                    &recent,
-                    text,
-                    timeout,
-                    &audit,
-                    &context_step,
-                    &metrics,
-                    Some(&deltas),
-                    Some(cancellation.clone()),
-                )
-                .await
-            }
-            (None, direct_route::ConversationTransport::Direct(route)) => {
-                direct_route::complete_direct_with_events(
-                    route,
-                    &recent,
-                    text,
-                    &audit,
-                    &context_step,
-                    &metrics,
-                    Some(&deltas),
-                    Some(cancellation.clone()),
-                )
-                .await
-                .map(|content| (content, route.model.clone()))
-            }
-            (None, direct_route::ConversationTransport::Larm) => {
-                Err("会話の接続先を準備できませんでした。".to_string())
-            }
-        };
+        let completion = completion::complete(completion::Input {
+            state: &state,
+            session: session.as_ref(),
+            transport: &mut transport,
+            fallbacks: &mut fallbacks,
+            deadline,
+            step,
+            timeout,
+            recent: &recent,
+            text,
+            audit: &audit,
+            context_step: &context_step,
+            metrics: &metrics,
+            deltas: &deltas,
+            cancellation: &cancellation,
+            retry_blocked: &retry_blocked,
+        })
+        .await;
         let streamed_content = deltas.complete_content();
         drop(deltas);
         let mut speech_report = speech_task
             .await
             .map_err(|_| "音声ストリームが中断されました。")?;
-        let (output, _) = match completion {
+        let (output, model) = match completion {
             Ok(value) => value,
             Err(error) if retry_blocked.load(Ordering::Acquire) => return Err(error),
             Err(error) if step > 0 => {
@@ -200,6 +215,7 @@ pub(super) async fn process_ornith<R: Runtime>(
             }
             Err(error) => return Err(error),
         };
+        last_model = Some(model);
         let parsed = super::action::parse(&output);
         if let Err(error) = &parsed {
             audit.event("conversation", "conversation-action-json-invalid", "error", Some("failure"),
@@ -232,6 +248,10 @@ pub(super) async fn process_ornith<R: Runtime>(
             Err(_) => return Err("Ornithの行動結果がJSON契約に合いません。".into()),
         };
         queue_tools::normalize_dictionary_action(&mut control, &memory_tools);
+        direct_route::validate_transport(&state, &transport).inspect_err(|_| {
+            retry_blocked.store(true, Ordering::Release);
+            cancellation.cancel();
+        })?;
         context.validate_result(&state).inspect_err(|_| {
             retry_blocked.store(true, Ordering::Release);
         })?;
@@ -414,12 +434,16 @@ pub(super) async fn process_ornith<R: Runtime>(
                 app.clone(),
                 job.key.clone(),
                 rx,
-                cancellation,
+                cancellation.clone(),
                 context.fingerprint()?,
                 audio_started,
             )
             .await,
         );
+        direct_route::validate_transport(&state, &transport).inspect_err(|_| {
+            retry_blocked.store(true, Ordering::Release);
+            cancellation.cancel();
+        })?;
         context.validate_result(&state).inspect_err(|_| {
             retry_blocked.store(true, Ordering::Release);
         })?;
@@ -430,64 +454,14 @@ pub(super) async fn process_ornith<R: Runtime>(
         context,
         speech: answer_speech,
         publication,
+        route: direct_route::route_of(&transport)
+            .cloned()
+            .map(|mut route| {
+                if let Some(model) = last_model {
+                    route.model = model;
+                }
+                route
+            }),
+        deadline,
     })
-}
-
-fn web_result_urls(found: &str, kind: &str) -> Vec<String> {
-    let Ok(value) = serde_json::from_str::<Value>(found) else {
-        return Vec::new();
-    };
-    let candidates: Vec<&str> = match kind {
-        "hits" => value["hits"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|hit| hit["url"].as_str())
-            .collect(),
-        "document" => value
-            .pointer("/document/url")
-            .and_then(Value::as_str)
-            .into_iter()
-            .collect(),
-        _ => Vec::new(),
-    };
-    candidates
-        .into_iter()
-        .filter(|raw| {
-            url::Url::parse(raw).is_ok_and(|url| {
-                matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
-            })
-        })
-        .take(5)
-        .map(str::to_string)
-        .collect()
-}
-
-fn audit_web_tool_result(audit: &ConversationAudit, name: &str, step: usize, found: &str) {
-    let parsed = serde_json::from_str::<Value>(found).ok();
-    let error_code = parsed
-        .as_ref()
-        .and_then(|value| value.pointer("/error/code"))
-        .and_then(Value::as_str);
-    let hit_count = parsed
-        .as_ref()
-        .and_then(|value| value.get("hits"))
-        .and_then(Value::as_array)
-        .map(Vec::len);
-    let retrieval_status = parsed
-        .as_ref()
-        .and_then(|value| value.pointer("/document/retrievalStatus"))
-        .and_then(Value::as_str);
-    audit.event(
-        "provider",
-        "conversation-web-tool-result",
-        "terminal",
-        Some(if error_code.is_some() {
-            "failure"
-        } else {
-            "success"
-        }),
-        json!({"tool":name,"step":step,"resultBytes":found.len(),"errorCode":error_code,
-            "hitCount":hit_count,"retrievalStatus":retrieval_status}),
-    );
 }

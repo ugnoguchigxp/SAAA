@@ -81,8 +81,27 @@ pub(crate) fn flush_held_reports(state: &AppState, conversation_id: &str) -> Res
         return Ok(());
     }
     let message_id = state.sqlite_writer.transact(|connection| {
+        use rusqlite::OptionalExtension;
+        let before: Option<String> = connection
+            .query_row(
+                "SELECT last_message_id FROM steward_delivery_cursor WHERE conversation_id=?1",
+                [conversation_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(database_error)?;
         publish(state, connection, conversation_id)?;
-        super::super::outbox::flush_unflushed(connection, conversation_id, now_ms())
+        let flushed = super::super::outbox::flush_unflushed(connection, conversation_id, now_ms())?;
+        let after: Option<String> = connection
+            .query_row(
+                "SELECT last_message_id FROM steward_delivery_cursor WHERE conversation_id=?1",
+                [conversation_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(database_error)?;
+        // publish may already flush the report. Emit the committed cursor change once.
+        Ok(flushed.or(if after != before { after } else { None }))
     })?;
     if let Some(message_id) = message_id {
         state

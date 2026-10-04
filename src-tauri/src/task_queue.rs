@@ -113,7 +113,7 @@ pub(crate) fn claim(connection: &mut Connection, lane: &str) -> Result<Option<Jo
         .query_row(
             "SELECT id,scope,lane,kind,job_key,generation,payload_json FROM task_queue_jobs
              WHERE lane=?1 AND state='queued' AND available_at_ms<=?2
-             ORDER BY rowid LIMIT 1",
+             ORDER BY CASE WHEN kind='terminal_question' THEN 1 ELSE 0 END,rowid LIMIT 1",
             params![lane, now],
             |row| {
                 Ok((
