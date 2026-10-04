@@ -78,7 +78,11 @@ impl ContextStillSearchClient {
         )
     }
 
-    #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
+    #[cfg(any(
+        test,
+        feature = "quality-eval-harness",
+        feature = "conversation-queue-e2e"
+    ))]
     pub fn disabled() -> Self {
         Self::with_run_dir(PathBuf::new(), false)
     }

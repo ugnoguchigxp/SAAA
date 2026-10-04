@@ -1,3 +1,5 @@
+#[path = "http/conflict.rs"]
+mod conflict;
 use super::stream::ProviderFailureKind as Failure;
 use crate::RunCancellation;
 use std::time::Duration;
@@ -31,23 +33,7 @@ pub(crate) async fn send_with(
             return Ok(response);
         }
         if response.status().as_u16() == 409 {
-            let mut stream = response.bytes_stream();
-            let mut body = Vec::new();
-            use futures_util::StreamExt;
-            while let Some(part) = stream.next().await {
-                let part = part.map_err(|_| Failure::Network)?;
-                if body.len() + part.len() > 4096 {
-                    return Err(Failure::Contract);
-                }
-                body.extend_from_slice(&part);
-            }
-            if serde_json::from_slice::<serde_json::Value>(&body)
-                .ok()
-                .is_some_and(|value| value["error"]["code"] == "connection_idle_released")
-            {
-                return Err(Failure::AllocationLost);
-            }
-            return Err(Failure::Contract);
+            return Err(conflict::failure(response).await);
         }
         let kind = status_failure(response.status().as_u16());
         if allow_retry && attempt < 2 && matches!(response.status().as_u16(), 429 | 503) {

@@ -1,0 +1,177 @@
+$ bun scripts/module-size.ts check
+src-tauri/src/artifact_preview/webview_catalog.rs: 110 exceeds ratchet 109 (baseline 99)
+src-tauri/src/artifact_preview/webview_ops.rs: 610 exceeds ratchet 172 (baseline 156)
+src-tauri/src/diagnosis/checks/harness.rs: 484 exceeds ratchet 330 (baseline 300)
+src-tauri/src/diagnosis/commands.rs: 25 exceeds ratchet 22 (baseline 20)
+src-tauri/src/diagnosis/runner.rs: 278 exceeds ratchet 200 (baseline 181)
+src-tauri/src/generated_capabilities/tools.rs: 245 exceeds ratchet 234 (baseline 212)
+src-tauri/src/persistence/legacy_conversation_schema.rs: missing baseline; run bun run size:register
+src-tauri/src/persistence/settings_migration/stored_document.rs: 494 exceeds ratchet 438 (baseline 398)
+src-tauri/src/providers/dynamic_lan/http.rs: 609 exceeds ratchet 459 (baseline 417)
+src-tauri/src/providers/dynamic_lan/tests/selector_tests.rs: 349 exceeds ratchet 247 (baseline 224)
+src-tauri/src/providers/http.rs: 100 exceeds ratchet 90 (baseline 81)
+src-tauri/src/providers/larm_resources/audio.rs: missing baseline; run bun run size:register
+src-tauri/src/providers/larm_resources/mod.rs: missing baseline; run bun run size:register
+src-tauri/src/providers/larm_resources/profile.rs: missing baseline; run bun run size:register
+src-tauri/src/providers/service_harness.rs: 597 exceeds ratchet 555 (baseline 504)
+src-tauri/src/providers/stream/dynamic_lan/initialization.rs: 62 exceeds ratchet 59 (baseline 53)
+src-tauri/src/role_routing/frontend.rs: 194 exceeds ratchet 103 (baseline 93)
+src-tauri/src/role_routing/repository_turns/lifecycle.rs: 297 exceeds ratchet 233 (baseline 211)
+src-tauri/src/runtime/conversation_check/queue_progress.rs: missing baseline; run bun run size:register
+src-tauri/src/runtime/conversation_check/queue_recovery.rs: missing baseline; run bun run size:register
+src-tauri/src/runtime/conversation_check/speech_projection.rs: missing baseline; run bun run size:register
+src-tauri/src/runtime/conversation_check/streaming_speech.rs: missing baseline; run bun run size:register
+src-tauri/src/runtime/provider_unit_test.rs: missing baseline; run bun run size:register
+src-tauri/src/runtime/web_fetch/content/projection.rs: 109 exceeds ratchet 108 (baseline 98)
+src-tauri/src/runtime/web_fetch/mod.rs: 408 exceeds ratchet 234 (baseline 212)
+src-tauri/src/task_queue.rs: missing baseline; run bun run size:register
+src-tauri/src/tool_selection/backends/artifact_webview.rs: 68 exceeds ratchet 44 (baseline 40)
+src-tauri/src/voice/audio_backend/echo_reference.rs: missing baseline; run bun run size:register
+src-tauri/src/voice/audio_backend/probe.rs: 123 exceeds ratchet 113 (baseline 102)
+src-tauri/src/voice/audio_backend/ring.rs: 129 exceeds ratchet 116 (baseline 105)
+src-tauri/src/voice/audio_upload.rs: 122 exceeds ratchet 117 (baseline 106)
+src-tauri/src/voice/cloud_asr.rs: 279 exceeds ratchet 207 (baseline 188)
+src-tauri/src/voice/conversation_speaker.rs: missing baseline; run bun run size:register
+src-tauri/src/voice/local_audio_output.rs: missing baseline; run bun run size:register
+src-tauri/src/voice/local_audio_output/playback_started.rs: missing baseline; run bun run size:register
+src-tauri/src/voice/local_audio_output/playback_vpio.rs: missing baseline; run bun run size:register
+src-tauri/src/voice/local_audio_output/playback.rs: missing baseline; run bun run size:register
+src-tauri/src/voice/mod.rs: 18 exceeds ratchet 14 (baseline 12)
+src-tauri/src/voice/unavailable_speech.rs: missing baseline; run bun run size:register
+src/features/chat/artifacts/artifact.css: 282 exceeds ratchet 277 (baseline 251)
+src/features/chat/artifacts/artifactTab.ts: 184 exceeds ratchet 165 (baseline 150)
+src/features/chat/conversationCheckPage.css: missing baseline; run bun run size:register
+src/features/providerUnitTest/providerUnitTestPage.css: missing baseline; run bun run size:register
+src/features/providerUnitTest/ProviderUnitTestPage.tsx: missing baseline; run bun run size:register
+src/features/settings/RoleRoutingSection.tsx: 338 exceeds ratchet 333 (baseline 302)
+src/features/settings/settingsRoleRouting.ts: 52 exceeds ratchet 51 (baseline 46)
+src/features/settings/settingsRoleRoutingDefaults.ts: 83 exceeds ratchet 69 (baseline 62)
+src/features/voice/ambientWorkletVoiceCapture.ts: 91 exceeds ratchet 81 (baseline 73)
+src/i18n/locales/enDiagnosis.ts: 85 exceeds ratchet 79 (baseline 71)
+src/i18n/locales/jaDiagnosis.ts: 85 exceeds ratchet 79 (baseline 71)
+src/lib/audioBackend.ts: 133 exceeds ratchet 49 (baseline 44)
+src/lib/auditRuntime.ts: 41 exceeds ratchet 37 (baseline 33)
+src/lib/browserVoiceCapture.ts: missing baseline; run bun run size:register
+src/lib/qwenAsrAudioPayload.ts: missing baseline; run bun run size:register
+src/lib/settingsTypes.ts: 194 exceeds ratchet 193 (baseline 175)
+src/shell/appRoute.ts: 14 exceeds ratchet 13 (baseline 11)
+tests/ambient-barge-in.test.ts: missing baseline; run bun run size:register
+tests/ambient-native-voice-capture.test.ts: 153 exceeds ratchet 114 (baseline 103)
+tests/ambient-voice-session.test.tsx: 618 exceeds ratchet 561 (baseline 510)
+tests/ambient-voice-session.test.tsx: 618 exceeds hard budget 550
+tests/artifact-tab.test.ts: 120 exceeds ratchet 113 (baseline 102)
+tests/browser-voice-capture.test.ts: missing baseline; run bun run size:register
+tests/butler-role-routing.test.ts: 78 exceeds ratchet 71 (baseline 64)
+tests/conversation-audit-ipc.test.ts: missing baseline; run bun run size:register
+tests/provider-unit-asr.test.tsx: missing baseline; run bun run size:register
+tests/provider-unit-test-page.test.tsx: missing baseline; run bun run size:register
+tests/provider-unit-tts.test.tsx: missing baseline; run bun run size:register
+tests/qwen-realtime-asr-ipc.test.ts: missing baseline; run bun run size:register
+tests/settings-review.test.ts: 183 exceeds ratchet 170 (baseline 154)
+tests/source-website-loading.test.tsx: missing baseline; run bun run size:register
+src-tauri/src/persistence/audit/voice_frontend_observer.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/generation.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/tests.d/01.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/tests.d/02.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/voice_progress.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/world_body.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/world_claim_tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/world_eval_fixture.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/world_eval_tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/chat_completions/world_trim.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/audio.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/butler_route_tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/decision.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/frontdesk_decision.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/frontdesk_echo.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/frontdesk_repository_tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/frontdesk_repository.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/frontdesk.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/mod.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/profile.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/response.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/speech_priority.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/larm_voice/world_tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/providers/stream/larm_voice.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/role_routing/speech_queue.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/role_routing/speech_repository.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/butler_loop/action.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/butler_loop/command.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/butler_loop/ledger.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/butler_loop/mod.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/butler_loop/tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/context/world/shadow_boundary_tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/context/world/turn_tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_codex_dispatch.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_context.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_controller/classifier.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_controller/mod.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_controller/payload.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_controller/tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_controller/world_eval_tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_inputs_roles.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_inputs_roles/role_dispatch.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_inputs_roles/tests.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_inputs.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_prepare.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_provider_route.d/01.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_provider_route.d/02.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_provider_route.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_recovery.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_role_codex_prompt.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_role_codex.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_role_steps.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_state_answer.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_state_card.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_stream.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/conversation_turn.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/reasoning_ack.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/role_step_sink.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/voice_frontend.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/voice_response_state.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/runtime/voice_response.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/http_audio/playback_started.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/http_audio/playback_vpio.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/http_audio/playback.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/session.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/session/asr_routes.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/session/asr.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/session/tts_policy.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/session/tts.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_asr/batch_runtime.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_asr/commands.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_asr/manager.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_asr/route.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_asr/session.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_tts.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_tts/fallback.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_tts/runtime.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_tts/runtime/render_session_inner.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/voice/streaming_tts/runtime/streaming_speech_runtime.rs: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/chat/ChatPage.tsx: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/chat/chatPageTypes.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/chat/conversationTurnControls.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/chat/requiredContextRecovery.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/chat/useConversationTurn.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/chat/useWorldScope.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/chat/WorldScopeSelector.tsx: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/voice/ambientVoiceCapture.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/voice/ambientVoiceCaptureActions.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/voice/ambientVoiceCaptureContext.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/voice/ambientVoiceTypes.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/voice/useAmbientVoiceSession.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/voice/useLarmVoiceLifetime.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/voice/voiceAudit.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/voice/VoiceCaptureResources.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/features/voice/voiceFinalDeliveryQueue.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/lib/larmVoiceDrain.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/lib/larmVoiceOwner.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/lib/larmVoiceRuntime.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/lib/lfmConversationRuntime.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/lib/reasoningRun.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/lib/reasoningRunControl.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src/lib/voiceAsrRuntime.ts: stale baseline; review deletion or transfer its baseline when moving a file
+src-tauri/src/persistence/settings.rs: forbidden include!("….d/…") split; convert to a real submodule
+src-tauri/src/providers/agent_session/sse.rs: forbidden include!("….d/…") split; convert to a real submodule
+error: script "size:check" exited with code 1

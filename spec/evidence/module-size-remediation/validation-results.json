@@ -1,0 +1,507 @@
+{
+  "rustTargeted": [
+    {
+      "filter": "artifact_preview::webview_ops",
+      "exitCode": 0,
+      "results": [
+        "ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1731 filtered out; finished in 0.00s"
+      ],
+      "failures": [],
+      "logSha256": "aa2aeacc4bc6fdc7397bda56204ce25741b02b59ede0ce23fa30caa0f6269705",
+      "testResults": [
+        "ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1731 filtered out; finished in 0.00s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "voice::cloud_asr",
+      "exitCode": 0,
+      "results": [
+        "ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1726 filtered out; finished in 0.01s"
+      ],
+      "failures": [],
+      "logSha256": "98814e0dc454e7a09be1d01413924b9c033d1e4871a638b853140e32518343a2",
+      "testResults": [
+        "ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1726 filtered out; finished in 0.01s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "voice::audio_backend",
+      "exitCode": 0,
+      "results": [
+        "ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1722 filtered out; finished in 3.84s"
+      ],
+      "failures": [],
+      "logSha256": "1b3b3ccef710d50e4b8e8e341c7b83e78e7934d4253c6090fa569c8d51fb18a1",
+      "testResults": [
+        "ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1722 filtered out; finished in 3.84s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "providers::dynamic_lan",
+      "exitCode": 101,
+      "results": [
+        "FAILED. 46 passed; 1 failed; 1 ignored; 0 measured; 1685 filtered out; finished in 4.23s"
+      ],
+      "failures": [
+        "providers::dynamic_lan::tests::wr_t13_real_allocation_refreshes_source_frame_and_releases"
+      ],
+      "logSha256": "679e6f9cb083311097068b6f17c553b097bc59f044ffd84bfddd2ff2ef77b929",
+      "testResults": [
+        "FAILED. 46 passed; 1 failed; 1 ignored; 0 measured; 1685 filtered out; finished in 4.23s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "providers::http::",
+      "exitCode": 0,
+      "results": [
+        "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1732 filtered out; finished in 0.01s"
+      ],
+      "failures": [],
+      "logSha256": "2e57a6eb41fa3b1c5ae35bdcd11ea6cd7c8673aaa9bb2026e6058a9a3401beb7",
+      "testResults": [
+        "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1732 filtered out; finished in 0.01s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "providers::service_harness::",
+      "exitCode": 0,
+      "results": [
+        "ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1726 filtered out; finished in 0.01s"
+      ],
+      "failures": [],
+      "logSha256": "e4b7961e453c4d5370a7ecebef1bec23ca0b0edea0d15fd45e2e02efb24bd722",
+      "testResults": [
+        "ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1726 filtered out; finished in 0.01s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "diagnosis::",
+      "exitCode": 0,
+      "results": [
+        "ok. 31 passed; 0 failed; 0 ignored; 0 measured; 1702 filtered out; finished in 2.06s"
+      ],
+      "failures": [],
+      "logSha256": "791d0137167f38fce17983bada2d7f63016a54f8dcc4877b77b566de2557b335",
+      "testResults": [
+        "ok. 31 passed; 0 failed; 0 ignored; 0 measured; 1702 filtered out; finished in 2.06s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "providers::agent_session::sse::",
+      "exitCode": 0,
+      "results": [
+        "ok. 20 passed; 0 failed; 1 ignored; 0 measured; 1712 filtered out; finished in 2.01s"
+      ],
+      "failures": [],
+      "logSha256": "48be05c1ed11258ff08d35b968f2f2d66f3a1b0edc29a8aaa93e34a5b7ee4456",
+      "testResults": [
+        "ok. 20 passed; 0 failed; 1 ignored; 0 measured; 1712 filtered out; finished in 2.01s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "persistence::settings::",
+      "exitCode": 0,
+      "results": [
+        "ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1714 filtered out; finished in 0.31s"
+      ],
+      "failures": [],
+      "logSha256": "00e7fc4ec7db19f2e973730b9152b97f160e6dbab0dce165d2a65b6456f353f6",
+      "testResults": [
+        "ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1714 filtered out; finished in 0.31s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "persistence::settings_migration::",
+      "exitCode": 0,
+      "results": [
+        "ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1722 filtered out; finished in 0.10s"
+      ],
+      "failures": [],
+      "logSha256": "193141e89ba6a70bb7b48bc69776158c384844314f067b2f8f934412c26b9596",
+      "testResults": [
+        "ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1722 filtered out; finished in 0.10s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "role_routing::frontend::",
+      "exitCode": 0,
+      "results": [
+        "ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1727 filtered out; finished in 0.00s"
+      ],
+      "failures": [],
+      "logSha256": "f5a6915e90b6336acf4577a3ac35def4c9dbafc8e6bccd033d14b025d99f3fe7",
+      "testResults": [
+        "ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1727 filtered out; finished in 0.00s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "runtime::web_fetch::",
+      "exitCode": 0,
+      "results": [
+        "ok. 55 passed; 0 failed; 2 ignored; 0 measured; 1676 filtered out; finished in 0.16s"
+      ],
+      "failures": [],
+      "logSha256": "051f30898a86e6090d490ed0a31bc938357b961be8703d4d68c8fd352d408829",
+      "testResults": [
+        "ok. 55 passed; 0 failed; 2 ignored; 0 measured; 1676 filtered out; finished in 0.16s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "filter": "memory::personal_state::retrospective::",
+      "exitCode": 0,
+      "results": [
+        "ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1720 filtered out; finished in 1.31s"
+      ],
+      "failures": [],
+      "logSha256": "0106d906801351c648cba250c0131ccd1e94f15f69cdf7591d932adff165c7f6",
+      "testResults": [
+        "ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1720 filtered out; finished in 1.31s"
+      ],
+      "frontendResults": []
+    }
+  ],
+  "frontend": [
+    {
+      "test": "tests/module-size.test.ts",
+      "exitCode": 0,
+      "logSha256": "93a5710ee7ffe1d103c71416bea18cdfb085bcc942579dac00e3e017c030bf4c",
+      "testResults": [],
+      "frontendResults": [
+        "7 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/ambient-barge-in.test.ts",
+      "exitCode": 0,
+      "logSha256": "ad46613ad3d53c8eccf3fca58ef8e5e90de7d1bf65bcf76d4526369144836bd9",
+      "testResults": [],
+      "frontendResults": [
+        "1 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/ambient-native-voice-capture.test.ts",
+      "exitCode": 0,
+      "sharedInvocation": true,
+      "logSha256": "532dca3ee1914baf0cdbc610d7bc639605ee6489d3a346796129d374cd5dc6cc",
+      "testResults": [],
+      "frontendResults": [
+        "5 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/native-voice-capture-monitor.test.ts",
+      "exitCode": 0,
+      "sharedInvocation": true,
+      "logSha256": "532dca3ee1914baf0cdbc610d7bc639605ee6489d3a346796129d374cd5dc6cc",
+      "testResults": [],
+      "frontendResults": [
+        "5 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/ambient-voice-session.test.tsx",
+      "exitCode": 1,
+      "logSha256": "91013f54fc45f90ca7f2df8e39e635fdd54886f5801e148f543bad9e15f5bab0",
+      "testResults": [],
+      "frontendResults": [
+        "0 pass",
+        "1 fail"
+      ]
+    },
+    {
+      "test": "tests/ambient-voice-session-failure.test.tsx",
+      "exitCode": 1,
+      "logSha256": "6ea508e20b7e30f86ea5607b8ff84f12c2565cc3cf71a7aa2c6adda21d5f43e8",
+      "testResults": [],
+      "frontendResults": [
+        "0 pass",
+        "1 fail"
+      ]
+    },
+    {
+      "test": "tests/audio-backend.test.ts",
+      "exitCode": 0,
+      "logSha256": "75b9a4ab499293ac8661aa4cb0336ebf57c1431ebe78024a51b658401b7b902a",
+      "testResults": [],
+      "frontendResults": [
+        "1 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/artifact-tab.test.ts",
+      "exitCode": 0,
+      "logSha256": "2bf9b573ba33776a16d1c565cd20f4bf421bf5227aa51fa45009402dbf9aca7e",
+      "testResults": [],
+      "frontendResults": [
+        "3 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/artifact-webview-command.test.ts",
+      "exitCode": 0,
+      "logSha256": "320fe7db6807e4183a96004c4a2153be1a2506db665aba99191c7884e6cdd327",
+      "testResults": [],
+      "frontendResults": [
+        "1 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/artifact-workspace.test.tsx",
+      "exitCode": 0,
+      "logSha256": "f83971c214e515df2578a5f9d7e713e53a3edf092d257055a4d4a27b079b5453",
+      "testResults": [],
+      "frontendResults": [
+        "6 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/source-website-loading.test.tsx",
+      "exitCode": 0,
+      "logSha256": "1d64562113fd12e82a15a1e377a8f59494de471587ad3112634b2bd66610c1b8",
+      "testResults": [],
+      "frontendResults": [
+        "7 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/butler-role-routing.test.ts",
+      "exitCode": 0,
+      "logSha256": "0ba0c2a04d0bca4ab07909a8b8c79c1ed22e56a01f2be51914e4d84f1dd7d529",
+      "testResults": [],
+      "frontendResults": [
+        "2 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/butler-legacy-actor.test.ts",
+      "exitCode": 0,
+      "logSha256": "8d392c54008e0aeccd7bc987509d4396908c9040a9a08d23d7ff719f9d6decff",
+      "testResults": [],
+      "frontendResults": [
+        "1 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/settings-review.test.ts",
+      "exitCode": 0,
+      "logSha256": "43e42c3d90765e747c300a547d78c41ff38ea64fa7475e02beb0f00d3ce24cf7",
+      "testResults": [],
+      "frontendResults": [
+        "5 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/http-audio-provider-settings.test.ts",
+      "exitCode": 0,
+      "logSha256": "794d9fadc1e288052fd6d57cd2fcf22f7c932e1af98a9be7b31ef41649dde207",
+      "testResults": [],
+      "frontendResults": [
+        "2 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/conversation-context-report.test.ts",
+      "exitCode": 0,
+      "sharedInvocation": true,
+      "logSha256": "8243dc58e1d9e60af115214133e682fef37b5bfb86b042939242e85a4b5f1bd7",
+      "testResults": [],
+      "frontendResults": [
+        "3 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/conversation-context-report-input.test.ts",
+      "exitCode": 0,
+      "sharedInvocation": true,
+      "logSha256": "8243dc58e1d9e60af115214133e682fef37b5bfb86b042939242e85a4b5f1bd7",
+      "testResults": [],
+      "frontendResults": [
+        "3 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/i18n.test.ts",
+      "exitCode": 0,
+      "logSha256": "b625c0a20456ab5c51e0cd560d314a374ec3ca9afca89bce038a662002cd064c",
+      "testResults": [],
+      "frontendResults": [
+        "4 pass",
+        "0 fail"
+      ]
+    },
+    {
+      "test": "tests/conversation-asr-continuous.test.ts",
+      "exitCode": 0,
+      "logSha256": "2c6c2b6939ab7280a54fe6cb4904779bdaf3e80cc894664021aac7bf69ad2414",
+      "testResults": [],
+      "frontendResults": [
+        "17 pass",
+        "0 fail"
+      ]
+    }
+  ],
+  "otherChecks": [
+    {
+      "name": "queueAndTts",
+      "exitCode": 0,
+      "logSha256": "df7585fe5b00664b5881a8482a2d659c71a8cdd866a9c80c3ee42357c5ca7cb2",
+      "testResults": [
+        "ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 12.91s",
+        "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s",
+        "ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "name": "maintenanceContract",
+      "exitCode": 0,
+      "logSha256": "95bb6af3296379ad9f98d040901aa851e24e9a478a8b99aa1fdca5f44d2d010d",
+      "testResults": [
+        "ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "name": "ipcBindings",
+      "exitCode": 0,
+      "logSha256": "d9850ba283aa8cfa3c5d98443dc47c5db907de5551ebb9051eaed75e2751a1f5",
+      "testResults": [
+        "ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "name": "typecheck",
+      "exitCode": 0,
+      "logSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "testResults": [],
+      "frontendResults": []
+    },
+    {
+      "name": "fullCheck",
+      "exitCode": 101,
+      "logSha256": "07d6ccf5cac3eeb3b0fc9610642b25cc8d5a3c9e1d2777822848d622fd13f9ff",
+      "testResults": [
+        "ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+        "ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1733 filtered out; finished in 0.11s"
+      ],
+      "frontendResults": []
+    },
+    {
+      "name": "globalClippy",
+      "exitCode": 1,
+      "logSha256": "dbab57e78c2ce5076a53fececd557c396fb6d49bde9e6425093fac970458fb6b",
+      "testResults": [],
+      "frontendResults": []
+    },
+    {
+      "name": "globalRustFormat",
+      "exitCode": 1,
+      "logSha256": "937259ad18e51eb63edf74c0e37f83afa0d57bcaf7c443728b40855b58c96b19",
+      "testResults": [],
+      "frontendResults": []
+    },
+    {
+      "name": "changedFrontendLint",
+      "exitCode": 0,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "testResults": [],
+      "frontendResults": []
+    },
+    {
+      "name": "diffCheck",
+      "exitCode": 0,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "testResults": [],
+      "frontendResults": []
+    }
+  ],
+  "desktopSmoke": {
+    "status": "ready",
+    "stage": "cleanup",
+    "durationMs": 153391,
+    "stages": [
+      {
+        "stage": "build",
+        "durationMs": 148212,
+        "exitCode": 0
+      },
+      {
+        "stage": "bundle",
+        "durationMs": 852
+      },
+      {
+        "stage": "launch",
+        "durationMs": 2
+      },
+      {
+        "stage": "ready",
+        "durationMs": 4276
+      },
+      {
+        "stage": "cleanup",
+        "durationMs": 49
+      }
+    ],
+    "checks": {
+      "databaseInitialized": true,
+      "frontendRendered": true,
+      "ipcReady": true,
+      "primaryConversationLoaded": true,
+      "situationSampled": true,
+      "snapshotLoaded": true,
+      "speakerRuntimeAvailable": true
+    }
+  },
+  "fullRustAttempt": {
+    "status": "terminated-after-stall",
+    "reason": "legacy fallback test was waiting for a request that its removed runtime never sends",
+    "observedFailures": 36,
+    "logSha256": "81dab4fe18202c3f96271e93e6ddc3d97cd970c24f05105488aa659494d618dd"
+  },
+  "contextCompile": {
+    "current": 1,
+    "cumulative": 6
+  },
+  "compileEval": {
+    "current": 1,
+    "cumulative": 6
+  }
+}

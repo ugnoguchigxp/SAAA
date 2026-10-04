@@ -9,6 +9,7 @@ pub(crate) enum FinalWireSize {
     RequiredContextOverflow,
     RequestTooLarge,
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Classify the exact serialized provider body. Once the body contains a required item, crossing
 /// the conservative input allotment is a safe dispatch refusal, never permission to omit it.
 pub(crate) fn final_wire_size(payload_bytes: usize, has_required_context: bool) -> FinalWireSize {
@@ -31,6 +32,7 @@ impl GenerationHandle {
     /// Completes the immutable, digest-only receipt before the dispatch CAS. The
     /// request digest was captured from the final serialized provider body in
     /// `begin`; this call binds that body to the exact required candidate set.
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn set_required_receipt(&self, required_set_digest: &str) -> Result<(), String> {
         if required_set_digest.len() != 64
             || !required_set_digest
@@ -116,6 +118,7 @@ impl GenerationHandle {
         &self.id
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn writer_record(
         &self,
         model: Option<&str>,
@@ -147,6 +150,7 @@ impl GenerationHandle {
         })
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn dispatch(&self) -> Result<(), String> {
         self.dispatch_checked(|_| Ok(()))
     }
@@ -179,11 +183,13 @@ impl GenerationHandle {
     /// Re-check host-owned dependencies before starting an irreversible Tool action. A completed
     /// provider response is not authorization to act when a correction, forget, or withdrawal
     /// arrived while that response was in flight.
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn revalidate_dependencies(&self) -> Result<(), String> {
         self.writer
             .write(|connection| validate_dependencies(connection, &self.id))
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn complete(&self) -> Result<(), String> {
         self.finish("completed", None)
     }
@@ -199,6 +205,7 @@ impl GenerationHandle {
         self.finish("failed", Some(failure_kind))
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn cancel(&self) -> Result<(), String> {
         self.finish("cancelled", Some("cancelled"))
     }
@@ -322,6 +329,7 @@ pub(crate) struct BeginGeneration<'a> {
     pub(crate) envelope_payload: &'a [u8],
     pub(crate) current_instruction_count: usize,
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Creates a manifest before network dispatch. Only digests and source identity are persisted.
 pub(crate) fn begin(
     state: &AppState,
@@ -336,6 +344,7 @@ pub(crate) fn begin_with_writer(
     begin_with_writer_current(writer, input, None)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn begin_with_current_instruction(
     state: &AppState,
     input: BeginGeneration<'_>,
@@ -520,6 +529,7 @@ pub(crate) fn begin_direct_dispatched(
     generation.dispatch()?;
     Ok(generation)
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn record_red(state: &AppState, run_id: &str, reason: &str) {
     if let Ok(generation) = begin(
         state,
@@ -537,6 +547,7 @@ pub(crate) fn record_red(state: &AppState, run_id: &str, reason: &str) {
         let _ = generation.fail(reason);
     }
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn finish_result<T>(
     generation: &GenerationHandle,
     result: &Result<T, String>,

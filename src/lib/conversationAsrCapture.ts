@@ -1,3 +1,8 @@
+import { queueRecognizedDelivery } from "./conversationAsrDelivery";
+export {
+  failConversationAsrDelivery,
+  retryConversationAsrDelivery,
+} from "./conversationAsrDelivery";
 import { stageAudioUpload } from "./audioIpc";
 import { acquireAudioCapture } from "./audioCaptureCoordinator";
 import {
@@ -42,6 +47,7 @@ type RecognitionJob = {
 };
 
 let capture: BrowserVoiceCapture | null = null;
+let startCompletion: Promise<void> = Promise.resolve();
 let captureAecActive = false;
 let nativePlaybackActive = false;
 let playbackActive = false;
@@ -168,34 +174,7 @@ function onQwenAsrEvent(event: QwenRealtimeAsrEvent) {
 }
 
 export function queueConversationAsrDelivery(id: string): boolean {
-  const entry = state.entries.find((candidate) => candidate.id === id);
-  if (!entry || entry.status !== "completed" || !entry.text?.trim() || entry.deliveryQueued)
-    return false;
-  updateEntry(id, { deliveryQueued: true });
-  auditCapture("conversation-asr-delivery-queued", "decision", id, {
-    textBytes: entry.text.length,
-  });
-  return true;
-}
-
-export function failConversationAsrDelivery(id: string, error: string) {
-  const entry = state.entries.find((candidate) => candidate.id === id);
-  if (entry?.deliveryQueued && entry.provider)
-    updateEntry(id, { status: "failed", deliveryQueued: false, error });
-}
-
-export function retryConversationAsrDelivery(id: string): string | null {
-  const entry = state.entries.find((candidate) => candidate.id === id);
-  if (
-    !entry ||
-    entry.status !== "failed" ||
-    !entry.provider ||
-    !entry.text?.trim() ||
-    entry.deliveryQueued
-  )
-    return null;
-  updateEntry(id, { status: "completed", deliveryQueued: true, error: null });
-  return entry.text;
+  return queueRecognizedDelivery(id, auditCapture);
 }
 
 function newDetector() {
@@ -470,13 +449,28 @@ export function setConversationAsrPlaybackActive(active: boolean, inputId?: stri
   });
 }
 
-export async function startConversationAsr(
+export function startConversationAsr(
+  inputDeviceId: string,
+  echoCancellation: boolean,
+  vadSensitivity: "low" | "medium" | "high" = "medium",
+  configuredSilenceTimeoutMs = 1_500,
+): Promise<void> {
+  if (state.phase !== "idle") return startCompletion;
+  startCompletion = startCapture(
+    inputDeviceId,
+    echoCancellation,
+    vadSensitivity,
+    configuredSilenceTimeoutMs,
+  );
+  return startCompletion;
+}
+
+async function startCapture(
   inputDeviceId: string,
   echoCancellation: boolean,
   vadSensitivity: "low" | "medium" | "high" = "medium",
   configuredSilenceTimeoutMs = 1_500,
 ) {
-  if (state.phase !== "idle") return;
   const sessionId = crypto.randomUUID();
   captureSessionId = sessionId;
   auditCapture("conversation-asr-capture-start", "request", captureSessionId, {
@@ -591,8 +585,15 @@ export async function startConversationAsr(
       "success",
     );
   } catch (cause) {
+    let cleanupError: string | null = null;
     if (activeTransport === "qwen-realtime" && captureSessionId)
-      await stopQwenAsrSession(captureSessionId).catch(() => undefined);
+      await stopQwenAsrSession(captureSessionId).catch((error) => {
+        cleanupError = String(error);
+      });
+    else
+      await releaseConversationAsrSession().catch((error) => {
+        cleanupError = String(error);
+      });
     packetizer?.reset();
     packetizer = null;
     activeTransport = "http";
@@ -600,8 +601,8 @@ export async function startConversationAsr(
     nativePlaybackActive = false;
     clearPreroll();
     clearUtterance();
-    const error = microphoneErrorMessage(cause);
-    publish({ phase: "idle", error });
+    const error = [microphoneErrorMessage(cause), cleanupError].filter(Boolean).join(" · ");
+    publish(conversationAsrSnapshot().phase === "stopping" ? { error } : { phase: "idle", error });
     auditCapture("conversation-asr-capture-start", "error", captureSessionId, { error }, "failure");
   }
 }
@@ -612,6 +613,8 @@ export async function stopConversationAsr(reason?: string) {
     reason: reason ?? "user",
   });
   publish({ phase: "stopping" });
+  // Retire startup resources before allowing a replacement capture to begin.
+  await startCompletion;
   const current = capture;
   capture = null;
   captureAecActive = false;

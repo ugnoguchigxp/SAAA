@@ -12,18 +12,25 @@ mod tick;
 use crate::persistence::{SqliteReaders, SqliteWriter};
 #[cfg(test)]
 pub(super) use classifier::classify;
-use classifier::{classify_with_parameters, shadow_policy, Hysteresis};
+#[cfg(any(test, feature = "offline-contracts"))]
+use classifier::Hysteresis;
+use classifier::{classify_with_parameters, shadow_policy};
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) use contracts::{
-    initial_decision, initial_signals, initial_state, AudioSignal, AudioState, CalendarSignal,
-    CalendarState, CalibrationParameters, ConversationSignal, ConversationState,
+    initial_decision, initial_signals, initial_state, CalendarState, CalibrationParameters,
     ForegroundCategory, ForegroundSignal, InputActivitySignal, InputActivityState,
-    MicrophoneSignal, MicrophoneState, OwnedSignalInput, QualityWindowCounters, ShadowDecision,
-    SignalHealth, SignalHealthEntry, SignalSnapshot, SituationEvent, SituationLedgerEntry,
-    SituationRuntimeFailure, SituationRuntimeSettings, SituationSnapshot, SituationState,
-    TimeBucket,
+    OwnedSignalInput, SignalHealthEntry, SituationRuntimeSettings, TimeBucket,
 };
+pub(super) use contracts::{
+    AudioSignal, AudioState, CalendarSignal, ConversationSignal, ConversationState,
+    MicrophoneSignal, MicrophoneState, QualityWindowCounters, ShadowDecision, SignalHealth,
+    SignalSnapshot, SituationEvent, SituationLedgerEntry, SituationRuntimeFailure,
+    SituationSnapshot, SituationState,
+};
+#[cfg(any(test, feature = "offline-contracts"))]
 use rusqlite::Connection;
 pub(crate) use speech::{apply_tts_hold, speech_holds_runtime, speech_holds_tts};
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     collections::VecDeque,
     sync::{
@@ -32,6 +39,7 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(any(test, feature = "offline-contracts"))]
 use tokio::sync::Notify;
 mod situation_runtime;
 use situation_runtime::accumulate_quality;

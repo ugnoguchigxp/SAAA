@@ -64,28 +64,15 @@ describe("target-speaker voice profile", () => {
   });
 
   test("keeps listening active while serializing ASR and LLM work", async () => {
-    const modules = [
-      "useAmbientVoiceSession.ts",
-      "ambientVoiceCaptureActions.ts",
-      "ambientVoiceCapture.ts",
-      "voiceAsrPacketSender.ts",
-    ];
-    const app = (
-      await Promise.all(
-        modules.map((file) =>
-          readFile(new URL(`../src/features/voice/${file}`, import.meta.url), "utf8"),
-        ),
-      )
-    ).join("\n");
-    expect(app).toContain("finishVoiceCapture(true, reason)");
-    expect(app).toContain("const commit = sender.enqueueCommit(reason)");
-    expect(app).toContain("await commit");
-    expect(app).toContain("new VoiceAsrPacketSender");
-    expect(app).toContain("voiceFinalDeliveryRef.current.push");
-    expect(app).toContain("void submitPrompt(queued.text");
-    expect(app).toContain("pendingVoiceDeliveriesRef.current > 0");
-    expect(app).not.toContain("receiveLfmUtterance");
-    expect(app).toContain("suspendVoiceForSpeech");
-    expect(app).toContain("voiceAsrPacketizerRef.current.flushPadded()");
+    const app = await readFile(
+      new URL("../src/lib/conversationAsrCapture.ts", import.meta.url),
+      "utf8",
+    );
+    expect(app).toContain("new VoiceAsrPacketizer");
+    expect(app).toContain("flushPadded()");
+    expect(app).toContain("queueConversationAsrDelivery");
+    expect(app).toContain("await audioSendTail");
+    expect(app).toContain("await Promise.all([finalCompletion, partialCompletion])");
+    expect(app).not.toContain("suspendVoiceForSpeech");
   });
 });

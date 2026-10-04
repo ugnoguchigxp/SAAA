@@ -6,9 +6,11 @@ use zeroize::Zeroizing;
 
 mod discovery;
 mod runtime;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use discovery::base_url_from_host;
 #[cfg(test)]
 use discovery::{resolve_at, validate_base_url};
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use runtime::NetworkAsrRuntime;
 
 pub const PROVIDER_ID: &str = "network-asr";

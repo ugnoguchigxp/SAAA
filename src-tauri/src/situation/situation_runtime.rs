@@ -1,18 +1,33 @@
 #[cfg(test)]
 use super::classifier::classify;
-use super::classifier::{classify_with_parameters, shadow_policy, Hysteresis};
+use super::classifier::Hysteresis;
+#[cfg(any(test, feature = "offline-contracts"))]
+use super::classifier::{classify_with_parameters, shadow_policy};
 use super::contracts::{
-    initial_decision, initial_signals, initial_state, AudioSignal, AudioState, CalendarSignal,
-    CalendarState, CalibrationParameters, ConversationSignal, ConversationState,
-    ForegroundCategory, ForegroundSignal, InputActivitySignal, InputActivityState,
-    MicrophoneSignal, MicrophoneState, OwnedSignalInput, QualityWindowCounters, ShadowDecision,
-    SignalHealth, SignalHealthEntry, SignalSnapshot, SituationEvent, SituationLedgerEntry,
-    SituationRuntimeFailure, SituationRuntimeSettings, SituationSnapshot, SituationState,
-    TimeBucket,
+    initial_decision, initial_signals, initial_state, AudioState, CalendarSignal, CalendarState,
+    CalibrationParameters, ConversationState, ForegroundCategory, ForegroundSignal,
+    InputActivitySignal, InputActivityState, MicrophoneState, OwnedSignalInput,
+    QualityWindowCounters, ShadowDecision, SignalHealth, SignalHealthEntry, SignalSnapshot,
+    SituationEvent, SituationLedgerEntry, SituationRuntimeFailure, SituationRuntimeSettings,
+    SituationState, TimeBucket,
 };
+#[cfg(any(test, feature = "offline-contracts"))]
+use super::contracts::{AudioSignal, ConversationSignal, MicrophoneSignal, SituationSnapshot};
 use super::*;
-use crate::persistence::{SqliteReaders, SqliteWriter};
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::persistence::SqliteReaders;
+use crate::persistence::SqliteWriter;
 use rusqlite::Connection;
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+    time::Duration,
+};
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     collections::VecDeque,
     sync::{

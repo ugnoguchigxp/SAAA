@@ -1,6 +1,8 @@
+use super::selection_mode::{FeedbackKind, InputKind, ObjectType, Operation, Phase};
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::selection_mode::{
-    FeedbackKind, InputKind, ObjectType, Operation, Phase, ToolSelectionError,
-    ToolSelectionErrorCode, ToolSelectionResult, RULE_CORRECTION_CLAMP, RULE_STRENGTH,
+    ToolSelectionError, ToolSelectionErrorCode, ToolSelectionResult, RULE_CORRECTION_CLAMP,
+    RULE_STRENGTH,
 };
 use super::*;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

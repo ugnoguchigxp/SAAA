@@ -1,5 +1,8 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::sync::Arc;
+#[cfg(any(test, feature = "offline-contracts"))]
 /// A cancelled caller leaves the creation worker responsible for the late id.
 pub(super) async fn create_owned(
     client: Client,

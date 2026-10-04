@@ -1,8 +1,13 @@
+#![cfg(any(test, feature = "offline-contracts"))]
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::reconciler::{comparable_transcript, reconcile, ComparableTranscript};
 use std::collections::VecDeque;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) const BATCH_MIN_SAMPLES: u64 = 28_800; // 1,800ms @ 16k
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) const BATCH_HOP_SAMPLES: u64 = 9_600; // 600ms @ 16k
+#[cfg(any(test, feature = "offline-contracts"))]
 const HYPOTHESIS_CAPACITY: usize = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DecodeKind {
@@ -42,6 +47,7 @@ impl Default for BatchEngine {
     }
 }
 impl BatchEngine {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn on_audio(&mut self, utterance_end: u64) -> Option<DecodeRequest> {
         if utterance_end < self.next_partial_at {
             return None;
@@ -55,6 +61,7 @@ impl BatchEngine {
         }
         self.start(DecodeKind::Partial, utterance_end)
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn on_partial_complete(
         &mut self,
         end_sample: u64,
@@ -69,6 +76,7 @@ impl BatchEngine {
         });
         (projection, next)
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn on_partial_failed(&mut self, end_sample: u64) -> Option<DecodeRequest> {
         self.in_flight = None;
         self.pending_end.take().and_then(|pending| {
@@ -77,6 +85,7 @@ impl BatchEngine {
                 .flatten()
         })
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn commit(&mut self, utterance_end: u64) -> DecodeRequest {
         self.generation += 1;
         self.in_flight = None;
@@ -84,6 +93,7 @@ impl BatchEngine {
         self.start(DecodeKind::Final, utterance_end)
             .expect("final request always starts")
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn start(&mut self, kind: DecodeKind, end_sample: u64) -> Option<DecodeRequest> {
         if end_sample == 0 {
             return None;
@@ -97,6 +107,7 @@ impl BatchEngine {
         self.in_flight = Some(request.clone());
         Some(request)
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn apply_hypothesis(&mut self, text: &str) -> Option<Projection> {
         let latest = comparable_transcript(text);
         let history = self.hypotheses.iter().cloned().collect::<Vec<_>>();

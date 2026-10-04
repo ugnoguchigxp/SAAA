@@ -410,7 +410,7 @@ pub(super) fn normal_turns_reject_legacy_conversation_ids_without_writing_partia
         )
         .expect("run count loads");
 
-    assert!(error.contains("primary conversation"));
+    assert!(error.contains("legacy conversation runtime was removed"));
     assert_eq!(message_count, 0);
     assert_eq!(run_count, 0);
 }
@@ -452,7 +452,7 @@ pub(super) fn task_specific_workspace_validation_precedes_runtime_writes() {
 
     assert!(prepare_runtime_run(&state, &normal)
         .expect_err("normal workspace is rejected")
-        .contains("cannot include a workspace"));
+        .contains("legacy conversation runtime was removed"));
     assert!(prepare_runtime_run(&state, &coding)
         .expect_err("coding workspace is required")
         .contains("Select a workspace"));
@@ -494,7 +494,13 @@ pub(super) fn normal_turns_reject_byte_oversized_context_before_writing_partial_
         presentation_mode: "visual".to_string(),
     };
 
-    let error = prepare_runtime_run(&state, &input).expect_err("oversized turn is rejected");
+    let error = crate::runtime::conversation_check::queue_runtime::enqueue_text(
+        &state,
+        "byte-oversized-context".into(),
+        input.content.clone(),
+    )
+    .err()
+    .expect("oversized turn is rejected");
     let connection = state.sqlite_writer.lock().expect("database lock");
     let message_count: i64 = connection
         .query_row(
@@ -511,7 +517,7 @@ pub(super) fn normal_turns_reject_byte_oversized_context_before_writing_partial_
         )
         .expect("run count loads");
 
-    assert!(error.contains("too large"));
+    assert!(error.contains("4096"));
     assert_eq!(message_count, 0);
     assert_eq!(run_count, 0);
 }

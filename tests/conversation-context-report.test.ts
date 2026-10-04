@@ -49,6 +49,8 @@ test("missing usage is distinct from explicit zero and fallback remains two atte
 });
 
 test("rejects unknown schemas and keeps unreported cache ratios null", () => {
+  for (const raw of ["null", "[]", "2"])
+    expect(() => parseRows(raw)).toThrow("Expected observation objects");
   expect(() => parseRows('{"schemaVersion":2}')).toThrow();
   const [summary] = summarize([{ mode: "legacy", usageStatus: "missing", cacheReadTokens: null }]);
   expect(summary.cacheReadRatio).toBeNull();

@@ -1,3 +1,6 @@
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::time::Instant;
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -6,9 +9,13 @@ use std::{
 use reqwest::Client;
 use tokio::sync::Mutex;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::{base_url_from_host, client, discovery::resolve_at_with_client};
-use crate::{NetworkAsrResolution, RunCancellation};
+use crate::NetworkAsrResolution;
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::RunCancellation;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 const RESOLUTION_TTL: Duration = Duration::from_secs(300);
 
 pub(crate) struct NetworkAsrRuntime {
@@ -24,6 +31,7 @@ struct CachedResolution {
 }
 
 impl NetworkAsrRuntime {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn new() -> Result<Self, String> {
         Ok(Self {
             client: client()?,
@@ -31,6 +39,7 @@ impl NetworkAsrRuntime {
         })
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) async fn resolve(
         &self,
         host: &str,
@@ -39,6 +48,7 @@ impl NetworkAsrRuntime {
         self.resolve_with_policy(host, cancellation, false).await
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     async fn resolve_with_policy(
         &self,
         host: &str,
@@ -80,11 +90,13 @@ impl NetworkAsrRuntime {
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn client(&self) -> &Client {
         &self.client
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn reusable_resolution(
     cached: Option<&CachedResolution>,
     host: &str,

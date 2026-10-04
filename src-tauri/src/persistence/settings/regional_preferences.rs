@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,6 +37,7 @@ pub(super) fn default_value() -> Value {
         .expect("default regional preferences serialize")
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn load(connection: &Connection) -> Result<RegionalPreferences, String> {
     let document = super::read_settings_document(connection, "ui.preferences", "default")?;
     decode(document.value_json)

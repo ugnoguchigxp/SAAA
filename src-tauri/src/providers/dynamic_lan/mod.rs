@@ -1,7 +1,9 @@
 use crate::RunCancellation;
 use reqwest::{header::HeaderValue, Method, StatusCode};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
+#[cfg(any(test, feature = "offline-contracts"))]
+use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use url::Url;
 use uuid::Uuid;
@@ -28,6 +30,8 @@ mod tests {
     mod cold_services;
     include!("tests/fixtures_and_contracts.rs");
     include!("tests/resolution_tests.rs");
-    include!("tests/selector_tests.rs");
+    #[path = "selector_tests.rs"]
+    mod selector_tests;
+    use selector_tests::spawn_json_server;
     include!("tests/lifecycle_tests.rs");
 }

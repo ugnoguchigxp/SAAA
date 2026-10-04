@@ -192,6 +192,7 @@ pub(crate) fn observe_receipt(receipt: &WorldReceipt) -> &'static str {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use super::dispatch::for_record;
 
 #[cfg(test)]

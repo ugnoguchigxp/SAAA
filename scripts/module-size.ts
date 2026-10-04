@@ -180,7 +180,9 @@ export function findForbiddenIncludeDSplits(records: SizeRecord[] = collectSizes
     if (!existsSync(absolute)) continue;
     const content = readFileSync(absolute, "utf8");
     if (isForbiddenIncludeDSplit(record.path, content)) {
-      failures.push(`${record.path}: forbidden include!("….d/…") split; convert to a real submodule`);
+      failures.push(
+        `${record.path}: forbidden include!("….d/…") split; convert to a real submodule`,
+      );
     }
   }
   return failures;

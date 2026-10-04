@@ -10,25 +10,31 @@ mod group_older_history;
 #[path = "context_window/projected_context_message.rs"]
 mod projected_context_message;
 use group_older_history::{
-    database_error, event_ref, group_older_history, project_group, quote_history, render_group,
-    select_continuity_groups, truncate_utf8,
+    database_error, event_ref, group_older_history, quote_history, select_continuity_groups,
 };
+#[cfg(any(test, feature = "offline-contracts"))]
+use group_older_history::{project_group, render_group, truncate_utf8};
 #[cfg(test)]
 pub use projected_context_message::build;
 #[cfg(test)]
 use projected_context_message::build_with_memory;
 pub(crate) use projected_context_message::{
-    compose, is_untrusted_evidence_block, load, validate_current_instruction, LoadedContextWindow,
-    EVIDENCE_ROLE,
+    compose, is_untrusted_evidence_block, load, EVIDENCE_ROLE,
 };
+#[cfg(any(test, feature = "offline-contracts"))]
 use projected_context_message::{
-    render_memory_projection, render_recent_history, render_recent_line, SourceMessage,
-    MAX_CONTINUITY_BYTES, MAX_CONTINUITY_GROUPS, MAX_GROUP_MESSAGES, MAX_GROUP_SOURCE_BYTES,
-    MAX_GROUP_USER_TURNS, MAX_MEMORY_BYTES, MAX_PROJECTED_INPUT_BYTES, MAX_RECENT_BYTES,
-    MAX_RECENT_MESSAGES, MAX_SOURCE_MESSAGES,
+    render_memory_projection, render_recent_history, render_recent_line, MAX_CONTINUITY_BYTES,
+    MAX_MEMORY_BYTES, MAX_PROJECTED_INPUT_BYTES, MAX_RECENT_BYTES, MAX_RECENT_MESSAGES,
+    MAX_SOURCE_MESSAGES,
 };
+#[cfg(any(test, feature = "offline-contracts"))]
+pub(crate) use projected_context_message::{validate_current_instruction, LoadedContextWindow};
 pub use projected_context_message::{
     ContextHealthReport, ContextWindow, ContinuityGroup, ProjectedContextMessage,
+};
+use projected_context_message::{
+    SourceMessage, MAX_CONTINUITY_GROUPS, MAX_GROUP_MESSAGES, MAX_GROUP_SOURCE_BYTES,
+    MAX_GROUP_USER_TURNS,
 };
 #[cfg(test)]
 #[path = "context_window/tests/mod.rs"]

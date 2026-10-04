@@ -64,109 +64,12 @@ pub(crate) async fn run_and_publish(
     report
 }
 
-struct InFlight {
-    app: Option<tauri::AppHandle>,
-    store: std::sync::Arc<super::store::DiagnosisStore>,
-    revision: u64,
-    started_at: String,
-    mode: DiagnosisMode,
-    finished: bool,
-}
-
-impl InFlight {
-    fn start(
-        app: Option<tauri::AppHandle>,
-        store: std::sync::Arc<super::store::DiagnosisStore>,
-        revision: u64,
-        started_at: String,
-        mode: DiagnosisMode,
-    ) -> Self {
-        Self {
-            app,
-            store,
-            revision,
-            started_at,
-            mode,
-            finished: false,
-        }
-    }
-
-    fn progress(&mut self, items: Vec<DiagnosisItem>, app: &tauri::AppHandle) {
-        let mut report = report_from(self.revision, self.started_at.clone(), self.mode, items);
-        report.running = true;
-        report.finished_at = None;
-        report.overall = DiagnosisStatus::Running;
-        self.store.stage(report.clone());
-        let _ = app.emit("diagnosis-updated", &report);
-    }
-
-    fn finish(&mut self, items: Vec<DiagnosisItem>) -> DiagnosisReport {
-        let report = report_from(self.revision, self.started_at.clone(), self.mode, items);
-        self.store.publish(report.clone());
-        self.finished = true;
-        report
-    }
-}
-
-impl Drop for InFlight {
-    fn drop(&mut self) {
-        if self.finished {
-            return;
-        }
-        let report = report_from(
-            self.revision,
-            self.started_at.clone(),
-            self.mode,
-            vec![checks::item(
-                "diagnosis.interrupted",
-                "storage",
-                "Diagnosis interrupted",
-                DiagnosisStatus::Fail,
-                DiagnosisSeverity::Degraded,
-                "診断が中断されました。再診断してください。",
-                None,
-            )],
-        );
-        self.store.publish(report.clone());
-        if let Some(app) = &self.app {
-            let _ = app.emit("diagnosis-updated", &report);
-            eprintln!(
-                "self diagnosis published revision={} overall={}",
-                report.revision,
-                report.overall.as_str()
-            );
-        }
-    }
-}
-
-fn report_from(
-    revision: u64,
-    started_at: String,
-    mode: DiagnosisMode,
-    mut items: Vec<DiagnosisItem>,
-) -> DiagnosisReport {
-    items.push(checks::item(
-        match mode {
-            DiagnosisMode::Fast => "diagnosis.mode.fast",
-            DiagnosisMode::Operational => "diagnosis.mode.operational",
-        },
-        "settings",
-        "Diagnosis mode",
-        DiagnosisStatus::Skipped,
-        DiagnosisSeverity::Info,
-        "",
-        None,
-    ));
-    DiagnosisReport {
-        revision,
-        started_at,
-        finished_at: Some(crate::now_iso()),
-        running: false,
-        overall: overall(&items),
-        items,
-    }
-}
-
+#[path = "runner/in_flight.rs"]
+mod in_flight;
+use in_flight::InFlight;
+#[path = "runner/report.rs"]
+mod report;
+use report::report_from;
 pub(crate) async fn collect(state: &AppState) -> Vec<DiagnosisItem> {
     let mut items = Vec::new();
     stream(state, DiagnosisMode::Operational, |batch| {

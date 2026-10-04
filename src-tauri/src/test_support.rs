@@ -65,3 +65,20 @@ pub(crate) fn default_settings_input() -> Vec<SaveSettingsDocumentInput> {
         )
         .collect()
 }
+
+/// Stage a finalized owner input through the current durable queue, without running a provider.
+pub(crate) fn prepare_user_turn(
+    state: &AppState,
+    input: &crate::StartTurnInput,
+) -> Result<String, String> {
+    let key = input
+        .run_id
+        .strip_prefix("run_")
+        .ok_or("test turn requires canonical run id")?;
+    crate::runtime::conversation_check::queue_runtime::enqueue_text(
+        state,
+        key.into(),
+        input.content.clone(),
+    )?;
+    Ok("conversation".into())
+}

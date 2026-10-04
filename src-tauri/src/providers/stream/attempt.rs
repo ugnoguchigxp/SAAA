@@ -92,6 +92,7 @@ impl ProviderFailureKind {
         BoundedProviderMessage(message)
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn persistence_str(self) -> &'static str {
         match self {
             Self::Connect | Self::ResponseInterrupted => "network",
@@ -106,6 +107,7 @@ pub(crate) struct BoundedProviderMessage(&'static str);
 
 impl BoundedProviderMessage {
     /// Only locally authored static diagnostics; never provider response bodies.
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn from_static_diagnostic(message: &'static str) -> Self {
         Self(message)
     }
@@ -143,6 +145,7 @@ pub(crate) enum ProviderAttemptOutcome {
 }
 
 impl ProviderAttemptOutcome {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn with_cleanup(self, cleanup: CleanupOutcome) -> Self {
         match self {
             Self::Completed { content, .. } => Self::Completed { content, cleanup },
@@ -195,6 +198,7 @@ impl ProviderAttemptError {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn provider_failure_from_dynamic_lan(
     kind: crate::providers::dynamic_lan::ErrorKind,
 ) -> ProviderFailureKind {
@@ -226,6 +230,7 @@ impl ProviderOutputPersistence<'_> {
             .map_err(|_| ProviderAttemptError::failed(ProviderFailureKind::Internal, false))
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn begin_context_generation(
         self,
         run_id: &str,
@@ -249,6 +254,7 @@ impl ProviderOutputPersistence<'_> {
         .map_err(|_| ProviderFailureKind::Internal)
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn begin_context_generation_for_input(
         self,
         run_id: &str,
@@ -274,6 +280,7 @@ impl ProviderOutputPersistence<'_> {
         .map_err(|_| ProviderFailureKind::Internal)
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn record_transport_event(
         self,
         request_id: &str,
@@ -302,6 +309,7 @@ impl ProviderOutputPersistence<'_> {
         });
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn bind_transport(self, allocation_id: Option<&str>) {
         let route_id = if allocation_id.is_some() {
             "allocated-http"

@@ -75,5 +75,4 @@ describe("voice pipeline monitor", () => {
       "role-routing-frontend-binding-mismatch",
     );
   });
-
 });

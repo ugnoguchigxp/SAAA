@@ -130,7 +130,7 @@ pub(super) fn queue_one(state: &AppState, run: &str, content: &str) -> String {
 pub(super) fn source_of(state: &AppState, run: &str) -> String {
     state
         .sqlite_readers
-        .read(|c| -> Result<Option<String>, String> { repo::input_message_id(c, run) })
+        .read(|c| -> Result<Option<String>, String> { repo::input_message_id(c, &format!("run_{run}")) })
         .unwrap()
         .unwrap()
 }

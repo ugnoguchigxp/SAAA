@@ -9,7 +9,10 @@ import {
   localizeUiMessage,
   uiMessage,
 } from "../src/i18n/presentation";
-import { appendConversationActivity, conversationActivityOutcome } from "../src/lib/conversationActivity";
+import {
+  appendConversationActivity,
+  conversationActivityOutcome,
+} from "../src/lib/conversationActivity";
 
 afterEach(() => void i18n.changeLanguage("en"));
 

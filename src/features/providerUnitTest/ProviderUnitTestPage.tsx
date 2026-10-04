@@ -280,7 +280,11 @@ export function ProviderUnitTestPage({
           >
             {busy === selected ? "実行中…" : `${current.label}をテスト`}
           </button>
-          {busy === selected && <p role="status">{progress}（経過 {elapsedSeconds} 秒）</p>}
+          {busy === selected && (
+            <p role="status">
+              {progress}（経過 {elapsedSeconds} 秒）
+            </p>
+          )}
           {errors[selected] && (
             <p className="provider-unit-error" role="alert">
               {errors[selected]}

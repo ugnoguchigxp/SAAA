@@ -18,10 +18,11 @@ mod match_bracket;
 mod raw_hit;
 use match_bracket::{
     assert_not_challenge, attr_value, filter_and_project, find, match_bracket,
-    normalize_result_url, parse_brave_json, parse_ddg_html, parse_ddg_lite, snippet_after,
-    strip_tags, urlencoding_decode,
+    normalize_result_url, parse_brave_json, parse_ddg_html, parse_ddg_lite, strip_tags,
 };
 pub use match_bracket::{is_allowed_result_url, render_compact};
+#[cfg(any(test, feature = "offline-contracts"))]
+use match_bracket::{snippet_after, urlencoding_decode};
 pub use raw_hit::{RawHit, RustSearchProvider, SearchHit, SearchOutcome, SearchProvider};
 use raw_hit::{MAX_CANDIDATES, MAX_RESPONSE_BYTES};
 #[cfg(test)]

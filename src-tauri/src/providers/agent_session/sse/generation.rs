@@ -1,16 +1,21 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::*;
 mod round;
 mod trim;
+#[cfg(any(test, feature = "offline-contracts"))]
 use round::RoundGeneration;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) use trim::trim_optional_history_from_follow_up;
 
 pub(super) struct Envelope(String);
 
 impl Envelope {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(super) fn new(input: &str) -> Self {
         Self(input.to_owned())
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(super) fn begin(
         &self,
         context: &ModelStreamContext<'_>,
@@ -85,6 +90,7 @@ impl Envelope {
         Ok(RoundGeneration(generation))
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(super) fn follow_up(&self, tool_result: &str) -> String {
         json!({
             "type": "saaa.conversation.tool-followup.v1",
@@ -96,6 +102,7 @@ impl Envelope {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn turn_request_body(input: &str) -> Value {
     json!({ "input": [{ "type": "text", "text": input }] })
 }

@@ -2,13 +2,13 @@
 //! G1 integration tests: the fixed graph question reaches one authorized five-element slice and the
 //! C3/C5 boundaries stay explicit. Deterministic fixtures only; no model, network or production DB.
 
+pub(super) use super::compose_test_support::{compose_fixture, ComposedFixture};
 pub(super) use super::question::{parse_graph_question, QuestionParse};
 pub(super) use super::render::parse_rendered_json;
 pub(super) use super::source::{
     prepare_candidate, prepare_explicit_question_candidate, WorldOmission, WorldSourceOutcome,
     WorldSourceRequest, WORLD_KIND,
 };
-pub(super) use super::compose_test_support::{compose_fixture, ComposedFixture};
 pub(super) use crate::memory::context_window::{
     ContextHealthReport, ContextWindow, ProjectedContextMessage,
 };

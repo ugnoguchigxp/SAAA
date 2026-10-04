@@ -60,15 +60,21 @@ mod voice_text;
 #[cfg(test)]
 mod wasm_host_poc;
 mod window_size;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use ipc_contract::RuntimeEvent;
+#[cfg(any(test, feature = "offline-contracts"))]
 use ipc_contract::{ConversationMessage, ConversationMessagePage};
 pub(crate) use models::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 use persistence::list_message_page_from_connection;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use persistence::schema::initialize_database;
 use persistence::{SqliteReaders, SqliteWriter};
+pub(crate) use providers::session_store::persist_conversation_success_with_state;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use providers::session_store::{
     begin_provider_session, finish_dynamic_lan_provider_session, finish_provider_session,
-    persist_conversation_success, persist_conversation_success_with_state,
+    persist_conversation_success,
 };
 pub(crate) use providers::stream::*;
 pub(crate) use redact::{bounded_text, redact_runtime_text};
@@ -87,10 +93,12 @@ use voice_behavior::{
     get_conversation_voice_policy, reset_conversation_voice_policy,
     update_conversation_voice_policy,
 };
+#[cfg(any(test, feature = "offline-contracts"))]
+use voice_commands::stop_tts;
 use voice_commands::{
     delete_voice_enrollment_sample, delete_voice_profile, get_voice_profile_snapshot,
     read_voice_enrollment_sample, save_voice_enrollment_sample, set_target_speaker_filter_enabled,
-    stage_audio_upload, stop_tts,
+    stage_audio_upload,
 };
 mod ipc_receiver_tests;
 mod test_environment;

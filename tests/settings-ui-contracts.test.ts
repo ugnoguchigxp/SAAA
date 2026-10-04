@@ -67,9 +67,7 @@ describe("settings provider UI contracts", () => {
     expect(containsSource(dynamicLan, '.extend(["v1", "agent-connections", id])')).toBe(true);
     expect(containsSource(dynamicLan, '.push("claim")')).toBe(true);
     expect(containsSource(dynamicLan, '"openai-provider-v1"')).toBe(true);
-    expect(containsSource(dynamicLan, "endpoint: descriptor.configuration.fields.base_url")).toBe(
-      true,
-    );
+    expect(containsSource(dynamicLan, "endpoint: descriptor.base_url")).toBe(true);
     expect(containsSource(dynamicLan, 'value == "openai.chat-completions.v1"')).toBe(true);
     expect(containsSource(dynamicLan, 'CredentialLoadError::new("credential_missing")')).toBe(true);
     expect(containsSource(dynamicLan, 'CredentialLoadError::new("credential_conflict")')).toBe(

@@ -1,0 +1,41 @@
+.artifact-source-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 24px;
+  background: #111722;
+}
+.artifact-source-loading-card {
+  width: min(100%, 360px);
+  padding: 24px;
+  border: 1px solid #34404f;
+  border-radius: 12px;
+  background: #171d26;
+  color: #d8e1eb;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.2);
+}
+.artifact-source-loading-card h3 {
+  margin: 0 0 16px;
+  font-size: 1rem;
+}
+.artifact-source-loading-card p {
+  line-height: 1.6;
+}
+.artifact-source-loading-card progress {
+  width: 100%;
+  accent-color: #8ab4f8;
+}
+.artifact-source-loading-card button {
+  padding: 8px 16px;
+  border: 1px solid #587087;
+  border-radius: 8px;
+  background: #202936;
+  color: inherit;
+  cursor: pointer;
+}
+.artifact-source-loading-card button:focus-visible {
+  outline: 2px solid #8ab4f8;
+  outline-offset: 3px;
+}

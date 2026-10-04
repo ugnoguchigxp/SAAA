@@ -8,6 +8,7 @@ const artifactPath = fileURLToPath(new URL("../.s11tnext/catalog.json", import.m
 const artifact: unknown = JSON.parse(await readFile(artifactPath, "utf8"));
 const catalog = createAppCatalog(artifact);
 const contexts = [
+  { key: "conversation.queue", output: ".s11tnext/conversation-queue.txt" },
   { key: "codex.read-only", output: ".s11tnext/codex-read-only.txt" },
   { key: "conversation.respond", output: ".s11tnext/conversation-respond.txt" },
 ] as const;

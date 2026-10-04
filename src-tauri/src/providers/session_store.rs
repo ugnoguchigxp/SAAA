@@ -3,9 +3,9 @@ use std::time::Instant;
 
 use crate::ipc_contract::ConversationMessage;
 use crate::redact::bounded_text;
-use crate::{
-    database_error, new_id, now_iso, AppState, CleanupOutcome, ProviderFailureKind, StartTurnInput,
-};
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::CleanupOutcome;
+use crate::{database_error, new_id, now_iso, AppState, ProviderFailureKind, StartTurnInput};
 
 pub(crate) struct ToolExecutionAudit<'a> {
     state: Option<&'a AppState>,
@@ -18,6 +18,7 @@ pub(crate) struct ToolExecutionAudit<'a> {
 }
 
 impl<'a> ToolExecutionAudit<'a> {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn start(
         context: &crate::ModelStreamContext<'a>,
         call: &crate::runtime::agent_tools::AgentToolCall,
@@ -44,12 +45,14 @@ impl<'a> ToolExecutionAudit<'a> {
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) async fn run(mut self, future: impl std::future::Future<Output = String>) -> String {
         let result = future.await;
         self.record_terminal("success");
         result
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) async fn run_with_outcome(
         mut self,
         future: impl std::future::Future<Output = (String, &'static str)>,
@@ -59,6 +62,7 @@ impl<'a> ToolExecutionAudit<'a> {
         result
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn record_terminal(&mut self, outcome: &str) {
         self.terminal_recorded = true;
         if let (Some(state), Some(session_id)) = (self.state, self.session_id.as_deref()) {
@@ -74,6 +78,7 @@ impl<'a> ToolExecutionAudit<'a> {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn tool_result_outcome(result: &str, outcome: &'static str) -> &'static str {
     if outcome == "success"
         && serde_json::from_str::<serde_json::Value>(result)
@@ -86,6 +91,7 @@ fn tool_result_outcome(result: &str, outcome: &'static str) -> &'static str {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 impl Drop for ToolExecutionAudit<'_> {
     fn drop(&mut self) {
         if !self.terminal_recorded {
@@ -94,6 +100,7 @@ impl Drop for ToolExecutionAudit<'_> {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn begin_provider_session(
     state: &AppState,
     runtime_run_id: &str,
@@ -156,6 +163,7 @@ pub(crate) fn mark_provider_output_started(
     })
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn finish_dynamic_lan_provider_session(
     state: &AppState,
     session_id: &str,
@@ -188,6 +196,7 @@ pub(crate) fn finish_dynamic_lan_provider_session(
     })
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn cleanup_persistence(cleanup: CleanupOutcome) -> (&'static str, Option<&'static str>) {
     match cleanup {
         CleanupOutcome::NotApplicable => ("not-applicable", None),
@@ -199,6 +208,7 @@ pub(crate) fn cleanup_persistence(cleanup: CleanupOutcome) -> (&'static str, Opt
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn finish_provider_session(
     state: &AppState,
     session_id: &str,
@@ -243,6 +253,7 @@ pub(crate) fn fail_running_provider_sessions_for_run(
     })
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn persist_conversation_success(
     state: &AppState,
     input: &StartTurnInput,
@@ -322,6 +333,7 @@ pub(crate) fn persist_conversation_success_with_state(
     })
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Closes a turn whose assistant text is already stored. Used when the receptionist
 /// phrase was committed before the run finished, so it is not inserted a second time.
 pub(crate) fn seal_committed_assistant(

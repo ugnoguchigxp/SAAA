@@ -13,12 +13,15 @@ pub(crate) mod evaluation_pair;
 use crate::adaptive_improvement::{self, Domain};
 #[cfg(test)]
 use crate::initialize_database;
+#[cfg(any(test, feature = "offline-contracts"))]
 use evaluation_pair::digest;
+pub(crate) use evaluation_pair::typescript_bindings;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use evaluation_pair::{
     activate, activate_adaptive_artifact, approve, approve_adaptive_artifact,
     import_adaptive_evaluation, import_bundle, list_adaptive_evaluations, list_views,
-    resource_ratio, typescript_bindings, AdaptiveArtifactAction, AdaptiveEvaluateInput,
-    EvaluationBundle, EvaluationPair, EvaluationView, EVALUATOR_VERSION,
+    resource_ratio, AdaptiveArtifactAction, AdaptiveEvaluateInput, EvaluationBundle,
+    EvaluationPair, EvaluationView, EVALUATOR_VERSION,
 };
 #[cfg(test)]
 #[path = "adaptive_evaluation/tests.rs"]

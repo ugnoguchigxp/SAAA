@@ -6,7 +6,7 @@ pub(crate) fn db() -> Connection {
 }
 pub(crate) fn turn(run_id: &str, content: &str) -> StartTurnInput {
     StartTurnInput {
-        run_id: run_id.into(),
+        run_id: format!("run_{run_id}"),
         conversation_id: PRIMARY_CONVERSATION_ID.into(),
         content: content.into(),
         workspace_path: None,

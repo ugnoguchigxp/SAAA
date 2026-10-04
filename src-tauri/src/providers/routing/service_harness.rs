@@ -1,7 +1,10 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::sync::Arc;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::{ModelProviderSettings, ModelProvidersSettings, RunCancellation};
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn resolve_harness_llm_provider(
     providers: &mut ModelProvidersSettings,
     timeout_ms: u64,
@@ -59,6 +62,7 @@ pub(crate) async fn resolve_harness_llm_provider(
     Ok(effective_timeout_ms)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn replace_harness_provider(
     providers: &mut ModelProvidersSettings,
     resolved: ModelProviderSettings,
@@ -74,6 +78,7 @@ fn replace_harness_provider(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn effective_legacy_dynamic_lan_timeout(timeout_ms: u64) -> u64 {
     // Harness settings may allow a longer modern-provider timeout before the
     // runtime discovers that it must use the shorter-lived legacy connection.

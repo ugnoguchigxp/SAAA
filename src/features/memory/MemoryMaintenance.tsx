@@ -96,16 +96,12 @@ export function MemoryMaintenance({
       {snapshot?.maintenance ? (
         <p role="status">
           {t("memoryPage.maintenanceStatus", {
-            reason: t(
-              `memoryPage.maintenanceReasons.${snapshot.maintenance.reason}`,
-            ),
+            reason: t(`memoryPage.maintenanceReasons.${snapshot.maintenance.reason}`),
           })}
         </p>
       ) : null}
       {snapshot?.maintenance?.work ? (
-        <p role="status">
-          {t("memoryPage.workStatus", snapshot.maintenance.work)}
-        </p>
+        <p role="status">{t("memoryPage.workStatus", snapshot.maintenance.work)}</p>
       ) : null}
     </>
   );

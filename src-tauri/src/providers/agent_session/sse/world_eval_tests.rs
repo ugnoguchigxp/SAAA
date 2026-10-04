@@ -4,7 +4,7 @@ use super::workflow_tests::{request, respond, Sink};
 use super::*;
 use crate::memory::personal_state::world::runtime_test_support::RUN_ID;
 use crate::runtime::context::world::wire_test_support::{Harness, TRANSITIONS};
-use crate::runtime::context::world::{g1_tests as graph, compose_test_support::compose_fixture};
+use crate::runtime::context::world::{compose_test_support::compose_fixture, g1_tests as graph};
 use std::sync::Arc;
 
 fn messages(value: &Value) -> &Vec<Value> {
@@ -191,17 +191,42 @@ async fn agent_cases(modes: std::ops::Range<u8>) {
             // context before I/O. Retry through the supported AgentSession path below.
             let failed = crate::stream_model_provider(
                 &crate::OpenAiCompatibleProviderSettings {
-                    id: "primary".into(), enabled: true, label: "primary".into(), location: "local".into(),
-                    endpoint: "http://127.0.0.1:1/v1".into(), model: "fixture".into(), authentication: "none".into(), request_options: None,
-                }, &history, 5000,
-                ModelStreamContext {
-                    reasoning_effort: "low", max_output_tokens: 256, input: &input,
-                    on_event: &Sink::default(), cancellation: Arc::default(), context_health: "green",
-                    context_sources: &composed.envelope.selected, context_omissions: &composed.envelope.omitted,
-                    output_persistence: Some(crate::ProviderOutputPersistence { state: &state, session_id: &persistence_id, world: composed.world.as_ref() }),
+                    id: "primary".into(),
+                    enabled: true,
+                    label: "primary".into(),
+                    location: "local".into(),
+                    endpoint: "http://127.0.0.1:1/v1".into(),
+                    model: "fixture".into(),
+                    authentication: "none".into(),
+                    request_options: None,
                 },
-            ).await;
-            assert!(matches!(failed, ProviderAttemptOutcome::Failed { kind: crate::providers::stream::ProviderFailureKind::Unavailable, output_started: false, .. }));
+                &history,
+                5000,
+                ModelStreamContext {
+                    reasoning_effort: "low",
+                    max_output_tokens: 256,
+                    input: &input,
+                    on_event: &Sink::default(),
+                    cancellation: Arc::default(),
+                    context_health: "green",
+                    context_sources: &composed.envelope.selected,
+                    context_omissions: &composed.envelope.omitted,
+                    output_persistence: Some(crate::ProviderOutputPersistence {
+                        state: &state,
+                        session_id: &persistence_id,
+                        world: composed.world.as_ref(),
+                    }),
+                },
+            )
+            .await;
+            assert!(matches!(
+                failed,
+                ProviderAttemptOutcome::Failed {
+                    kind: crate::providers::stream::ProviderFailureKind::Unavailable,
+                    output_started: false,
+                    ..
+                }
+            ));
             fixture.set_now(fixture.now() + 1000);
         }
         let outcome = run_agent_session_sse(

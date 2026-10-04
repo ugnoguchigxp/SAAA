@@ -4,6 +4,7 @@
 mod context_compiler;
 #[path = "conversation_check/context_metrics.rs"]
 mod context_metrics;
+mod direct_route;
 pub(crate) mod queue_runtime;
 #[path = "conversation_check/queue_tools.rs"]
 mod queue_tools;
@@ -35,9 +36,9 @@ enum SpeechPlaybackKind {
     Answer,
     Progress,
 }
-static ACTIVE_SPEECH_CANCEL: OnceLock<
-    std::sync::Mutex<Option<(String, SpeechPlaybackKind, Arc<RunCancellation>)>>,
-> = OnceLock::new();
+type ActiveSpeechCancellation = (String, SpeechPlaybackKind, Arc<RunCancellation>);
+static ACTIVE_SPEECH_CANCEL: OnceLock<std::sync::Mutex<Option<ActiveSpeechCancellation>>> =
+    OnceLock::new();
 const MAX_ANSWER_BYTES: usize = 64 * 1024;
 const SOURCE_LINKS_MARKER: &str = "\n\n<!-- saaa:source-links -->\n";
 static ACTIVE_SPEECH_PLAYBACK: OnceLock<std::sync::Mutex<Option<String>>> = OnceLock::new();
@@ -822,6 +823,10 @@ async fn cached_larm_asr(
     providers: &crate::ModelProvidersSettings,
     audit: Option<&ConversationAudit>,
 ) -> Result<Arc<saaa_larm_session::Session>, String> {
+    #[cfg(feature = "quality-eval-harness")]
+    if let Ok(session) = crate::quality_eval::SESSION.try_with(Arc::clone) {
+        return Ok(session);
+    }
     let route = format!(
         "{}|{}",
         providers.harness.address,
@@ -961,7 +966,7 @@ fn fit_role_history(
 async fn complete_larm_role_with_events(
     session: &Arc<saaa_larm_session::Session>,
     role: &str,
-    recent: &[(String, String)],
+    recent: &[context_compiler::ContextEntry],
     text: &str,
     timeout_ms: u64,
     audit: &ConversationAudit,

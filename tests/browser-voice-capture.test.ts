@@ -23,7 +23,9 @@ test("browser capture uses the selected microphone and flushes its last frame", 
   let contextClosed = false;
   let loadedProcessor = "";
   const track = {
-    stop: () => { trackStopped = true; },
+    stop: () => {
+      trackStopped = true;
+    },
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
   };
@@ -46,11 +48,17 @@ test("browser capture uses the selected microphone and flushes its last frame", 
     sampleRate = 48_000;
     state = "running";
     destination = {};
-    audioWorklet = { addModule: async (url: string) => { loadedProcessor = url; } };
+    audioWorklet = {
+      addModule: async (url: string) => {
+        loadedProcessor = url;
+      },
+    };
     createMediaStreamSource() {
       return { connect: () => undefined, disconnect: () => undefined };
     }
-    async close() { contextClosed = true; }
+    async close() {
+      contextClosed = true;
+    }
   }
   class FakeNode {
     static current: FakeNode;
@@ -58,14 +66,22 @@ test("browser capture uses the selected microphone and flushes its last frame", 
       onmessage: null as ((event: MessageEvent<Float32Array | { type: "flushed" }>) => void) | null,
       postMessage: (message: { type: string }) => {
         if (message.type === "flush") {
-          this.port.onmessage?.({ data: new Float32Array(2_400).fill(0.5) } as MessageEvent<Float32Array>);
+          this.port.onmessage?.({
+            data: new Float32Array(2_400).fill(0.5),
+          } as MessageEvent<Float32Array>);
           this.port.onmessage?.({ data: { type: "flushed" } } as MessageEvent<{ type: "flushed" }>);
         }
       },
     };
-    constructor() { FakeNode.current = this; }
-    connect() { return undefined; }
-    disconnect() { return undefined; }
+    constructor() {
+      FakeNode.current = this;
+    }
+    connect() {
+      return undefined;
+    }
+    disconnect() {
+      return undefined;
+    }
   }
   Object.defineProperty(globalThis, "AudioContext", { configurable: true, value: FakeContext });
   Object.defineProperty(globalThis, "AudioWorkletNode", { configurable: true, value: FakeNode });
@@ -77,7 +93,9 @@ test("browser capture uses the selected microphone and flushes its last frame", 
     "usb-mic",
     false,
   );
-  FakeNode.current.port.onmessage?.({ data: new Float32Array(4_800).fill(0.25) } as MessageEvent<Float32Array>);
+  FakeNode.current.port.onmessage?.({
+    data: new Float32Array(4_800).fill(0.25),
+  } as MessageEvent<Float32Array>);
   await capture.stop();
 
   expect((constraints?.audio as MediaTrackConstraints).deviceId).toEqual({ exact: "usb-mic" });

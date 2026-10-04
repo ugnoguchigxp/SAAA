@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn render(
     now_ms: i64,
     timezone: &str,

@@ -48,3 +48,7 @@ SAAA_CONVERSATION_PREFIX_MODE=stable bun run desktop:smoke --report-dir spec/evi
 実モデルは現行のLARM address・profile・認証を使い、`SAAA_CONTEXT_LIVE_MODES=legacy,stable` と絶対report dirを指定して `real_model_context_trial -- --ignored --test-threads=1 --nocapture` を実行する。最初のmodeが失敗した場合は次modeを単独指定する。新規in-memory DBのみで実行する。失敗時にもstatus・成功済み合成会話・receiptを保存する。
 
 [validation-results.json](validation-results.json)に実行ログの摘要・digestを残す。ログ元は作業環境の一時ファイル。全体の第三者変更を今回の完了条件のために巻き戻していない。
+
+## コードレビュー後の修正
+
+2026年10月1日の[レビューと再検証](review/README.md)で、Scope差し替え・保存失敗後の再生成・重複JSONキーなど9点を修正した。上表は初回実装時点の記録として保持し、修正後の結果とコードdigestはreviewディレクトリへ分けて保存した。

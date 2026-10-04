@@ -5,10 +5,13 @@ pub(super) use super::{
 };
 pub(super) use crate::persistence::SqliteWriter;
 use crate::{database_error, RunCancellation};
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) use rusqlite::Connection;
 use saaa_larm_session::personal_state::Capability;
 use saaa_personal_state_core::SourceRef;
-pub(super) use serde_json::{json, Value};
+#[cfg(any(test, feature = "offline-contracts"))]
+pub(super) use serde_json::json;
+pub(super) use serde_json::Value;
 use std::sync::Arc;
 pub struct Product {
     pub can_generate: bool,

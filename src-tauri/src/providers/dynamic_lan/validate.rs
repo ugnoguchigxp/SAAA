@@ -1,12 +1,14 @@
 use super::profile_contract::provider_contract;
+use super::CLOCK_SKEW_TOLERANCE_SECONDS;
 use url::Url;
 
 use super::urls::{url_is_local, url_is_loopback};
+#[cfg(any(test, feature = "offline-contracts"))]
+use super::AgentProfileCatalog;
 use super::{
-    contract_error, valid_provider_auth, AgentProfileCatalog, ConnectionClaim, ConnectionIdentity,
-    ConnectionState, DynamicLanError, ErrorKind, ProviderCapacity, ProviderDescriptor,
-    SelectedLlmProfile, AUDIENCE, CLOCK_SKEW_TOLERANCE_SECONDS, CONNECTION_TTL_SECONDS,
-    CONTROL_PORT,
+    contract_error, valid_provider_auth, ConnectionClaim, ConnectionIdentity, ConnectionState,
+    DynamicLanError, ErrorKind, ProviderCapacity, ProviderDescriptor, SelectedLlmProfile, AUDIENCE,
+    CONNECTION_TTL_SECONDS, CONTROL_PORT,
 };
 
 fn valid_llm_protocol(value: &str) -> bool {

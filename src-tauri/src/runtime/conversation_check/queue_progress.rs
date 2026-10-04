@@ -1,6 +1,8 @@
 //! Short spoken updates while Ornith has no final answer yet.
 use rusqlite::{params, Connection};
-use serde_json::{json, Value};
+use serde_json::json;
+#[cfg(any(test, feature = "offline-contracts"))]
+use serde_json::Value;
 
 use crate::{database_error, task_queue};
 
@@ -141,9 +143,19 @@ mod tests {
         assert!(record_message(&db, &initial, INITIAL, "1").unwrap());
         assert!(record_message(&db, &initial, INITIAL, "2").unwrap());
         finish(&db, &initial).unwrap();
-        let count: i64 = db.query_row("SELECT count(*) FROM task_queue_jobs WHERE kind='progress_speech'", [], |row| row.get(0)).unwrap();
+        let count: i64 = db
+            .query_row(
+                "SELECT count(*) FROM task_queue_jobs WHERE kind='progress_speech'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 1);
-        let saved: i64 = db.query_row("SELECT count(*) FROM conversation_messages", [], |row| row.get(0)).unwrap();
+        let saved: i64 = db
+            .query_row("SELECT count(*) FROM conversation_messages", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(saved, 1);
     }
 
@@ -151,10 +163,25 @@ mod tests {
     fn recovery_discards_old_repeated_progress() {
         let db = Connection::open_in_memory().unwrap();
         task_queue::migrate(&db).unwrap();
-        task_queue::enqueue(&db, "c", "speech", "progress_speech", "u", 1,
-            &json!({"text":"もうすこしおまちください。"}).to_string(), None).unwrap();
+        task_queue::enqueue(
+            &db,
+            "c",
+            "speech",
+            "progress_speech",
+            "u",
+            1,
+            &json!({"text":"もうすこしおまちください。"}).to_string(),
+            None,
+        )
+        .unwrap();
         recover(&db, "c").unwrap();
-        let state: String = db.query_row("SELECT state FROM task_queue_jobs WHERE generation=1", [], |row| row.get(0)).unwrap();
+        let state: String = db
+            .query_row(
+                "SELECT state FROM task_queue_jobs WHERE generation=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(state, "cancelled");
     }
 }

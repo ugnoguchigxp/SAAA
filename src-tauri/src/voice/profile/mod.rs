@@ -1,7 +1,14 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::speaker::SpeakerExtractor;
-use crate::persistence::{SqliteReaders, SqliteWriter};
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::persistence::SqliteReaders;
+use crate::persistence::SqliteWriter;
 use rusqlite::{params, Connection, OptionalExtension};
+#[cfg(any(test, feature = "offline-contracts"))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::{fs, path::PathBuf};
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     fs,
     path::{Path, PathBuf},

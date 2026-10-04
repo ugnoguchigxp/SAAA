@@ -56,7 +56,11 @@ const MarkdownMessage = memo(function MarkdownMessage({
         const href = anchor.getAttribute("href");
         if (!href || !/^https?:\/\//i.test(href)) return;
         event.preventDefault();
-        artifacts?.openSource({ conversationId, url: href, title: anchor.textContent?.trim() || href });
+        artifacts?.openSource({
+          conversationId,
+          url: href,
+          title: anchor.textContent?.trim() || href,
+        });
       }}
       dangerouslySetInnerHTML={{ __html: html }}
     />
@@ -102,11 +106,20 @@ export const CompletedMessage = memo(function CompletedMessage({
               </Suspense>
             </UiBoundary>
           ) : (
-            <MarkdownMessage key={index} messageId={`${message.id}:${index}`} conversationId={message.conversationId} content={part.text} />
+            <MarkdownMessage
+              key={index}
+              messageId={`${message.id}:${index}`}
+              conversationId={message.conversationId}
+              content={part.text}
+            />
           ),
         )
       ) : message.role === "assistant" ? (
-        <MarkdownMessage messageId={message.id} conversationId={message.conversationId} content={message.content} />
+        <MarkdownMessage
+          messageId={message.id}
+          conversationId={message.conversationId}
+          content={message.content}
+        />
       ) : (
         <p>{message.content}</p>
       )}

@@ -1,3 +1,4 @@
+mod control;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -7,16 +8,17 @@ use std::{
     sync::{atomic::AtomicBool, Arc, Mutex},
     time::Instant,
 };
+use tauri::Manager;
 
 use crate::{
-    memory, persistence, providers, runtime, situation, voice, AppState, RunCancellation,
-    StartTurnInput, PRIMARY_CONVERSATION_ID,
+    memory, persistence, providers, runtime, situation, voice, AppState, PRIMARY_CONVERSATION_ID,
 };
 
 // The fixture follows this evaluation future, including across thread switches.
 // Concurrent runs never share process environment or inherit another run's fixture.
 tokio::task_local! {
     pub(crate) static TOOL_FIXTURE: String;
+    pub(crate) static SESSION: Arc<saaa_larm_session::Session>;
 }
 
 #[derive(Deserialize)]
@@ -60,34 +62,47 @@ pub async fn run_json(input: &str) -> Result<String, String> {
         _ => return Err("Invalid quality tool mode".to_string()),
     };
 
+    let server = control::start(&request).await?;
     let state = quality_state(&request)?;
-    let run_id = crate::new_id("quality-run");
-    let turn = StartTurnInput {
-        run_id,
-        conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
-        content: request.input,
-        workspace_path: None,
-        retry_input_message_id: None,
-        source_id: None,
-        scope_refs: Vec::new(),
-        input_origin: request.input_origin,
-        presentation_mode: "visual-and-spoken".to_string(),
-    };
-    let channel = tauri::ipc::Channel::new(|_| Ok(()));
-    let started = Instant::now();
-    TOOL_FIXTURE
-        .scope(
-            fixture,
-            runtime::turns::execute_turn(
-                &state,
-                &turn,
-                &channel,
-                Arc::new(RunCancellation::default()),
-                None,
+    let app = tauri::test::mock_builder()
+        .manage(state)
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .map_err(|error| error.to_string())?;
+    let state = app.state::<AppState>();
+    let key = crate::new_id("quality");
+    runtime::conversation_check::queue_runtime::enqueue_text(
+        &state,
+        key.clone(),
+        request.input.clone(),
+    )?;
+    let (_stop, receiver) = tokio::sync::watch::channel(false);
+    let session =
+        saaa_larm_session::Session::connect_with_profile_credential_key_phase_and_providers(
+            &server.base,
+            saaa_larm_session::ProfilePreference::Variant(
+                saaa_larm_session::ProfileVariant::Conversation,
             ),
+            "quality-control-token".into(),
+            key.clone(),
+            receiver,
+            None,
+            Some(vec!["asr", "llm", "tts", "embedding"]),
         )
         .await
-        .map_err(|error| error.message)?;
+        .map_err(|error| error.to_string())?;
+    let started = Instant::now();
+    let result = SESSION
+        .scope(
+            session.clone(),
+            TOOL_FIXTURE.scope(
+                fixture,
+                runtime::conversation_check::queue_runtime::evaluate_one(app.handle()),
+            ),
+        )
+        .await;
+    let closed = session.close().await.map_err(str::to_string);
+    result?;
+    closed?;
     let content = state.sqlite_readers.read(|connection| {
         connection
             .query_row(
@@ -102,7 +117,7 @@ pub async fn run_json(input: &str) -> Result<String, String> {
     serde_json::to_string(&QualityResponse {
         content,
         latency_ms: started.elapsed().as_millis(),
-        runtime_path: "execute_turn/conversation.respond",
+        runtime_path: "queue_runtime/process_ornith",
     })
     .map_err(|error| format!("Could not encode quality runtime response: {error}"))
 }
@@ -283,11 +298,11 @@ mod tests {
                 }
             };
             assert_eq!(start["stream"], true);
-            assert!(start["tools"].is_array());
-            assert!(start["messages"].to_string().contains("SAAA Eval Agent"));
+            assert!(start["messages"].to_string().contains("action"));
+            assert!(start["messages"].to_string().contains("hello"));
             let body = format!(
                 "data: {}\n\ndata: [DONE]\n\n",
-                json!({"model":"fixture-model","choices":[{"index":0,"delta":{"content":"runtime answer"},"finish_reason":"stop"}]})
+                json!({"model":"fixture-model","choices":[{"index":0,"delta":{"content":json!({"action":"answer","content":"runtime answer"}).to_string()},"finish_reason":"stop"}]})
             );
             let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
             socket.write_all(response.as_bytes()).await.unwrap();
@@ -308,7 +323,7 @@ mod tests {
         server.await.expect("fixture joins");
         let response: serde_json::Value = serde_json::from_str(&response).expect("response JSON");
         assert_eq!(response["content"], "runtime answer");
-        assert_eq!(response["runtimePath"], "execute_turn/conversation.respond");
+        assert_eq!(response["runtimePath"], "queue_runtime/process_ornith");
     }
 
     #[tokio::test]

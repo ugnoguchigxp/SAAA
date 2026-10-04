@@ -1,5 +1,6 @@
 //! Build and validate World ledger patches on the existing writer transaction.
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn commit(
     c: &Connection,
     extraction: &Extraction,

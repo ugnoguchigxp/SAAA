@@ -440,6 +440,9 @@ pub(crate) async fn exercise_rejected_session_fixture() {
     tests::session_start_rejects_a_provider_configuration_error().await;
 }
 
+mod dispatch;
+pub(crate) use dispatch::with_handler;
+
 #[cfg(any(test, feature = "provider-unit-test-harness"))]
 mod tests {
     use super::*;

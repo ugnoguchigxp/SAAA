@@ -1,6 +1,9 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::event_hub::RuntimeEventSender;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::{ipc_contract::RuntimeEvent, memory::context_window::ContextHealthReport};
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn send_context_window_once(
     emitted: &mut bool,
     on_event: &dyn RuntimeEventSender,

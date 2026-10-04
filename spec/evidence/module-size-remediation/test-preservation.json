@@ -1,0 +1,52 @@
+[
+  {
+    "original": "tests/ambient-voice-session.test.tsx",
+    "destinations": [
+      "tests/ambient-voice-session.test.tsx",
+      "tests/ambient-voice-session-failure.test.tsx"
+    ],
+    "originalCases": 12,
+    "currentCases": 12,
+    "titlesPreserved": true
+  },
+  {
+    "original": "tests/ambient-native-voice-capture.test.ts",
+    "destinations": [
+      "tests/ambient-native-voice-capture.test.ts",
+      "tests/native-voice-capture-monitor.test.ts"
+    ],
+    "originalCases": 5,
+    "currentCases": 5,
+    "titlesPreserved": true
+  },
+  {
+    "original": "tests/artifact-tab.test.ts",
+    "destinations": [
+      "tests/artifact-tab.test.ts",
+      "tests/artifact-webview-command.test.ts"
+    ],
+    "originalCases": 4,
+    "currentCases": 4,
+    "titlesPreserved": true
+  },
+  {
+    "original": "tests/butler-role-routing.test.ts",
+    "destinations": [
+      "tests/butler-role-routing.test.ts",
+      "tests/butler-legacy-actor.test.ts"
+    ],
+    "originalCases": 3,
+    "currentCases": 3,
+    "titlesPreserved": true
+  },
+  {
+    "original": "tests/settings-review.test.ts",
+    "destinations": [
+      "tests/settings-review.test.ts",
+      "tests/http-audio-provider-settings.test.ts"
+    ],
+    "originalCases": 7,
+    "currentCases": 7,
+    "titlesPreserved": true
+  }
+]

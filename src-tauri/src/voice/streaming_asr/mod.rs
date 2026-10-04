@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 mod batch_engine;
 pub(crate) mod contracts;
 mod reconciler;

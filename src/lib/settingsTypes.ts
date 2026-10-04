@@ -1,3 +1,10 @@
+export type {
+  DisplayLanguagePreference,
+  LengthUnitSystem,
+  WeightUnit,
+  CurrencyCode,
+  RegionalPreferencesSettings,
+} from "./regionalSettingsTypes";
 export type LlmRequestOptions = {
   tokenLimit: "auto" | "legacy" | "completion";
   reasoning: "auto" | "supported" | "unsupported";
@@ -93,8 +100,13 @@ export type ReasoningEffort = "provider-default" | "low" | "medium" | "xhigh";
 
 export type ModelProvidersSettings = {
   harness: {
-    address: string; larmProfile?: string; ttsVoice?: string; ttsStyle?: string;
-    ttsSpeed?: number; ttsPitchScale?: number; ttsIntonationScale?: number;
+    address: string;
+    larmProfile?: string;
+    ttsVoice?: string;
+    ttsStyle?: string;
+    ttsSpeed?: number;
+    ttsPitchScale?: number;
+    ttsIntonationScale?: number;
   };
   providers: ModelProviderSettings[];
   reasoningEffort: ReasoningEffort;
@@ -154,32 +166,13 @@ export type VoiceSettings = {
   silenceTimeoutMs: number;
   allowedLanguages: AsrLanguageCode[];
   autoSpeak: boolean;
-  aecEnabled: boolean; otherAudioDucking: "default" | "min" | "mid" | "max";
-  vpioOnBluetooth: boolean; bargeInEnabled: boolean;
+  aecEnabled: boolean;
+  otherAudioDucking: "default" | "min" | "mid" | "max";
+  vpioOnBluetooth: boolean;
+  bargeInEnabled: boolean;
 };
 
 export type SecuritySettings = { localOnlyWhenSelected: boolean; diagnosticsRedaction: boolean };
-export type DisplayLanguagePreference = "system" | "en" | "ja";
-export type LengthUnitSystem = "metric" | "imperial";
-export type WeightUnit = "kilogram" | "pound";
-export type CurrencyCode =
-  | "JPY"
-  | "USD"
-  | "EUR"
-  | "GBP"
-  | "CNY"
-  | "KRW"
-  | "AUD"
-  | "CAD"
-  | "CHF"
-  | "SGD";
-export type RegionalPreferencesSettings = {
-  language: DisplayLanguagePreference;
-  timeZone: string;
-  lengthUnit: LengthUnitSystem;
-  weightUnit: WeightUnit;
-  currency: CurrencyCode;
-};
 export type SituationSettings = {
   enabled: boolean;
   sampleIntervalMs: number;

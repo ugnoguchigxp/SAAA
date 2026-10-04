@@ -1,0 +1,12 @@
+{
+  "head": "294f4969e8b54d7074279d2cddb1fb773aff7227",
+  "sha256": {
+    "src-tauri/src/coding/settings.rs": "6c483f4a192bedd13029714c18dbb12d807b2c2162d55b8662a8725cab628997",
+    "src/features/coding/CodingSettingsSection.tsx": "1ed15a6a259456164654cac381d7ec7ccecb9fa0018ec8e1655045e066ea1fa1",
+    "src-tauri/src/runtime/conversation_check/queue_tools.rs": "f92c15072a32d55fd7f390bd93066a301864e85b7da44dce7347dd932dde21ad",
+    "src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs": "69fcb95ae1f5f5d42cc7c2d080268414981caa886d01f6ed925a46f251062c16",
+    "src-tauri/src/coding/service.rs": "c4f16172cc4a83d4c98c05173c0abdbe1419336057efd41f4c92083ad4cce26a",
+    "docs/plans/toolchain-terminal-agents.md": "4ad9919802db10b5d3bf62f46a1411173787c92c98e2e416c36b839faf125429"
+  },
+  "scope": "Reviewed source files only. The working tree contains unrelated changes; this is not a complete repository copy."
+}

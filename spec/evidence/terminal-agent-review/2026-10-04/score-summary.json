@@ -1,0 +1,177 @@
+{
+  "rubric_version": "1.1.0",
+  "technical_profile": "agent",
+  "mode": "technical",
+  "assessment_kind": "current",
+  "target": {
+    "locator": "/Users/y.noguchi/Code/SAAA",
+    "snapshot": "294f4969e8b54d7074279d2cddb1fb773aff7227 + inspected working-tree files identified in source-snapshot.json",
+    "reviewed_at": "2026-10-04",
+    "stage": "Claimed completion; implementation target not located",
+    "scope": "専用端末・Codex CLI／Claude Code連携の対象探索。current working tree、全ローカルbranch、登録worktree、直近50チャット、ローカルarchive、当日の関連CLI履歴を調査。既存Pi/Codex SDK全般、クラウドAPI切替、リモート未取得branch、別PC、削除済み履歴は評価対象外。製品実装のテストと実CLI起動は未実施。"
+  },
+  "depth": "quick",
+  "tracks": {
+    "technical": {
+      "raw_observed_score": null,
+      "provisional_score": null,
+      "score": null,
+      "score_status": "provisional",
+      "coverage_percent": 0.0,
+      "excluded_dimension_weight_percent": 0.0,
+      "raw_bounds": [
+        0.0,
+        100.0
+      ],
+      "bounds": [
+        0.0,
+        100.0
+      ],
+      "confidence": "Unknown",
+      "required_dimensions_complete": false,
+      "incomplete_required_dimensions": [
+        "correctness",
+        "security",
+        "reliability"
+      ],
+      "unresolved_severe_suspicions": [],
+      "gates": [],
+      "production_readiness": "unassessed",
+      "dimensions": {
+        "architecture": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 12,
+          "confidence": "Unknown",
+          "effective_weight_percent": 12.0
+        },
+        "correctness": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 15,
+          "confidence": "Unknown",
+          "effective_weight_percent": 15.0
+        },
+        "security": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 18,
+          "confidence": "Unknown",
+          "effective_weight_percent": 18.0
+        },
+        "reliability": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 12,
+          "confidence": "Unknown",
+          "effective_weight_percent": 12.0
+        },
+        "maintainability": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 8,
+          "confidence": "Unknown",
+          "effective_weight_percent": 8.0
+        },
+        "common_components": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 5,
+          "confidence": "Unknown",
+          "effective_weight_percent": 5.0
+        },
+        "testing": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 10,
+          "confidence": "Unknown",
+          "effective_weight_percent": 10.0
+        },
+        "supply_chain": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 8,
+          "confidence": "Unknown",
+          "effective_weight_percent": 8.0
+        },
+        "performance": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 7,
+          "confidence": "Unknown",
+          "effective_weight_percent": 7.0
+        },
+        "operability": {
+          "status": "partial",
+          "score": null,
+          "coverage_percent": 0.0,
+          "bounds": [
+            0.0,
+            10.0
+          ],
+          "base_weight": 5,
+          "confidence": "Unknown",
+          "effective_weight_percent": 5.0
+        }
+      }
+    }
+  },
+  "confirmed_findings": {
+    "Critical": 0,
+    "High": 0,
+    "Medium": 0,
+    "Low": 0
+  },
+  "priorities": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0,
+    "P3": 0
+  },
+  "suspected_findings": 0
+}

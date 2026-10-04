@@ -1,6 +1,10 @@
 import type { AuditEvent } from "../src/lib/contracts";
 
-export function audit(sequence: number, eventName: string, values: Partial<AuditEvent> = {}): AuditEvent {
+export function audit(
+  sequence: number,
+  eventName: string,
+  values: Partial<AuditEvent> = {},
+): AuditEvent {
   return {
     sequence,
     id: `audit_${sequence}`,
@@ -29,4 +33,3 @@ export const recognized = audit(1, "asr-final-received", {
   sessionId: "voice_1",
   subjectId: "utterance_1",
 });
-

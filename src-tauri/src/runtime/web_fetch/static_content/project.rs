@@ -570,7 +570,12 @@ fn choose(title: &str, blocks: &[Block], query: Option<&str>, limit: usize) -> P
     // Select answer-bearing candidates first. The character budget limits expansion.
     let mut selected = Vec::new();
     if terms.is_empty() {
-        selected.extend(ranked.iter().take(MAX_OUTPUT_CANDIDATES).map(|(index, ..)| *index));
+        selected.extend(
+            ranked
+                .iter()
+                .take(MAX_OUTPUT_CANDIDATES)
+                .map(|(index, ..)| *index),
+        );
     } else if let Some((best_index, _, _, _, _, _)) = best {
         selected.push(best_index);
     }

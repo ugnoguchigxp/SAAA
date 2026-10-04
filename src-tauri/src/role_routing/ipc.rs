@@ -8,14 +8,18 @@ use ts_rs::{Config, TS};
 pub(crate) mod routing_snapshot_input;
 #[path = "ipc/typescript_bindings.rs"]
 mod typescript_bindings;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use routing_snapshot_input::{
     cancel_routing_root, decide_routing_proposal, get_routing_learning_snapshot,
     get_routing_snapshot, replay, replay_routing_events, rollback_adaptive_artifact,
-    run_routing_learning_once, snapshot, AdaptiveArtifactSnapshot, AdaptiveRollbackInput,
-    RoutingCancelInput, RoutingEventRecord, RoutingEventReplayInput, RoutingLearningSnapshot,
-    RoutingProposalDecisionInput, RoutingProposalSnapshot, RoutingRootSnapshot, RoutingSnapshot,
-    RoutingSnapshotInput,
+    run_routing_learning_once, snapshot,
 };
+#[cfg(any(test, feature = "offline-contracts"))]
 use routing_snapshot_input::{learning_snapshot, root_snapshot};
+pub(crate) use routing_snapshot_input::{
+    AdaptiveArtifactSnapshot, AdaptiveRollbackInput, RoutingCancelInput, RoutingEventRecord,
+    RoutingEventReplayInput, RoutingLearningSnapshot, RoutingProposalDecisionInput,
+    RoutingProposalSnapshot, RoutingRootSnapshot, RoutingSnapshot, RoutingSnapshotInput,
+};
 use typescript_bindings::now_ms;
 pub(crate) use typescript_bindings::typescript_bindings;

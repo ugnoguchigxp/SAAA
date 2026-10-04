@@ -52,9 +52,7 @@ export const personalStateApi = {
       await invoke<unknown>("set_personal_state_enabled", { enabled }),
     ),
   snapshot: async () =>
-    personalStateSnapshotSchema.parse(
-      await invoke<unknown>("personal_state_snapshot"),
-    ),
+    personalStateSnapshotSchema.parse(await invoke<unknown>("personal_state_snapshot")),
   sources: async (afterSequence = 0) =>
     personalSourcePageSchema.parse(
       await invoke<unknown>("personal_source_page", { afterSequence }),

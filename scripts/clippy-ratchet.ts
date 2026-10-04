@@ -29,11 +29,15 @@ export function warningCounts(output: string): WarningCounts {
       item.reason !== "compiler-message" ||
       !item.package_id?.includes("#saaa@") ||
       item.message?.level !== "warning"
-    ) continue;
+    )
+      continue;
     const primary = item.message.spans?.find((span) => span.is_primary);
     if (!primary?.file_name || !item.message.message) continue;
-    const key = [primary.file_name, item.message.code?.code ?? "unknown", item.message.message]
-      .join(" | ");
+    const key = [
+      primary.file_name,
+      item.message.code?.code ?? "unknown",
+      item.message.message,
+    ].join(" | ");
     counts[key] = (counts[key] ?? 0) + 1;
   }
   return counts;
@@ -48,7 +52,14 @@ export function newWarnings(actual: WarningCounts, baseline: WarningCounts): str
 
 if (import.meta.main) {
   const child = Bun.spawn(
-    ["cargo", "clippy", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets", "--message-format=json"],
+    [
+      "cargo",
+      "clippy",
+      "--manifest-path",
+      "src-tauri/Cargo.toml",
+      "--all-targets",
+      "--message-format=json",
+    ],
     { cwd: ROOT, stdout: "pipe", stderr: "inherit" },
   );
   const output = await new Response(child.stdout).text();
@@ -60,5 +71,7 @@ if (import.meta.main) {
   const actual = warningCounts(output);
   const added = newWarnings(actual, baseline.warnings);
   if (added.length) throw new Error(`New Clippy warnings:\n${added.join("\n")}`);
-  console.log(`Clippy ratchet passed (${Object.values(actual).reduce((a, b) => a + b, 0)} existing warnings, no new warnings).`);
+  console.log(
+    `Clippy ratchet passed (${Object.values(actual).reduce((a, b) => a + b, 0)} existing warnings, no new warnings).`,
+  );
 }

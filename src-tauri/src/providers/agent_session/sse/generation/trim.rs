@@ -1,4 +1,6 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Rebuilds an AgentSession Tool-follow-up by removing only old optional conversation entries
 /// from its wrapped base conversation. The current user entry and Tool-result frame are outside
 /// the removal range; every candidate removal is validated against the final HTTP body.
@@ -82,6 +84,7 @@ pub(crate) fn trim_optional_history_from_follow_up(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn conversation_messages(value: &mut Value) -> Option<&mut Vec<Value>> {
     if value["type"] == "saaa.conversation.v1" {
         return value.get_mut("messages")?.as_array_mut();

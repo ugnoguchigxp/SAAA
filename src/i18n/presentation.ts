@@ -30,8 +30,7 @@ const messageKeys = {
   settingsAgentConnectionTokenInvalid: "settings.connection.agentConnectionTokenInvalid",
   settingsAgentConnectionAuthorizationRejected:
     "settings.connection.agentConnectionAuthorizationRejected",
-  settingsAgentConnectionCatalogMismatch:
-    "settings.connection.agentConnectionCatalogMismatch",
+  settingsAgentConnectionCatalogMismatch: "settings.connection.agentConnectionCatalogMismatch",
   settingsAgentSessionEventStreamMissing: "errors.settings.agentSessionEventStreamMissing",
 } as const;
 

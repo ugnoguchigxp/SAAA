@@ -3,9 +3,15 @@
 //! This module deliberately owns the child process rather than reusing the application's
 //! app-server process. Role routing must never inherit the user's workspace, MCP servers, or
 //! native tool permissions.
-use super::codex_protocol::{FrameValidator, SidecarEvent, SidecarUsage};
+use super::codex_protocol::SidecarUsage;
+#[cfg(any(test, feature = "offline-contracts"))]
+use super::codex_protocol::{FrameValidator, SidecarEvent};
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::{process_guard::ProcessGuard, RunCancellation};
-use serde_json::{json, Value};
+#[cfg(any(test, feature = "offline-contracts"))]
+use serde_json::json;
+use serde_json::Value;
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     env,
     io::{BufRead, BufReader, Write},
@@ -15,12 +21,18 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::{path::PathBuf, sync::OnceLock};
 
+#[cfg(any(test, feature = "offline-contracts"))]
 const CANCEL_GRACE: Duration = Duration::from_secs(3);
+#[cfg(any(test, feature = "offline-contracts"))]
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+#[cfg(any(test, feature = "offline-contracts"))]
 const MAX_REQUEST_FRAME_BYTES: usize = 1_024 * 1_024;
 
 pub(crate) static BUNDLED_ROLE_ROUTING_CODEX_PATH: OnceLock<PathBuf> = OnceLock::new();
+#[cfg(any(test, feature = "offline-contracts"))]
 type BeforeSend<'a> = Option<&'a mut dyn FnMut(&mut Value) -> Result<(), String>>;
 
 #[derive(Debug, Clone)]
@@ -49,6 +61,7 @@ pub(crate) enum SidecarOutcome {
     Cancelled,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn bundled_sidecar_path() -> Result<PathBuf, String> {
     BUNDLED_ROLE_ROUTING_CODEX_PATH
         .get()
@@ -57,6 +70,7 @@ pub(crate) fn bundled_sidecar_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "Role-routing Codex sidecar is unavailable".to_string())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Binds the final JSONL body immediately before the child can receive it.
 pub(crate) fn run_observed(
     request: &SidecarRequest,
@@ -99,6 +113,7 @@ fn run_at_observed(
     )
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn run_at_with_bridge(
     executable: &Path,
     request: &SidecarRequest,
@@ -233,6 +248,7 @@ fn run_at_with_bridge(
     outcome
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn validate_output_schema(schema: Option<&Value>, text: &str) -> Result<(), String> {
     let Some(schema) = schema else {
         return Ok(());
@@ -248,6 +264,7 @@ fn validate_output_schema(schema: Option<&Value>, text: &str) -> Result<(), Stri
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// The role sidecar may connect only to the application's authenticated loopback gateway. The
 /// bearer token is injected directly into the child environment and deliberately never appears in
 /// its JSONL protocol, database records, or diagnostics.
@@ -274,6 +291,7 @@ fn tool_gateway_bridge(root_id: &str) -> Result<Option<ToolGatewayBridge>, Strin
     }))
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Preserve only the runtime prerequisites used by the fixed sidecar. `HOME` lets the bundled
 /// SDK read the user's existing Codex login, while the sidecar itself creates an empty cwd and
 /// supplies an explicit no-MCP/no-network configuration. Provider keys, proxies and all other
@@ -294,6 +312,7 @@ fn configure_sidecar_environment(command: &mut Command) {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn write_frame(stdin: &mut impl Write, frame: &Value) -> Result<(), String> {
     let encoded = serde_json::to_vec(frame)
         .map_err(|error| format!("Could not encode role-routing sidecar request: {error}"))?;

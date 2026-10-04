@@ -1,10 +1,11 @@
 use super::search::*;
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::memory::contracts::{
-    RecallConversationInput, RecallConversationOutput, RecallError, RecallErrorCode,
-    RecallTimeFilter, RecallTimePreset, MAX_RECALL_CALLS_PER_TURN, RECALL_NOTICE,
+    RecallConversationInput, RecallConversationOutput, MAX_RECALL_CALLS_PER_TURN, RECALL_NOTICE,
     RECALL_RETRIEVAL_MODE,
 };
+use crate::memory::contracts::{RecallError, RecallErrorCode, RecallTimeFilter, RecallTimePreset};
 use chrono::{
     DateTime, Datelike, Duration, LocalResult, Months, NaiveDate, TimeZone, Utc, Weekday,
 };

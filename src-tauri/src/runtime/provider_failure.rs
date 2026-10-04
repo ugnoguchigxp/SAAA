@@ -1,7 +1,9 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::super::contracts::RunFailureCode;
 use super::TurnExecutionFailure;
 
 impl TurnExecutionFailure {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn provider(kind: crate::ProviderFailureKind, message: String) -> Self {
         use crate::ProviderFailureKind as Kind;
         let code = match kind {

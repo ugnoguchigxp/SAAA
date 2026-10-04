@@ -1,9 +1,13 @@
 const MAX_ITEM_JSON_BYTES: usize = 4_000;
 const MAX_SEMANTIC_KEY_BYTES: usize = 128;
-use rusqlite::{params, Connection};
+#[cfg(any(test, feature = "offline-contracts"))]
+use rusqlite::params;
+use rusqlite::Connection;
 #[cfg(test)]
 use serde_json::Value;
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+#[cfg(any(test, feature = "offline-contracts"))]
+use sha2::Sha256;
 
 use super::*;
 
@@ -201,6 +205,7 @@ pub(super) fn load_items<P: rusqlite::Params>(
     Ok(())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn trim_projection_events(connection: &Connection) -> Result<(), String> {
     connection
         .execute(
@@ -215,6 +220,7 @@ pub(super) fn trim_projection_events(connection: &Connection) -> Result<(), Stri
     Ok(())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn sha256_hex(value: &[u8]) -> String {
     format!("{:x}", Sha256::digest(value))
 }

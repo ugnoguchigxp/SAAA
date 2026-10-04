@@ -154,10 +154,13 @@ async fn run_flow() -> i32 {
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let text_chars = text.chars().count();
-    if text_chars == 0 || text_chars > 3_000 || text.contains("<script") || text.contains("<style") {
+    if text_chars == 0 || text_chars > 3_000 || text.contains("<script") || text.contains("<style")
+    {
         eprintln!("webfetch_e2e: extracted text is empty, over budget, or contains markup");
         return 1;
     }
-    println!("webfetch_e2e: PASS (search hits + {text_chars} text chars fetched, all untrusted/tainted)");
+    println!(
+        "webfetch_e2e: PASS (search hits + {text_chars} text chars fetched, all untrusted/tainted)"
+    );
     0
 }

@@ -123,9 +123,11 @@ pub(crate) async fn preview_harness_tts(
     let preference = crate::providers::larm_resources::profile::preference(
         providers.harness.larm_profile.as_deref(),
     );
-    let (_, _, audio) = run_direct_tts(&providers.harness, credential.token(), &preference, text).await?;
+    let (_, _, audio) =
+        run_direct_tts(&providers.harness, credential.token(), &preference, text).await?;
     let audio = audio.ok_or("TTSから音声が返りませんでした。")?;
-    base64::engine::general_purpose::STANDARD.decode(audio)
+    base64::engine::general_purpose::STANDARD
+        .decode(audio)
         .map_err(|_| "生成した音声を読み込めませんでした。".into())
 }
 
@@ -240,7 +242,7 @@ async fn connect_session(
             if let Some(cleanup) = &error.cleanup {
                 let _ = cleanup.close().await;
             }
-            return Err(crate::redact::redact_runtime_text(&error.to_string()));
+            Err(crate::redact::redact_runtime_text(&error.to_string()))
         }
     }
 }

@@ -144,5 +144,9 @@ pub(super) fn world_g1_saved_input_reaches_the_app_composer() {
     let state =
         crate::test_state::app_state_with_capabilities(fixture.writer.clone(), capabilities);
     let (_, frame) = super::super::app_frame::prepare(&state, RUN_ID).unwrap();
-    assert!(frame.frame().graph.as_ref().is_some_and(|graph| !graph.nodes.is_empty()));
+    assert!(frame
+        .frame()
+        .graph
+        .as_ref()
+        .is_some_and(|graph| !graph.nodes.is_empty()));
 }

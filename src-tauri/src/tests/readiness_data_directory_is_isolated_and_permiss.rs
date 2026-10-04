@@ -77,12 +77,11 @@ pub(super) async fn openai_compatible_stream_fixture_projects_deltas() {
         }
         Ok(())
     });
-    let content = stream_model_provider_with_api_key(
+    let content = diagnostic_stream_with_key(
         &provider,
         &history,
         5_000,
         Some("ephemeral-connection-token"),
-        None, // Direct SSE fixture; allocation-backed connections use JSON completions.
         ModelStreamContext {
             reasoning_effort: "low",
             max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
@@ -150,7 +149,7 @@ pub(super) async fn http_disconnect_preserves_partial_output_without_regeneratio
         }
         Ok(())
     });
-    let outcome = stream_model_provider(
+    let outcome = diagnostic_stream(
         &provider,
         &[],
         5_000,
@@ -224,12 +223,11 @@ pub(super) async fn dynamic_lan_stream_policy_requires_sse_for_stream_requests()
         created_at: "now".to_string(),
     }];
     let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
-    let outcome = stream_model_provider_with_api_key(
+    let outcome = diagnostic_stream_with_key(
         &provider,
         &history,
         5_000,
         Some("ephemeral-connection-token"),
-        None,
         ModelStreamContext {
             reasoning_effort: "low",
             max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
@@ -255,20 +253,8 @@ pub(super) async fn dynamic_lan_stream_policy_requires_sse_for_stream_requests()
         }
     ));
 }
-#[tokio::test]
-pub(super) async fn openai_provider_executes_the_single_recall_tool_before_final_output() {
-    let (endpoint, captures, server) = spawn_llm_http_fixture(vec![
-        LlmHttpStep::ToolCall {
-            call_id: "call_recall_1",
-            name: "recall_conversation",
-            arguments: json!({ "query": "SQLite" }),
-        },
-        LlmHttpStep::ExpectToolResult,
-        LlmHttpStep::Delta("履歴を確認しました"),
-        LlmHttpStep::Complete,
-    ])
-    .await;
-
+#[test]
+pub(super) fn current_recall_offer_executes_and_records_only_the_authorized_history() {
     let connection = Connection::open_in_memory().expect("database opens");
     initialize_database(&connection).expect("database initializes");
     connection
@@ -283,7 +269,7 @@ pub(super) async fn openai_provider_executes_the_single_recall_tool_before_final
             .expect("history inserts");
     let state = app_state(connection);
     let input = StartTurnInput {
-        run_id: "run-recall-tool".to_string(),
+        run_id: "run_recall-tool".to_string(),
         conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
         content: "前の話を思い出して".to_string(),
         workspace_path: None,
@@ -293,79 +279,39 @@ pub(super) async fn openai_provider_executes_the_single_recall_tool_before_final
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
-    prepare_runtime_run(&state, &input).expect("runtime prepares");
+    crate::test_support::prepare_user_turn(&state, &input).expect("runtime prepares");
     let session_id =
         begin_test_provider_session(&state, &input.run_id, "recall-fixture", "openai-compatible")
             .expect("provider session starts");
-    let history = list_messages_from_connection(
-        &state.sqlite_writer.lock().expect("database lock"),
-        &input.conversation_id,
-    )
-    .expect("history loads");
-    let provider = OpenAiCompatibleProviderSettings {
-        endpoint,
-        ..direct_provider("recall-fixture", "local")
-    };
-    let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));
-    let outcome = stream_model_provider(
-        &provider,
-        &history,
-        5_000,
-        ModelStreamContext {
-            reasoning_effort: providers::DEFAULT_CONVERSATION_REASONING_EFFORT,
-            max_output_tokens: providers::completion::DEFAULT_MAX_OUTPUT_TOKENS,
-            input: &input,
-            on_event: &channel,
-            cancellation: Arc::new(RunCancellation::default()),
-            context_health: "green",
-            context_sources: &[],
-            context_omissions: &[],
-            output_persistence: Some(ProviderOutputPersistence {
-                state: &state,
-                session_id: &session_id,
-                world: None,
-            }),
+    let persistence = Some(ProviderOutputPersistence {
+        state: &state,
+        session_id: &session_id,
+        world: None,
+    });
+    let offer = available_agent_tools(persistence, &input, 0, 0, 0);
+    assert!(tool_was_offered(&offer.definitions, "recall_conversation"));
+    let result = execute_recall_tool(
+        persistence,
+        &input,
+        &runtime::agent_tools::AgentToolCall {
+            id: "call_recall_1".into(),
+            name: "recall_conversation".into(),
+            arguments: json!({"query":"SQLite"}).to_string(),
         },
-    )
-    .await;
-    server.await.expect("fixture server joins");
-
-    let ProviderAttemptOutcome::Completed { content, .. } = outcome else {
-        panic!("tool-assisted provider stream should complete");
-    };
-    assert_eq!(content, "履歴を確認しました");
-    let captures = captures.lock().expect("capture lock");
-    assert_eq!(captures.len(), 2);
-    let first: Value = serde_json::from_str(&captures[0]).expect("run.start JSON");
-    let offered = first["tools"].as_array().expect("tools array");
-    assert!(offered.len() >= 4);
-    assert_eq!(
-        first
-            .pointer("/tools/0/function/name")
-            .and_then(Value::as_str),
-        Some("recall_conversation")
     );
-    assert!(offered.iter().any(|tool| {
-        tool.pointer("/function/name").and_then(Value::as_str)
-            == Some("update_conversation_voice_behavior")
-    }));
-    let continuation: Value = serde_json::from_str(&captures[1]).expect("continuation JSON");
-    let tool_result = continuation["messages"].as_array().unwrap().last().unwrap();
-    assert_eq!(tool_result["role"], "tool");
-    assert!(tool_result["content"]
-        .as_str()
-        .is_some_and(|content| content.contains("SQLite の検索方式")));
-    assert!(!tool_result["content"]
-        .as_str()
-        .is_some_and(|content| content.contains("前の話を思い出して")));
-    let connection = state.sqlite_writer.lock().expect("database lock");
-    let receipts: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM conversation_recall_receipts WHERE runtime_run_id=?1",
-            [&input.run_id],
-            |row| row.get(0),
-        )
-        .expect("receipt count reads");
+    assert!(result.contains("SQLite の検索方式"));
+    assert!(!result.contains("前の話を思い出して"));
+    let receipts: i64 = state
+        .sqlite_readers
+        .read(|c| {
+            c.query_row(
+                "SELECT count(*) FROM conversation_recall_receipts WHERE runtime_run_id=?1",
+                [&input.run_id],
+                |r| r.get(0),
+            )
+            .map_err(database_error)
+        })
+        .unwrap();
     assert_eq!(receipts, 1);
 }
 #[test]
@@ -413,4 +359,56 @@ pub(super) fn voice_policy_tool_quota_is_independent_from_other_agent_tools() {
         &after_voice_quota.definitions,
         "recall_conversation"
     ));
+}
+
+async fn diagnostic_stream(
+    provider: &OpenAiCompatibleProviderSettings,
+    history: &[ConversationMessage],
+    timeout: u64,
+    context: ModelStreamContext<'_>,
+) -> ProviderAttemptOutcome {
+    diagnostic_stream_with_key(provider, history, timeout, None, context).await
+}
+async fn diagnostic_stream_with_key(
+    provider: &OpenAiCompatibleProviderSettings,
+    history: &[ConversationMessage],
+    timeout: u64,
+    key: Option<&str>,
+    context: ModelStreamContext<'_>,
+) -> ProviderAttemptOutcome {
+    let authorization = key.map(|key| format!("Bearer {key}"));
+    let result = providers::chat_completions::run_with_options(
+        &provider.endpoint,
+        authorization.as_deref(),
+        &provider.model,
+        history,
+        timeout,
+        context,
+        providers::chat_completions::RequestMode::Stream,
+        &saaa_larm_session::http_api::LlmOptions {
+            tools: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let cleanup = CleanupOutcome::NotApplicable;
+    match result {
+        Ok(content) => ProviderAttemptOutcome::Completed { content, cleanup },
+        Err(ProviderAttemptError::Cancelled { output_started }) => {
+            ProviderAttemptOutcome::Cancelled {
+                output_started,
+                cleanup,
+            }
+        }
+        Err(ProviderAttemptError::Failed {
+            kind,
+            output_started,
+            ..
+        }) => ProviderAttemptOutcome::Failed {
+            kind,
+            output_started,
+            public_message: kind.public_message(),
+            cleanup,
+        },
+    }
 }

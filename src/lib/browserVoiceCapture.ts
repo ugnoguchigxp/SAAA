@@ -31,8 +31,16 @@ export async function startBrowserVoiceCapture(
     active = false;
     flushResolver = null;
     track?.removeEventListener("ended", ended);
-    try { node?.disconnect(); } catch { /* Node may not have connected yet. */ }
-    try { source?.disconnect(); } catch { /* Source may not have connected yet. */ }
+    try {
+      node?.disconnect();
+    } catch {
+      /* Node may not have connected yet. */
+    }
+    try {
+      source?.disconnect();
+    } catch {
+      /* Source may not have connected yet. */
+    }
     try {
       await disposeMicrophoneCapture(stream, context);
     } finally {

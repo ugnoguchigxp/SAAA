@@ -3,7 +3,7 @@ pub(super) use super::contracts::{GoalProposal, Notify, Operation, PlanStep, Tas
 pub(super) use super::repository as repo;
 pub(super) use super::{flush_held_reports, inspect_coding_transition, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER};
 pub(super) use crate::persistence::schema::{initialize_database, DATABASE_SCHEMA_VERSION};
-pub(super) use crate::runtime::turns::prepare_runtime_run;
+pub(super) use crate::test_support::prepare_user_turn as prepare_runtime_run;
 pub(super) use crate::situation::contracts::ForegroundCategory;
 pub(super) use crate::situation::speech_holds_tts;
 pub(super) use crate::test_support::app_state;

@@ -73,6 +73,7 @@ pub(crate) struct LoadedContextWindow {
     pub(super) current: SourceMessage,
     pub(super) memory_items: Vec<control_plane::ProjectionItem>,
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn validate_current_instruction(content: &str) -> Result<(), String> {
     current_instruction_base_bytes(content).map(|_| ())
 }

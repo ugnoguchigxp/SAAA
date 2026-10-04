@@ -1,5 +1,6 @@
 //! Bounded SSE reading and protocol validation.
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn read_turn(
     client: &Client,
@@ -58,6 +59,7 @@ pub(super) async fn read_turn(
     attempt
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 async fn cancel_turn(
     client: &Client,
     provider: &AgentSessionProviderSettings,
@@ -78,6 +80,7 @@ async fn cancel_turn(
         .map(|_| ())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 async fn read_connection(
     response: Response,
     session: &SessionResponse,
@@ -118,6 +121,7 @@ async fn read_connection(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn accept_event(
     parsed: ParsedEvent,
     session: &SessionResponse,
@@ -183,6 +187,7 @@ pub(super) fn accept_event(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn append_text(
     value: Option<&Value>,
     context: &ModelStreamContext<'_>,
@@ -243,6 +248,7 @@ pub(super) fn is_event_stream(response: &Response) -> bool {
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("text/event-stream"))
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn take_event(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     let (start, delimiter) = (0..buffer.len()).find_map(|index| {
         if buffer.get(index..index + 2) == Some(b"\n\n") {
@@ -258,6 +264,7 @@ pub(super) fn take_event(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     Some(consumed)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn parse_event(block: &[u8]) -> Result<Option<ParsedEvent>, ProviderFailureKind> {
     let text = std::str::from_utf8(block).map_err(|_| ProviderFailureKind::Protocol)?;
     let mut event_name = None;
@@ -289,6 +296,7 @@ pub(super) fn parse_event(block: &[u8]) -> Result<Option<ParsedEvent>, ProviderF
     }))
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn idempotency_key() -> String {
     format!("saaa_{}", uuid::Uuid::new_v4().simple())
 }

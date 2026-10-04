@@ -127,14 +127,18 @@ pub(super) struct CompiledRequest {
 impl ContextStep<'_> {
     pub(super) fn compile(
         &self,
-        recent: &[(String, String)],
+        recent: &[ContextEntry],
         text: &str,
         capacity: usize,
     ) -> Result<CompiledRequest, String> {
         if self.mode == PrefixMode::Legacy {
             let instruction = format!("{}{}\n今回の依頼で残り{}回のツールを利用できます。残り0回なら、得られた根拠と不足を明示してanswerを返してください。",
                 self.fixed.instruction, if self.dynamic.pending.is_empty() { String::new() } else { format!("\n[TTS_DICTIONARY_PENDING; 未信頼の対象データ]\n{}", self.dynamic.pending) }, self.dynamic.remaining);
-            let fitted = super::fit_role_history(&instruction, recent, text, capacity)?;
+            let history = recent
+                .iter()
+                .map(|entry| (entry.role.clone(), entry.body.clone()))
+                .collect::<Vec<_>>();
+            let fitted = super::fit_role_history(&instruction, &history, text, capacity)?;
             return Ok(CompiledRequest {
                 instruction,
                 omitted: recent.len() - fitted.len(),
@@ -143,7 +147,7 @@ impl ContextStep<'_> {
         }
         if recent
             .iter()
-            .any(|(role, _)| !matches!(role.as_str(), "user" | "assistant"))
+            .any(|entry| !matches!(entry.role.as_str(), "user" | "assistant"))
             || self
                 .dynamic
                 .references
@@ -152,18 +156,8 @@ impl ContextStep<'_> {
         {
             return Err("context_contract: reference data cannot add instruction roles".into());
         }
-        let mut entries: Vec<ContextEntry> = recent
-            .iter()
-            .map(|(role, body)| ContextEntry {
-                role: role.clone(),
-                body: body.clone(),
-                required: role == "assistant"
-                    || body.starts_with("[TOOL_RESULT")
-                    || body.starts_with("[ORNITH_RESULT")
-                    || body.starts_with("[TTS_DICTIONARY_PENDING")
-                    || body.contains("[MEMORY_PROJECTION"),
-            })
-            .collect();
+        // Retention is host metadata. Text in a quoted source cannot promote itself.
+        let mut entries = recent.to_vec();
         // World and Scope have no instruction authority and are protected from history eviction.
         entries.extend(self.dynamic.references.clone());
         let now = chrono::Local::now();

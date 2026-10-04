@@ -1,4 +1,6 @@
-use rusqlite::{params, Connection};
+#[cfg(any(test, feature = "offline-contracts"))]
+use rusqlite::params;
+use rusqlite::Connection;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -19,6 +21,7 @@ pub(crate) enum UsageSource {
 }
 
 impl UsageSource {
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn as_str(self) -> &'static str {
         match self {
             Self::Provider => "provider",
@@ -57,10 +60,12 @@ fn u64_at(value: &Value, key: &str) -> Option<u64> {
     value.get(key).and_then(Value::as_u64)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn i64_opt(value: Option<u64>) -> Option<i64> {
     value.and_then(|token| i64::try_from(token).ok())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn record(
     connection: &Connection,
     generation_id: &str,

@@ -1,0 +1,476 @@
+{
+  "scope": "Current changed sources, including the earlier Context review changes already present at round start.",
+  "files": [
+    {
+      "path": "scripts/conversation-context-input.ts",
+      "sha256": "5c5ea35f1b378a8b0ca8db4a21cebb3313676f2261ea906f062f1572039713af"
+    },
+    {
+      "path": "scripts/conversation-context-report.ts",
+      "sha256": "5f084844f197b7d47fc502e8f4db42b0593264636b14a27cc79977343e0b9241"
+    },
+    {
+      "path": "scripts/module-size-baseline.json",
+      "sha256": "ab89ab2bb40bf414c37a2a8f9b17e637d4eba822fd136f2a02696230ac902c90"
+    },
+    {
+      "path": "src-tauri/src/artifact_preview/webview_catalog.rs",
+      "sha256": "da279f6d3918b96cf962c7221ef83a75159e6b6a065235ce161bc2df0f297b05"
+    },
+    {
+      "path": "src-tauri/src/artifact_preview/webview_catalog/offered.rs",
+      "sha256": "4f3f9e57681397ab4a9cf7e57e2df0b2b03562a7d966e766eb10c2916239b77f"
+    },
+    {
+      "path": "src-tauri/src/artifact_preview/webview_ops.rs",
+      "sha256": "78bd845c5c6529ea2ed7694f687915879b38f75bb6feb600e6b4b01fa657b453"
+    },
+    {
+      "path": "src-tauri/src/artifact_preview/webview_ops/hub.rs",
+      "sha256": "f33c5c6b5ac85efc9d8dd207c679980ea5331ec6ae6ff11b9fea6c0ecb86e647"
+    },
+    {
+      "path": "src-tauri/src/artifact_preview/webview_ops/offers.rs",
+      "sha256": "604c8814c0f4753e4f6dba808209e10bc0593d5def7ac6fdf31e0e0d0743f664"
+    },
+    {
+      "path": "src-tauri/src/conversation_queue_e2e/context_trial.rs",
+      "sha256": "21147cbc6996168f39341bc673d109f2f0f78d871b87c7918f8a230ac410bbf4"
+    },
+    {
+      "path": "src-tauri/src/conversation_queue_e2e/context_trial/regressions.rs",
+      "sha256": "72e3f4b6a2ced4ffc0c6d199e962a99eaf7c02c6a438ef9237e2796e7eae6c77"
+    },
+    {
+      "path": "src-tauri/src/diagnosis/checks/harness.rs",
+      "sha256": "32a4c7047c4a27e6d5d96874458525f0526a336e43446ecdb8403c3f7f1fb021"
+    },
+    {
+      "path": "src-tauri/src/diagnosis/checks/harness/items.rs",
+      "sha256": "de1329ec192d76354a7dacd039cc90350764c1d8eb35ec61ce0e46ecd6e251b1"
+    },
+    {
+      "path": "src-tauri/src/diagnosis/commands.rs",
+      "sha256": "edb47cf66050ec31826e87362b3adf6daba763c733f25470ed722058da4ec381"
+    },
+    {
+      "path": "src-tauri/src/diagnosis/runner.rs",
+      "sha256": "38f613998269518332c6b43e8d56d9dd243a535b95c89477840f5a996e474f0f"
+    },
+    {
+      "path": "src-tauri/src/diagnosis/runner/in_flight.rs",
+      "sha256": "f1220b42adf0850f9d5df4111001a29ed6705c3034284bae39dbec9e015ace07"
+    },
+    {
+      "path": "src-tauri/src/diagnosis/runner/report.rs",
+      "sha256": "984d999c2889946abb9fd30ccab426edf05f3334226d1b207ffe6be2198ad23d"
+    },
+    {
+      "path": "src-tauri/src/generated_capabilities/tools.rs",
+      "sha256": "e3fe092435a8e745f5a93083cc4e34c288630881e60b2f4a613dcc416e5fe9e0"
+    },
+    {
+      "path": "src-tauri/src/generated_capabilities/tools/content.rs",
+      "sha256": "5ce8407e078dfdbbfb451b3ab676a15878f86241d32cee6cdfe61689465fc7a9"
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/retrospective.rs",
+      "sha256": "1e3fa86ad6a95175b3e67c58aea839deaea8958c284b41ecb1f01d80b2747c68"
+    },
+    {
+      "path": "src-tauri/src/memory/personal_state/retrospective/status.rs",
+      "sha256": "f701e73bed4e36152d27aa67a58ea92e6529f7bb14f7fe65ac1c8b1c6d3a21aa"
+    },
+    {
+      "path": "src-tauri/src/persistence/settings.rs",
+      "sha256": "30e91716806c926a43f057246ac8999a74c22d65eb762c5bfeceaa9e64d9937a"
+    },
+    {
+      "path": "src-tauri/src/persistence/settings/validation.rs",
+      "sha256": "9f1fd351c7b63b9b49d942c93b4cd25710cf5221fd1b5c07a7ac8a2a798f077c"
+    },
+    {
+      "path": "src-tauri/src/persistence/settings_migration/stored_document.rs",
+      "sha256": "4a015b168645509813cd8319b32c31f29de4cedbdd6b69744079080ab6e94584"
+    },
+    {
+      "path": "src-tauri/src/persistence/settings_migration/stored_document/routing.rs",
+      "sha256": "8fbced448b85023c4fa537d81d16b7b2457f57e781d6005335fe373dd5e19b66"
+    },
+    {
+      "path": "src-tauri/src/providers/agent_session/sse.rs",
+      "sha256": "e3d685cb5c90d4216dc3e816eb3dae4682ef16b9580086f14b75775a0a8d48e2"
+    },
+    {
+      "path": "src-tauri/src/providers/agent_session/sse/stream_tests.rs",
+      "sha256": "7b1b6230e2d10b12b96154a4278c9ed93c55eb0d7870d418a9f8323357f450be"
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/mod.rs",
+      "sha256": "dbb6106a9b884c6f0728a201ad5dad5f0e4fc64eac6e1ebb6e9f5471a4d6d8cf"
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/observation.rs",
+      "sha256": "984e5b69fd1c8152de9c82d9c9b85baf603ed1f4fee7b0bc50ac5522af4ee924"
+    },
+    {
+      "path": "src-tauri/src/providers/chat_completions/observation_tests.rs",
+      "sha256": "a8ceef96cdbe3bc156f146d58cc353e90caaa0cd27a781c8afc8ba749d55c1d3"
+    },
+    {
+      "path": "src-tauri/src/providers/dynamic_lan/http.rs",
+      "sha256": "c854b3e3bc0fdd87321a19303abeb5382ae3841c5b45b363cd0938662e72095b"
+    },
+    {
+      "path": "src-tauri/src/providers/dynamic_lan/http/errors.rs",
+      "sha256": "f4f0ea439697d81f3d3959393801f46442e674a2a99a3eb180f911253d839ccb"
+    },
+    {
+      "path": "src-tauri/src/providers/dynamic_lan/mod.rs",
+      "sha256": "93c31d2c2d67dc9a0efa8305141164478018a5c9e02e3da7027b9dac1da3940b"
+    },
+    {
+      "path": "src-tauri/src/providers/dynamic_lan/tests/selector_tests.rs",
+      "sha256": "4aa38c65c5c658549b5b5d03eb6e75bc661b1e865ced68a5f6912a6137b03f5d"
+    },
+    {
+      "path": "src-tauri/src/providers/dynamic_lan/tests/selector_tests/contracts.rs",
+      "sha256": "b6b89bfa444d7b5d9b838e9488d0dd5d20e348717b580e7210430dcb84178536"
+    },
+    {
+      "path": "src-tauri/src/providers/dynamic_lan/tests/selector_tests/fixture.rs",
+      "sha256": "712e4b48436bfea03542eba7e63365fde0f2bae0b3928015bd2cc5adc80df67f"
+    },
+    {
+      "path": "src-tauri/src/providers/http.rs",
+      "sha256": "b240c15e74ea1eb21e0adb153807e47a739b4dfc87774b8ac6dbd6b24030b599"
+    },
+    {
+      "path": "src-tauri/src/providers/http/conflict.rs",
+      "sha256": "df50bfcd7de0f9100287d4e071a75c34c6c0565c477e49c760d97d678a8fb7b2"
+    },
+    {
+      "path": "src-tauri/src/providers/service_harness.rs",
+      "sha256": "dbd159f04f7cc903cbef9f38e2f183cd9692c5593b7504718623e4fc87c91ec6"
+    },
+    {
+      "path": "src-tauri/src/providers/service_harness/descriptor.rs",
+      "sha256": "025537f9d246a0b4239e938097b6eb10896b8079a1cfa439fcaa0f0d66597609"
+    },
+    {
+      "path": "src-tauri/src/providers/stream/dynamic_lan/initialization.rs",
+      "sha256": "e5c9bedfb2d9cc302a1e57329d05426b76e67bdcd84ab60d58507ee33bae8676"
+    },
+    {
+      "path": "src-tauri/src/role_routing/frontend.rs",
+      "sha256": "9f45a97d9d2e0066ca9dc15d2f785bd92a279f260a2988aa321ce0f9e216d5ab"
+    },
+    {
+      "path": "src-tauri/src/role_routing/frontend/speech.rs",
+      "sha256": "1116c0700c4529909c78602de371afc7a952a0b94d79465b34668326bf490802"
+    },
+    {
+      "path": "src-tauri/src/role_routing/repository_turns/lifecycle.rs",
+      "sha256": "579441ae2bb814105ccfb740bae51228feafd30f0fa6bdbeb405df0bd17f2f90"
+    },
+    {
+      "path": "src-tauri/src/role_routing/repository_turns/lifecycle/frontend.rs",
+      "sha256": "238c472068ad3652fb51a19c65965b4211fdc91b1c8e33c824a0a025f5e71299"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check.rs",
+      "sha256": "f593727c3243004505f69bdf5f0a7408f4e2091457fe6b87143ef900efb780d8"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/context_compiler.rs",
+      "sha256": "6b0473c59a73545888a6c2a60df84a4607e8c9c2acea4fd74c2d772d9431d054"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/context_compiler_tests.rs",
+      "sha256": "2f9e16e05b74da4721bf5d6e356301fbd92a261cf32fa9148801ca5ca7902f64"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/context_metrics.rs",
+      "sha256": "25567d74eb5c903d820b0da0eec8421bebeb66cbf06953e5223981a348db1572"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_answer_stream.rs",
+      "sha256": "8563a155d6e170ca9fb360a9fd713b3ce766c5a63c5ca4383912eb4c2cb4bbf7"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_context.rs",
+      "sha256": "49e63109b36ad35a737fe49c89548b16d27d049306281aa0f82a7b3b30ad681f"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime.rs",
+      "sha256": "e67246a789684e80f0b47f7d938fd22a35df65fd6d8573289ace44671e53210a"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime/action.rs",
+      "sha256": "6098323c0e22ac4e8a5d0066cc0a5ccbcb162eee33936193c01222b50e5b41bb"
+    },
+    {
+      "path": "src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs",
+      "sha256": "298520f67c7422026bdabe1c710600061f354800406b207c2edb2b047e322ac1"
+    },
+    {
+      "path": "src-tauri/src/runtime/web_fetch/content/projection.rs",
+      "sha256": "c3e48c3f5365914ef046e6409f0d3324a9a150e8d9ed773203c1e13f99bd805c"
+    },
+    {
+      "path": "src-tauri/src/runtime/web_fetch/content/projection/compact.rs",
+      "sha256": "7ac5f2f55e4bec47d75e5a62fbdd1de40f5a6d90eaa9613a3c2fef8df8bc7a44"
+    },
+    {
+      "path": "src-tauri/src/runtime/web_fetch/mod.rs",
+      "sha256": "a3bb38bbe9a6173a685f93694d049ca06a66d7718f9d538d11c7b010565a9c64"
+    },
+    {
+      "path": "src-tauri/src/runtime/web_fetch/rust_backend.rs",
+      "sha256": "54b6f2640b687a9026b198cd6ee5097127c3e20ff22063b89997fe9528d03910"
+    },
+    {
+      "path": "src-tauri/src/tool_selection/backends/artifact_webview.rs",
+      "sha256": "f5d39db8137cfe67dde2c60865c5c2c02d192cc1d8b676b9c03e084fadf78c41"
+    },
+    {
+      "path": "src-tauri/src/tool_selection/backends/artifact_webview/dispatch.rs",
+      "sha256": "ee3f8ffb72cf46e5df392e77dfb806801bc03fb7d98f7cdd0c6b8d3826377b1b"
+    },
+    {
+      "path": "src-tauri/src/voice/audio_backend/probe.rs",
+      "sha256": "f8ec0547cdceaad3a7398651040a72dd13fe5cdccc11b5a1eb654096405722e6"
+    },
+    {
+      "path": "src-tauri/src/voice/audio_backend/probe/wav.rs",
+      "sha256": "c7fb539c7a0173de1bb898f102fe6aae9990b664595c16e31a33c8007ac19ce6"
+    },
+    {
+      "path": "src-tauri/src/voice/audio_backend/ring.rs",
+      "sha256": "ae0efa0fabf83c3f33695b01547c7c729261d6a4ea66d8c73ee6c90076424c2a"
+    },
+    {
+      "path": "src-tauri/src/voice/audio_backend/ring/ffi.rs",
+      "sha256": "e666a43ea469f9fcb46f425544adb6164019a4a468a8e9197a608788752d276b"
+    },
+    {
+      "path": "src-tauri/src/voice/audio_upload.rs",
+      "sha256": "38db64cadac11d5ef83a384b5bc92461c539325b83365f0948226a7e6bdf3e49"
+    },
+    {
+      "path": "src-tauri/src/voice/audio_upload/fixture.rs",
+      "sha256": "bd2a671667d31994af08d9df80ba57a72a287ad7ecc4dba84c57426a00a63287"
+    },
+    {
+      "path": "src-tauri/src/voice/cloud_asr.rs",
+      "sha256": "2dd646f7709c6532e82d466334ad55456dab9e7af4a74c8b5f0f530d5f1343ca"
+    },
+    {
+      "path": "src-tauri/src/voice/cloud_asr/transcript.rs",
+      "sha256": "6e5cc250916db15b3c1876a0b3fe99409ded4b0bd7ea5967168af54e3129ee33"
+    },
+    {
+      "path": "src-tauri/src/voice/cloud_asr/transport.rs",
+      "sha256": "366606e0cab3214054a03b82dfa07e67139ca424903ad7ae89405e25803bba12"
+    },
+    {
+      "path": "src-tauri/src/voice/local_audio_output.rs",
+      "sha256": "3ce7a8fd82f54d0b4fef13e2dad23fa2e0023034538d650a983fc2d1cfc1b741"
+    },
+    {
+      "path": "src-tauri/src/voice/local_audio_output/playback.rs",
+      "sha256": "090f97a8b7c2933afa63fe4487c1279bd229529f5887f4882e3605c0b779df74"
+    },
+    {
+      "path": "src-tauri/src/voice/local_audio_output/playback/rodio_output.rs",
+      "sha256": "adf8068b8f25c3669501100954448f02ad41cc662e1d76d2d5f5b2d16b2ac361"
+    },
+    {
+      "path": "src-tauri/src/voice/local_audio_output/playback/worker.rs",
+      "sha256": "0df907c8c1719f16d0e79983af16c50c615c66ee8d9525903b97b2bbcf7a854f"
+    },
+    {
+      "path": "src-tauri/src/voice/local_audio_output/playback_vpio.rs",
+      "sha256": "a3dea5f9b95a3fbdf577713e576b123d35d19ef8c9f4d8ac1fc592bcb0da589c"
+    },
+    {
+      "path": "src-tauri/src/voice/local_audio_output/playback_vpio/worker.rs",
+      "sha256": "ecbff3fd1bde09aabf92189e1919681d721a72a7438576bc60c8b95a8cfdec04"
+    },
+    {
+      "path": "src-tauri/src/voice/mod.rs",
+      "sha256": "0757f1690146baf403161330f0b6c8559836b4f1ff2f77278516dc2a551cdb50"
+    },
+    {
+      "path": "src-tauri/src/voice/output/mod.rs",
+      "sha256": "b8c411a978d5479fc1e3efb144f3a6fc0738199801e062e758805d781e618af5"
+    },
+    {
+      "path": "src-tauri/tests/world_maintenance_contract.rs",
+      "sha256": "6c616f88a5963a4602120ade1b1c8a2d06a89ef46dda1c8586e03a7a6e5ce24b"
+    },
+    {
+      "path": "src/features/chat/artifacts/artifact.css",
+      "sha256": "e29ec1e887a314be7c95a949b0c0c9c147bcc27d3b0540173e9f740a44488f17"
+    },
+    {
+      "path": "src/features/chat/artifacts/artifactLoading.css",
+      "sha256": "8dff1e1ec6d83fe0480744fe486c56c3f5e34b7dd56e9f5af1fcc998f7481888"
+    },
+    {
+      "path": "src/features/chat/artifacts/artifactTab.ts",
+      "sha256": "8e9b9c68a82fdc0d0f1b949fdd474139b0880314f45833736f7f085c07e166ea"
+    },
+    {
+      "path": "src/features/chat/artifacts/webviewCommand.ts",
+      "sha256": "19390326ab361ff17e7e64bcb940accadb69c9bd639114bdeb8b19aaaad4980e"
+    },
+    {
+      "path": "src/features/settings/RoleRoutingSection.tsx",
+      "sha256": "f09884645087e42c410b358adbbeaa7c9407197d22fd754cc71e05eaee072fe8"
+    },
+    {
+      "path": "src/features/settings/butlerActors.ts",
+      "sha256": "bdc6be12e0b580d5a3ee65c5342ad6eaf1eec246ef927c1ebac9136532302750"
+    },
+    {
+      "path": "src/features/settings/prepareRoutingActors.ts",
+      "sha256": "441077ce46aaad20aa1d8e64409946a22398517a9844c4916266b23996c14b55"
+    },
+    {
+      "path": "src/features/settings/roleLearningDefaults.ts",
+      "sha256": "e9314a302806689a64d5f1b83f0e2b57164251724ba88c33037e1a0080a416ed"
+    },
+    {
+      "path": "src/features/settings/settingsRoleRouting.ts",
+      "sha256": "ad7e1652729595c14643450f9d475ca15a4a026edc20f3c5b1a81e11d856c386"
+    },
+    {
+      "path": "src/features/settings/settingsRoleRoutingDefaults.ts",
+      "sha256": "32c08df3eaa130d6c7933009bfdf1446d5789cdfc3a3d5de86f64ef3bf4c543d"
+    },
+    {
+      "path": "src/features/voice/ambientBargeIn.ts",
+      "sha256": "dd025976f53a18b9cddb2c63df43dc73dcdfeaaa53b6f7ad80ad49d66d4b1cd2"
+    },
+    {
+      "path": "src/features/voice/ambientWorkletVoiceCapture.ts",
+      "sha256": "851bb41e287c5153621a83c164236a323e893db8f667f4ba7b3f0a49835117bb"
+    },
+    {
+      "path": "src/i18n/locales/enDiagnosis.ts",
+      "sha256": "dcda91fc9a99be45431b23e3254540d97bea83347b12cd85dcf3f50b4f336480"
+    },
+    {
+      "path": "src/i18n/locales/enDiagnosisItems.ts",
+      "sha256": "9107fa580e8310a7e2da154b23c1f10efd3125a3e91f22d8e77556b2b1ab9956"
+    },
+    {
+      "path": "src/i18n/locales/enMemoryMessages.ts",
+      "sha256": "33d63bc47bc0f7476ef05dd8f279f95d55cf50fd342b5b6fd7fffd88c5eeb450"
+    },
+    {
+      "path": "src/i18n/locales/enMemoryPage.ts",
+      "sha256": "2a22b92bdd297d804aed8481626332eb7cc15632231588c04fae554560d001e6"
+    },
+    {
+      "path": "src/i18n/locales/enWorldReview.ts",
+      "sha256": "316bfc205bbdc93c5c0fe0a8f6f485ce850843e15a1c83cd96dc465a736b14ea"
+    },
+    {
+      "path": "src/i18n/locales/jaDiagnosis.ts",
+      "sha256": "4b22b075cbce5d6588d04a0f873108d7d223a8f70f3ee08b3dcea71af336fd8d"
+    },
+    {
+      "path": "src/i18n/locales/jaDiagnosisItems.ts",
+      "sha256": "bb8ed2a0304bd4db97f5930ce0a8a7cb23ca2ca67750b58befd312774820c7f0"
+    },
+    {
+      "path": "src/lib/audioBackend.ts",
+      "sha256": "c148400ffde825eb46d1d9d63e1450f05fcafbfb188817522ac28fbb918342b3"
+    },
+    {
+      "path": "src/lib/auditEventInput.ts",
+      "sha256": "1b5ecf929fec3db9653441d337be54205887d1b6ade752f8e7d611313158114b"
+    },
+    {
+      "path": "src/lib/auditRuntime.ts",
+      "sha256": "70f1bf668129c6a7d6fe4897d0ee9303cd48f650444292220af7d480bae85f2e"
+    },
+    {
+      "path": "src/lib/nativeVoiceCapture.ts",
+      "sha256": "8b9aeb16bc85e414ab2d45d3e0a67256638f7fe4d013cab6da2ff163c5f1072a"
+    },
+    {
+      "path": "src/lib/regionalSettingsTypes.ts",
+      "sha256": "c370e9178983c590e3b942ce9fceede0ea0c32ea235db5f0c8b6f8aa8ad7949d"
+    },
+    {
+      "path": "src/lib/settingsTypes.ts",
+      "sha256": "f1b083346f99f37b1a37efb2bf187e3c916f9fc2777c928464ddb08ac68fd0c3"
+    },
+    {
+      "path": "src/shell/appRoute.ts",
+      "sha256": "35a8a5daf7031ac2257b69f7468f0caaccdbdfe1620874b3c6ca87ef2e6dbde1"
+    },
+    {
+      "path": "tests/ambient-native-voice-capture.test.ts",
+      "sha256": "f9029903a990c52a3a152e1f130c6fdabb44dfab0f14621c8a7710858f2c9cc9"
+    },
+    {
+      "path": "tests/ambient-voice-session-failure.test.tsx",
+      "sha256": "9826810a7ac34f846faddcacfbf098c3c3c709ec6f8db3e3a27623b7bdfa1f6d"
+    },
+    {
+      "path": "tests/ambient-voice-session.test.tsx",
+      "sha256": "3fe79604cb3e4f495251d90f0ee24bf1926a789ba7ea59b399cb5770bb5d7085"
+    },
+    {
+      "path": "tests/ambientVoiceFixtures.ts",
+      "sha256": "a601ca522b01e6541af8b84e697d86f7cfcba07b93ca186a6d77ad423225f867"
+    },
+    {
+      "path": "tests/ambientVoiceSessionHarness.ts",
+      "sha256": "817bd2bcf14206f35cba6ef5185dd9d8636f8b7271f7896e165e9faee5f79115"
+    },
+    {
+      "path": "tests/artifact-tab.test.ts",
+      "sha256": "166817819398bfa199ca373e07461b81cf1743fe68bae9df71dbb3af4e1a879b"
+    },
+    {
+      "path": "tests/artifact-webview-command.test.ts",
+      "sha256": "c59bddfafc74218bc4330a16ecf6612e2c5750aa0160ec9ae78145af5429a613"
+    },
+    {
+      "path": "tests/butler-legacy-actor.test.ts",
+      "sha256": "1d1efe50a7c66d2c5f52792f74ba83c9d2d0e45cc03c38ced6e1531af5c1307c"
+    },
+    {
+      "path": "tests/butler-role-routing.test.ts",
+      "sha256": "48d6afac8d21bb3bd7e14363aa19ae371b824b92543fec4f6704361d351bbe16"
+    },
+    {
+      "path": "tests/conversation-context-report-input.test.ts",
+      "sha256": "83ae03ae6a3d2396439fc244fe3f3d45789fd1d4fc68c2b862c2e29d3c190d6b"
+    },
+    {
+      "path": "tests/conversation-context-report.test.ts",
+      "sha256": "1d22b37cffbf9bee3c2c6248b195cac6fbe4d98fc12feb724d38190feb7e510d"
+    },
+    {
+      "path": "tests/http-audio-provider-settings.test.ts",
+      "sha256": "5e59cb3921cbbe11f5563cfbfb8d0b1935e1e168e73fbb6ab3a7ce7490567a86"
+    },
+    {
+      "path": "tests/native-voice-capture-monitor.test.ts",
+      "sha256": "01e7c4b0a0f978b29cf12e7fd5e703e367346956f3d2187de7980cdeaea4c344"
+    },
+    {
+      "path": "tests/settings-review.test.ts",
+      "sha256": "e084aea23bbc313adf62d8eac2d209b6ddefa32ee6e21a6734b55bdf36b22094"
+    }
+  ],
+  "unchangedSizeGateSha256": "bd504e8bd7598df7960629fe3a32c982ae0acc0596c268d0fde0a69d6423f17f",
+  "baselineBeforeSha256": "e02de92360f1e272b808e09f1a82e328fc269f70c488718f97db61df0c72de43",
+  "baselineAfterSha256": "ab89ab2bb40bf414c37a2a8f9b17e637d4eba822fd136f2a02696230ac902c90"
+}

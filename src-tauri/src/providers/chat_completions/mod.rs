@@ -115,6 +115,9 @@ pub(crate) async fn run_observed(
         context.reasoning_effort,
     );
     body["stream"] = json!(mode == RequestMode::Stream);
+    if mode == RequestMode::Stream && observation.is_some() {
+        body["stream_options"] = json!({"include_usage":true});
+    }
     let mut client_builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5));

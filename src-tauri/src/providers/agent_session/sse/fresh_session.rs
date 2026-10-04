@@ -1,3 +1,4 @@
+#![cfg(any(test, feature = "offline-contracts"))]
 //! Follow-up sessions own cleanup even if creation finishes after cancellation.
 use super::*;
 pub(super) struct FreshSession {
@@ -15,6 +16,7 @@ impl Drop for CancelCreation {
     }
 }
 impl FreshSession {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub async fn create(
         client: &Client,
         provider: &AgentSessionProviderSettings,
@@ -63,6 +65,7 @@ impl FreshSession {
             result=&mut task=>result.unwrap_or(Err(ProviderFailureKind::Internal)),
         }
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub async fn release(mut self) -> Result<(), ProviderFailureKind> {
         let result = super::super::release_session_with_retry(
             &self.client,

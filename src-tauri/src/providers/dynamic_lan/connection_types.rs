@@ -56,6 +56,7 @@ impl DynamicLanError {
         self.code.unwrap_or(self.message)
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn release_failure(&self) -> Option<ErrorKind> {
         self.release_failure
     }

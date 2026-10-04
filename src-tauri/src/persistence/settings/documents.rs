@@ -84,6 +84,7 @@ pub(crate) fn load_role_routing_settings(
     crate::role_routing::contracts::validate_settings(&settings)?;
     Ok(settings)
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn load_security_settings(
     connection: &Connection,
 ) -> Result<SecurityRuntimeSettings, String> {
@@ -443,7 +444,7 @@ fn validate_role_routing_provider_bindings(
     }
     Ok(())
 }
-fn validate_voice_route_provider(
+pub(super) fn validate_voice_route_provider(
     source: &str,
     provider_id: Option<&str>,
     providers: &[ModelProviderSettings],

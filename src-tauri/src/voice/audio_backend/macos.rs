@@ -7,9 +7,20 @@ use super::{
     BLUETOOTH_TRANSPORT,
 };
 use crate::RunCancellation;
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     ffi::{c_char, c_void, CStr},
     path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+    time::Duration,
+};
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::{
+    ffi::{c_char, c_void, CStr},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -453,6 +464,7 @@ impl MacEngine {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub fn play_wav_blocking(
         &self,
         path: &Path,

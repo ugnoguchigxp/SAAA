@@ -91,9 +91,7 @@ describe("module-size ratchet", () => {
     const path = "src-tauri/src/example_split.rs";
     const content = 'include!("example_split.d/01.rs");\n';
     expect(isForbiddenIncludeDSplit(path, content)).toBe(true);
-    expect(isForbiddenIncludeDSplit("src-tauri/src/example_split.d/01.rs", content)).toBe(
-      false,
-    );
+    expect(isForbiddenIncludeDSplit("src-tauri/src/example_split.d/01.rs", content)).toBe(false);
     expect(isForbiddenIncludeDSplit(path, "mod child;\n")).toBe(false);
     const baseline: BaselineFile = { generatedAt: "test", files: {} };
     expect(

@@ -27,6 +27,6 @@ mod focus_row;
 mod world_seed;
 use focus_row::{collect_nodes, enrich_relation, load_edges, load_focus, FocusRow};
 use world_seed::EntityRow;
-pub use world_seed::{
-    activate, ActivateInput, WorldSeed, AMBIGUOUS_SEED, PENDING, STALE, UNKNOWN_SEED,
-};
+#[cfg(any(test, feature = "offline-contracts"))]
+pub use world_seed::{activate, ActivateInput};
+pub use world_seed::{WorldSeed, AMBIGUOUS_SEED, PENDING, STALE, UNKNOWN_SEED};

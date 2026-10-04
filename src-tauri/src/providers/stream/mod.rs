@@ -1,10 +1,15 @@
 use std::sync::Arc;
+#[cfg(any(test, feature = "offline-contracts"))]
 use zeroize::Zeroizing;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::openai_compatible::provider_api_key;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::ipc_contract::ConversationMessage;
 use crate::runtime::event_hub::RuntimeEventSender;
-use crate::{OpenAiCompatibleProviderSettings, RunCancellation, StartTurnInput};
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::OpenAiCompatibleProviderSettings;
+use crate::{RunCancellation, StartTurnInput};
 
 mod agent_dispatch;
 mod attempt;
@@ -13,6 +18,7 @@ mod dynamic_lan;
 mod recall_dispatch;
 pub(crate) use attempt::*;
 pub(crate) use dispatch::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use dynamic_lan::*;
 #[cfg(test)]
 pub(crate) use recall_dispatch::execute_recall_tool;
@@ -30,6 +36,7 @@ pub(crate) struct ModelStreamContext<'a> {
     pub(crate) output_persistence: Option<ProviderOutputPersistence<'a>>,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn stream_model_provider(
     provider: &OpenAiCompatibleProviderSettings,
     history: &[ConversationMessage],
@@ -39,6 +46,7 @@ pub(crate) async fn stream_model_provider(
     stream_model_provider_with_api_key(provider, history, timeout_ms, None, None, context).await
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn stream_model_provider_with_api_key(
     provider: &OpenAiCompatibleProviderSettings,
     history: &[ConversationMessage],
@@ -61,6 +69,7 @@ pub(crate) async fn stream_model_provider_with_api_key(
     )
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn provider_attempt_outcome(
     result: Result<String, ProviderAttemptError>,
     cleanup: CleanupOutcome,
@@ -88,6 +97,7 @@ fn provider_attempt_outcome(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn stream_model_provider_inner(
     provider: &OpenAiCompatibleProviderSettings,
     history: &[ConversationMessage],

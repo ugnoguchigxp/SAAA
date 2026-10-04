@@ -197,9 +197,13 @@ mod tests {
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
         // The current event sink has no speech-enable flag. Suppression must also
         // survive clone_box, which is the fan-out path used by provider callbacks.
-        guard.clone_box().send(crate::ipc_contract::RuntimeEvent::Delta {
-            run_id: "run".into(), text: "forged speech".into(),
-        }).unwrap();
+        guard
+            .clone_box()
+            .send(crate::ipc_contract::RuntimeEvent::Delta {
+                run_id: "run".into(),
+                text: "forged speech".into(),
+            })
+            .unwrap();
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(!crate::runtime::context::state_answer::is_state_query(
             "今のタスクをキャンセルしてください"

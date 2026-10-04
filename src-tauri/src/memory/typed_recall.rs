@@ -10,9 +10,13 @@ pub(super) use typed_memory_type::RULE_ITEM_BYTES;
 pub use typed_memory_type::{
     is_typed_recall_tool, parse_call_tool_result, parse_typed_recall_arguments,
     typed_recall_input_schema, typed_recall_tool_definitions, TypedMemoryType,
-    TypedRecallContractError, ValidatedTypedRecallCall, MAX_CALL_TOOL_RESULT_BYTES,
-    MEMORY_RECALL_CONTRACT_VERSION, RECALL_EXPERIENCE_TOOL_NAME, RECALL_RULE_TOOL_NAME,
-    RECALL_SKILL_TOOL_NAME, TYPED_RECALL_TOOL_NAMES,
+    TypedRecallContractError, ValidatedTypedRecallCall, MEMORY_RECALL_CONTRACT_VERSION,
+    TYPED_RECALL_TOOL_NAMES,
+};
+#[cfg(any(test, feature = "offline-contracts"))]
+pub use typed_memory_type::{
+    MAX_CALL_TOOL_RESULT_BYTES, RECALL_EXPERIENCE_TOOL_NAME, RECALL_RULE_TOOL_NAME,
+    RECALL_SKILL_TOOL_NAME,
 };
 #[cfg(test)]
 #[path = "typed_recall/tests.rs"]

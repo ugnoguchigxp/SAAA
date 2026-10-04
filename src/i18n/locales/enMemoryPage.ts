@@ -1,26 +1,22 @@
 import { worldReview } from "./enWorldReview";
+import { enMemoryMessages } from "./enMemoryMessages";
 export const enMemoryPage = {
   review: worldReview,
   askLabel: "Ask about World knowledge",
   askPlaceholder: "Example: What is affected if caching changes?",
   askSubmit: "Ask in conversation",
-  correctionPrompt: worldReview.correctionPrompt,
+  correctionPrompt: enMemoryMessages.correctionPrompt,
 
-  columns: {
-    content: "Content",
-    kind: "Kind",
-    status: "Status",
-    sources: "Evidence",
-  },
+  columns: enMemoryMessages.columns,
   disabled: "Memory extraction is paused.",
   enableMaintenance: "Enable continuous conversation learning (LocalLLM)",
-  workStatus: worldReview.workStatus,
+  workStatus: enMemoryMessages.workStatus,
   viewLabel: "Memory view",
   stateView: "Conversation state",
   worldView: "Causal world model",
   maintenanceStatus: "Maintenance: {{reason}}",
   maintenanceReasons: {
-    "local-binding-unverified": worldReview.localBindingUnverified,
+    "local-binding-unverified": enMemoryMessages.localBindingUnverified,
     "not-started": "Waiting to start",
     ready: "Ready",
     "capability-unavailable": "LocalLLM extraction contract unavailable",
@@ -36,6 +32,6 @@ export const enMemoryPage = {
   noSources: "No evidence is available.",
   openRecord: "Open record",
   forget: "Forget",
-  forgetConfirm: worldReview.forgetConfirm,
+  forgetConfirm: enMemoryMessages.forgetConfirm,
   select: "Select an item to view details.",
 };

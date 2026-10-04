@@ -1,49 +1,31 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { invokeCalls, resetTauriCoreMock } from "./tauriCoreMock";
-import { MicrophoneCaptureError } from "../src/lib/microphone";
-
-const {
-  auditCaptureCancelled,
-  auditCaptureFailed,
-  auditCaptureStarted,
-  auditCaptureSuspended,
-  auditVoiceDeliveryBlocked,
-  auditVoiceDeliveryDecision,
-  auditVoiceDeliverySettlement,
-} = await import("../src/features/voice/voiceAudit");
-
-describe("voice audit projections", () => {
-  test("records capture and delivery decisions with bounded failure codes", () => {
-    resetTauriCoreMock();
-    auditCaptureStarted("s1", "c1", "recording");
-    auditCaptureCancelled("s1", "c1");
-    auditCaptureFailed("s1", "c1", new MicrophoneCaptureError("permission-denied", "denied"));
-    auditCaptureFailed("s1", "c1", "asr-provider-unavailable");
-    auditCaptureFailed("s1", "c1", "larm-session-prepare-failed: larm_startup_terminal");
-    auditCaptureFailed("s1", "c1", "lfm-session-prepare-failed: larm_cancelled");
-    auditCaptureFailed("s1", "c1", "other");
-    auditCaptureSuspended("s1", "c1", "speech");
-    auditVoiceDeliveryBlocked("s1", "u1", "c1", 2);
-    auditVoiceDeliveryBlocked("s1", "u1", "c1");
-    const utterance = { sessionId: "s1", utteranceId: "u1", conversationId: "c1", text: "hello" };
-    auditVoiceDeliveryDecision(utterance, "queued", 1);
-    auditVoiceDeliveryDecision(utterance, "immediate");
-    let settled: boolean | undefined;
-    const settle = auditVoiceDeliverySettlement(utterance, (delivered) => {
-      settled = delivered;
-    });
-    settle(true);
-    settle(false);
-    expect(settled).toBe(false);
-    const names = invokeCalls.map(
-      (call) => (call.args as { input?: { eventName?: string; failureCode?: string } })?.input,
+const { createConversationCaptureAudit } = await import("../src/lib/conversationCaptureAudit");
+test("current capture audit retains session correlation and bounds details", () => {
+  resetTauriCoreMock();
+  const audit = createConversationCaptureAudit(() => "capture-1");
+  audit("conversation-asr-capture-start", "request", "utterance-1", { inputDeviceId: "default" });
+  audit(
+    "conversation-asr-capture-stop",
+    "error",
+    "utterance-1",
+    { error: "長い詳細".repeat(1000) },
+    "failure",
+  );
+  const events = invokeCalls.map(
+    (call) =>
+      call.args?.input as {
+        correlationId: string;
+        attributes: Record<string, unknown>;
+        outcome?: string;
+      },
+  );
+  expect(events[0].correlationId).toBe("utterance-1");
+  expect(events[0].attributes.captureSessionId).toBe("capture-1");
+  expect(events.at(-1)?.outcome).toBe("failure");
+  expect(events.at(-1)?.attributes.overflow).toBe(true);
+  for (const event of events)
+    expect(new TextEncoder().encode(JSON.stringify(event.attributes)).length).toBeLessThanOrEqual(
+      1500,
     );
-    expect(names.some((event) => event?.eventName === "capture-started")).toBe(true);
-    expect(names.some((event) => event?.failureCode === "permission-denied")).toBe(true);
-    expect(names.some((event) => event?.failureCode === "asr-provider-unavailable")).toBe(true);
-    expect(
-      names.filter((event) => event?.failureCode === "larm-session-prepare-failed"),
-    ).toHaveLength(2);
-    expect(names.some((event) => event?.failureCode === "unknown")).toBe(true);
-  });
 });

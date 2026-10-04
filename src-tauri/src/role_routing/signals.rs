@@ -12,6 +12,7 @@ pub(crate) enum SignalKind {
     Unclear,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Converts a provider's structured classification into the same deliberately limited signal
 /// vocabulary as the conservative local fallback.  Any malformed or unauthorised result becomes
 /// `Unclear`; callers must not infer cancellation, approval, or a tool operation from it.
@@ -47,6 +48,7 @@ pub(crate) fn classify_structured_follow_up(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn classify_follow_up(input: &str) -> SignalKind {
     let text = input.trim();
     if text.is_empty() {
@@ -106,6 +108,7 @@ pub(crate) fn classify_follow_up(input: &str) -> SignalKind {
     SignalKind::Unclear
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Runs the conservative host classifier through the same strict structured contract used by a
 /// model-backed classifier. This keeps the normal turn path fail-closed today while allowing the
 /// classifier implementation to be replaced without changing coordinator authority.

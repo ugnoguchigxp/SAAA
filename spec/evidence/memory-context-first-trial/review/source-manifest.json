@@ -1,0 +1,25 @@
+{
+  "recordedAt": "2026-10-01",
+  "observedHead": "294f4969e8b54d7074279d2cddb1fb773aff7227",
+  "dirtyWorkspace": true,
+  "scope": "review of memory Context first trial; no production DB mutation",
+  "files": {
+    "scripts/conversation-context-report.ts": "baa5d2816c5c89bb749c4a8e46f9f04167ed41f589a837d1c469e1f8aa9746ca",
+    "scripts/module-size-baseline.json": "e02de92360f1e272b808e09f1a82e328fc269f70c488718f97db61df0c72de43",
+    "src-tauri/src/conversation_queue_e2e/context_trial.rs": "21147cbc6996168f39341bc673d109f2f0f78d871b87c7918f8a230ac410bbf4",
+    "src-tauri/src/conversation_queue_e2e/context_trial/regressions.rs": "72e3f4b6a2ced4ffc0c6d199e962a99eaf7c02c6a438ef9237e2796e7eae6c77",
+    "src-tauri/src/providers/chat_completions/mod.rs": "dbb6106a9b884c6f0728a201ad5dad5f0e4fc64eac6e1ebb6e9f5471a4d6d8cf",
+    "src-tauri/src/providers/chat_completions/observation.rs": "984e5b69fd1c8152de9c82d9c9b85baf603ed1f4fee7b0bc50ac5522af4ee924",
+    "src-tauri/src/providers/chat_completions/observation_tests.rs": "a8ceef96cdbe3bc156f146d58cc353e90caaa0cd27a781c8afc8ba749d55c1d3",
+    "src-tauri/src/runtime/conversation_check.rs": "f593727c3243004505f69bdf5f0a7408f4e2091457fe6b87143ef900efb780d8",
+    "src-tauri/src/runtime/conversation_check/context_compiler.rs": "6b0473c59a73545888a6c2a60df84a4607e8c9c2acea4fd74c2d772d9431d054",
+    "src-tauri/src/runtime/conversation_check/context_compiler_tests.rs": "2f9e16e05b74da4721bf5d6e356301fbd92a261cf32fa9148801ca5ca7902f64",
+    "src-tauri/src/runtime/conversation_check/context_metrics.rs": "25567d74eb5c903d820b0da0eec8421bebeb66cbf06953e5223981a348db1572",
+    "src-tauri/src/runtime/conversation_check/queue_answer_stream.rs": "8563a155d6e170ca9fb360a9fd713b3ce766c5a63c5ca4383912eb4c2cb4bbf7",
+    "src-tauri/src/runtime/conversation_check/queue_context.rs": "49e63109b36ad35a737fe49c89548b16d27d049306281aa0f82a7b3b30ad681f",
+    "src-tauri/src/runtime/conversation_check/queue_runtime.rs": "e67246a789684e80f0b47f7d938fd22a35df65fd6d8573289ace44671e53210a",
+    "src-tauri/src/runtime/conversation_check/queue_runtime/action.rs": "6098323c0e22ac4e8a5d0066cc0a5ccbcb162eee33936193c01222b50e5b41bb",
+    "src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs": "298520f67c7422026bdabe1c710600061f354800406b207c2edb2b047e322ac1",
+    "tests/conversation-context-report-input.test.ts": "f9cf2f0ba72979e5cadfd09354b54626ed2346f35cefc195f58f7f0703657713"
+  }
+}

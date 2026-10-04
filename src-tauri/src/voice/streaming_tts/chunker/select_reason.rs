@@ -67,6 +67,7 @@ impl SentenceAccumulator {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn finish(&mut self, final_content: &str) -> Result<(), AccumulatorError> {
         if self.input_closed {
             return Ok(());
@@ -83,6 +84,7 @@ impl SentenceAccumulator {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn idle_generation(&self) -> u64 {
         self.idle_generation
     }

@@ -1,6 +1,8 @@
 //! AgentSession initial request serialization and transport.
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::*;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) async fn start_turn(
     client: &Client,
     provider: &AgentSessionProviderSettings,
@@ -26,6 +28,7 @@ pub(super) async fn start_turn(
     Ok(turn)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn render_turn_input(
     history: &[ConversationMessage],
 ) -> Result<String, ProviderFailureKind> {

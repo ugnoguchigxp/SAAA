@@ -1,6 +1,9 @@
 //! Contract boundary for a tool-specialist child actor.
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::persistence::SqliteWriter;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::tool_selection::ToolSelectionService;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::RunCancellation;
 use serde::Deserialize;
 
@@ -12,6 +15,7 @@ pub(crate) struct SpecialistRequest {
     pub(crate) arguments: serde_json::Value,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// The specialist never gains final-answer authority; the parent interprets every tool result.
 pub(crate) fn validate(request: &SpecialistRequest, enabled: bool) -> Result<(), String> {
     if !enabled || request.tool_name.is_empty() || !request.arguments.is_object() {
@@ -20,6 +24,7 @@ pub(crate) fn validate(request: &SpecialistRequest, enabled: bool) -> Result<(),
     Ok(())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Executes a specialist request through the same host-owned gateway used by the restricted
 /// role MCP bridge. The specialist returns the gateway envelope to its parent; it has no route
 /// to publish a conversation answer or bypass the role-root tool ledger.

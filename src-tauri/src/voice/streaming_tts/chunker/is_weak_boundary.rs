@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::*;
 pub(super) fn is_weak_boundary(input: &str, cursor: usize, end: usize, grapheme: &str) -> bool {
     if grapheme.chars().all(char::is_whitespace) {

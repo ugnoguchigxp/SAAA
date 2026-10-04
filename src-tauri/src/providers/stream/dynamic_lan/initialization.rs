@@ -1,16 +1,16 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::providers::dynamic_lan::DynamicLanConnection;
+#[cfg(any(test, feature = "offline-contracts"))]
+type ResolvedConnection = (DynamicLanConnection, CleanupOutcome);
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn resolve(
     provider: &DynamicLanProviderSettings,
     stored_profile: Option<&str>,
     timeout_ms: u64,
     cancellation: Arc<RunCancellation>,
-) -> Result<
-    (
-        crate::providers::dynamic_lan::DynamicLanConnection,
-        CleanupOutcome,
-    ),
-    DynamicLanConnectionFailure,
-> {
+) -> Result<ResolvedConnection, DynamicLanConnectionFailure> {
     let local_cancel = Arc::new(RunCancellation::default());
     let provider = provider.clone();
     let stored_profile = stored_profile.map(str::to_string);
@@ -50,6 +50,7 @@ pub(crate) async fn resolve(
         },
     })
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) async fn release_in_background(
     connection: crate::providers::dynamic_lan::DynamicLanConnection,
 ) -> CleanupOutcome {

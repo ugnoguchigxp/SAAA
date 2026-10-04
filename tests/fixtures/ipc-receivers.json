@@ -111,21 +111,6 @@
             {
               "aliases": [],
               "capabilities": [
-                "social_reply"
-              ],
-              "id": "larm-frontdesk",
-              "label": "LARM 受付（backchannel）",
-              "larmProvider": "backchannel",
-              "location": "local",
-              "maxInputBytes": 16000,
-              "model": null,
-              "providerId": "lan-llm-dynamic",
-              "resourceGroup": "larm-backchannel",
-              "transport": "provider"
-            },
-            {
-              "aliases": [],
-              "capabilities": [
                 "reason",
                 "tools"
               ],
@@ -176,14 +161,13 @@
               "enabled": true,
               "id": "00-butler-respond",
               "roles": [
-                "frontend",
                 "reasoner"
               ]
             }
           ],
           "roles": {
             "advanced": null,
-            "frontend": "larm-frontdesk",
+            "frontend": null,
             "premium": null,
             "reasoner": "larm-reasoner",
             "reviewer": null,

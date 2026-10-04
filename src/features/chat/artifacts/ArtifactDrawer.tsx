@@ -1,3 +1,4 @@
+import { ArtifactTabs } from "./ArtifactTabs";
 import {
   createContext,
   lazy,
@@ -60,7 +61,8 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
   storeRef.current = store;
   const conversationRef = useRef<string | null>(null);
   conversationRef.current = store.conversationId;
-  const workspace = store.sessions[artifactSessionKey(store.conversationId)] ?? emptyArtifactWorkspace();
+  const workspace =
+    store.sessions[artifactSessionKey(store.conversationId)] ?? emptyArtifactWorkspace();
   const { tabs, activeTabId } = workspace;
   const presentedRef = useRef<Set<string>>(new Set());
   const panelRef = useRef<HTMLElement>(null);
@@ -75,10 +77,13 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
     closeAll?: boolean;
     timeout: number;
   } | null>(null);
-  const onSourceReady = useCallback((ready: boolean) => {
-    const tabId = activeTabId;
-    setSourceReadyFor((current) => ready ? tabId : current === tabId ? null : current);
-  }, [activeTabId]);
+  const onSourceReady = useCallback(
+    (ready: boolean) => {
+      const tabId = activeTabId;
+      setSourceReadyFor((current) => (ready ? tabId : current === tabId ? null : current));
+    },
+    [activeTabId],
+  );
   const openerRef = useRef<HTMLElement | null>(null);
   const wasOpenRef = useRef(false);
   const open = useCallback((instance: UiInstance, conversationId: string) => {
@@ -159,9 +164,13 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (pendingRequestRef.current) return;
-      void invoke<{ requestId: string; conversationId: string; generation: number; operation: string; index?: number } | null>(
-        "poll_artifact_webview_request",
-      )
+      void invoke<{
+        requestId: string;
+        conversationId: string;
+        generation: number;
+        operation: string;
+        index?: number;
+      } | null>("poll_artifact_webview_request")
         .then(async (request) => {
           if (!request) return;
           const currentStore = storeRef.current;
@@ -169,58 +178,85 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
           const current =
             currentStore.sessions[artifactSessionKey(conversationId)] ?? emptyArtifactWorkspace();
           const websiteTabs = current.tabs.filter((tab) => tab.kind === "source");
-          const selected = websiteTabs.findIndex((tab) => artifactTabId(tab) === current.activeTabId);
+          const selected = websiteTabs.findIndex(
+            (tab) => artifactTabId(tab) === current.activeTabId,
+          );
           const needsSelection = request.operation !== "close_all_tabs";
           const stale =
             request.generation !== generationRef.current || (needsSelection && selected < 0);
           if (stale || !conversationId || request.conversationId !== conversationId) {
-            await invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: false });
+            await invoke("complete_artifact_webview_request", {
+              requestId: request.requestId,
+              applied: false,
+            });
             return;
           }
           try {
             if (request.operation === "scroll") {
               await scrollActiveSourceWebview();
-              await invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: true });
+              await invoke("complete_artifact_webview_request", {
+                requestId: request.requestId,
+                applied: true,
+              });
               return;
             } else if (request.operation === "close_all_tabs") {
               if (websiteTabs.length === 0) throw new Error("no-website-tabs");
               pendingRequestRef.current = {
-                requestId: request.requestId, conversationId, closeAll: true,
+                requestId: request.requestId,
+                conversationId,
+                closeAll: true,
                 timeout: window.setTimeout(() => {
                   pendingRequestRef.current = null;
-                  void invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: false });
+                  void invoke("complete_artifact_webview_request", {
+                    requestId: request.requestId,
+                    applied: false,
+                  });
                 }, 1400),
               };
               dispatch({ type: "close-source-tabs", conversationId });
             } else if (request.operation === "close_tab") {
               pendingRequestRef.current = {
-                requestId: request.requestId, conversationId,
+                requestId: request.requestId,
+                conversationId,
                 removedTabId: artifactTabId(websiteTabs[selected]),
                 timeout: window.setTimeout(() => {
                   pendingRequestRef.current = null;
-                  void invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: false });
+                  void invoke("complete_artifact_webview_request", {
+                    requestId: request.requestId,
+                    applied: false,
+                  });
                 }, 1400),
               };
               dispatch({ type: "close", tabId: artifactTabId(websiteTabs[selected]) });
             } else if (request.operation === "select_tab" && websiteTabs[request.index ?? -1]) {
               const targetId = artifactTabId(websiteTabs[request.index ?? -1]);
               if (targetId === current.activeTabId) {
-                await invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: true });
+                await invoke("complete_artifact_webview_request", {
+                  requestId: request.requestId,
+                  applied: true,
+                });
                 return;
               }
               pendingRequestRef.current = {
-                requestId: request.requestId, conversationId,
+                requestId: request.requestId,
+                conversationId,
                 expectedTabId: targetId,
                 timeout: window.setTimeout(() => {
                   pendingRequestRef.current = null;
-                  void invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: false });
+                  void invoke("complete_artifact_webview_request", {
+                    requestId: request.requestId,
+                    applied: false,
+                  });
                 }, 1400),
               };
               dispatch({ type: "select", tabId: targetId });
             } else if (request.operation === "next_tab" || request.operation === "previous_tab") {
               const plan = planWebviewCommand(request.operation, selected, websiteTabs.length);
               if (plan.outcome === "ack-now") {
-                await invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: true });
+                await invoke("complete_artifact_webview_request", {
+                  requestId: request.requestId,
+                  applied: true,
+                });
                 return;
               }
               if (plan.outcome !== "reduce-then-ack") throw new Error("no-website-tabs");
@@ -229,15 +265,22 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
               const next = nextIndex === null ? undefined : websiteTabs[nextIndex];
               if (!next) throw new Error("no-website-tabs");
               if (artifactTabId(next) === current.activeTabId) {
-                await invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: true });
+                await invoke("complete_artifact_webview_request", {
+                  requestId: request.requestId,
+                  applied: true,
+                });
                 return;
               }
               pendingRequestRef.current = {
-                requestId: request.requestId, conversationId,
+                requestId: request.requestId,
+                conversationId,
                 expectedTabId: artifactTabId(next),
                 timeout: window.setTimeout(() => {
                   pendingRequestRef.current = null;
-                  void invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: false });
+                  void invoke("complete_artifact_webview_request", {
+                    requestId: request.requestId,
+                    applied: false,
+                  });
                 }, 1400),
               };
               dispatch({ type: "select", tabId: artifactTabId(next) });
@@ -250,7 +293,10 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
               window.clearTimeout(pending.timeout);
               pendingRequestRef.current = null;
             }
-            await invoke("complete_artifact_webview_request", { requestId: request.requestId, applied: false });
+            await invoke("complete_artifact_webview_request", {
+              requestId: request.requestId,
+              applied: false,
+            });
           }
         })
         .catch(() => undefined);
@@ -296,51 +342,15 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
             aria-labelledby="artifact-panel-title"
             tabIndex={-1}
           >
-            <header className={`artifact-panel-header${active.kind === "source" ? " artifact-panel-header-source" : ""}`}>
-              <div className="artifact-tabs" role="tablist">
-                {tabs.map((tab, index) => {
-                  const title = artifactTabTitle(tab);
-                  const tabId = artifactTabId(tab);
-                  const selected = tabId === activeTabId;
-                  return (
-                    <div className="artifact-tab" key={tabId}>
-                      <button
-                        type="button"
-                        role="tab"
-                        id={`artifact-tab-${index}`}
-                        aria-controls="artifact-panel-content"
-                        aria-selected={selected}
-                        tabIndex={selected ? 0 : -1}
-                        onClick={() => dispatch({ type: "select", tabId })}
-                        onKeyDown={(event) => {
-                          let nextIndex: number | null = null;
-                          if (event.key === "ArrowLeft")
-                            nextIndex = (index - 1 + tabs.length) % tabs.length;
-                          if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
-                          if (event.key === "Home") nextIndex = 0;
-                          if (event.key === "End") nextIndex = tabs.length - 1;
-                          if (nextIndex === null) return;
-                          event.preventDefault();
-                          const next = tabs[nextIndex];
-                          dispatch({ type: "select", tabId: artifactTabId(next) });
-                          document.getElementById(`artifact-tab-${nextIndex}`)?.focus();
-                        }}
-                      >
-                        {title}
-                      </button>
-                      <button
-                        type="button"
-                        className="artifact-tab-close"
-                        aria-label={`${t("genui.close")}: ${title}`}
-                        title={`${t("genui.close")}: ${title}`}
-                        onClick={() => close(tabId)}
-                      >
-                        <AppIcon name="close" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+            <header
+              className={`artifact-panel-header${active.kind === "source" ? " artifact-panel-header-source" : ""}`}
+            >
+              <ArtifactTabs
+                tabs={tabs}
+                activeTabId={activeTabId}
+                onSelect={(tabId) => dispatch({ type: "select", tabId })}
+                onClose={close}
+              />
               {active.kind === "source" && (
                 <>
                   <span className="artifact-source-url" title={active.url}>
@@ -378,7 +388,10 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
               role="tabpanel"
               aria-labelledby={`artifact-tab-${tabs.findIndex((tab) => artifactTabId(tab) === activeTabId)}`}
             >
-              <h2 id="artifact-panel-title" className={active.kind === "source" ? "visually-hidden" : undefined}>
+              <h2
+                id="artifact-panel-title"
+                className={active.kind === "source" ? "visually-hidden" : undefined}
+              >
                 {artifactTabTitle(active)}
               </h2>
               {active.kind === "semantic-ui" ? (
@@ -406,12 +419,12 @@ export function ArtifactWorkspaceProvider({ children }: { children: ReactNode })
                 </UiBoundary>
               ) : (
                 <Suspense fallback={<p>{t("genui.loading")}</p>}>
-                    <SourceWebsite
-                      conversationId={active.conversationId}
-                      url={active.url}
-                      title={active.title}
-                      onReady={onSourceReady}
-                    />
+                  <SourceWebsite
+                    conversationId={active.conversationId}
+                    url={active.url}
+                    title={active.title}
+                    onReady={onSourceReady}
+                  />
                 </Suspense>
               )}
             </div>

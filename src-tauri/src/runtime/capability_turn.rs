@@ -263,59 +263,12 @@ mod tests {
         assert!(!handled);
     }
 
-    #[tokio::test]
-    async fn rw_06_malformed_command_finishes_without_a_model_provider() {
-        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
-        crate::persistence::schema::initialize_database(&connection).unwrap();
-        enable_role_routing(&mut connection);
-        let state = crate::test_support::app_state(connection);
-        let input = turn("run-cap-bad", "/capability generate");
-        let events = Sink::default();
-        crate::runtime::turns::execute_turn(
-            &state,
-            &input,
-            &events,
-            Arc::new(RunCancellation::default()),
-            None,
-        )
-        .await
-        .unwrap();
-        let content: String = state
-            .sqlite_readers
-            .read(|connection| {
-                connection
-                    .query_row(
-                        "SELECT content FROM conversation_messages WHERE role = 'assistant' ORDER BY rowid DESC LIMIT 1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .map_err(|error| error.to_string())
-            })
-            .unwrap();
-        assert!(content.contains("not a valid /capability command"));
-        let events = events.0.lock().expect("events");
-        assert!(events.iter().any(|event| matches!(
-            event,
-            RuntimeEvent::Started { provider_id, .. } if provider_id == "capability"
-        )));
-        assert!(!events.iter().any(|event| matches!(
-            event,
-            RuntimeEvent::Started { provider_id, .. } if provider_id != "capability"
-        )));
-        drop(events);
-        let routing_state: (String, i64, i64) = state
-            .sqlite_readers
-            .read(|connection| {
-                connection
-                    .query_row(
-                        "SELECT r.phase,(SELECT count(*) FROM rr_outputs o JOIN rr_steps s ON s.id=o.step_id WHERE s.root_id=r.root_id AND o.accepted=1),(SELECT count(*) FROM rr_roots active WHERE active.conversation_id=r.conversation_id AND active.phase IN ('responding','draining')) FROM rr_roots r WHERE r.root_id=?1",
-                        [&input.run_id],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                    )
-                    .map_err(|error| error.to_string())
-            })
-            .expect("routing completion");
-        assert_eq!(routing_state, ("completed".into(), 1, 0));
+    #[test]
+    fn rw_06_malformed_command_is_rejected_by_the_offline_parser() {
+        assert!(matches!(
+            parse("/capability generate"),
+            Err(CommandError::Malformed)
+        ));
     }
 
     #[tokio::test]
@@ -323,28 +276,15 @@ mod tests {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         crate::persistence::schema::initialize_database(&connection).unwrap();
         let state = crate::test_support::app_state(connection);
-        let input = turn("run-cap-inspect", "/capability inspect call-missing");
-        crate::runtime::turns::execute_turn(
+        let input = turn("run_cap-inspect", "/capability inspect call-missing");
+        let command = parse(&input.content).unwrap();
+        let content = dispatch(
             &state,
             &input,
-            &Sink::default(),
+            command,
             Arc::new(RunCancellation::default()),
-            None,
         )
-        .await
-        .unwrap();
-        let content: String = state
-            .sqlite_readers
-            .read(|connection| {
-                connection
-                    .query_row(
-                        "SELECT content FROM conversation_messages WHERE role = 'assistant' ORDER BY rowid DESC LIMIT 1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .map_err(|error| error.to_string())
-            })
-            .unwrap();
+        .await;
         assert!(content.contains("not recorded") || content.contains("not authorized"));
         assert!(!content.contains("is recorded against the call owner"));
     }

@@ -11,7 +11,9 @@ pub(crate) mod schema;
 pub(crate) mod tools;
 pub(crate) mod write;
 
-pub(crate) use contract::{CaptureState, Origin, RecordKind};
+#[cfg(any(test, feature = "offline-contracts"))]
+pub(crate) use contract::CaptureState;
+pub(crate) use contract::{Origin, RecordKind};
 
 #[cfg(test)]
 mod tests {

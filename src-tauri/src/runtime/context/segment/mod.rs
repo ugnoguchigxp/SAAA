@@ -6,6 +6,7 @@ pub(crate) mod manifest;
 pub(crate) mod schema;
 pub(crate) mod triggers;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn path_selected(
     segments_enabled: bool,
     history_binding_none: bool,
@@ -14,6 +15,7 @@ pub(crate) fn path_selected(
     segments_enabled && history_binding_none && chat_completions
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn prefix_match_bytes(previous: &[u8], current: &[u8]) -> usize {
     previous
         .iter()

@@ -6,6 +6,7 @@ pub(crate) struct ContextEntry {
     pub(crate) text: String,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn append_conversation(
     connection: &Connection,
     segment_id: &str,
@@ -16,6 +17,7 @@ pub(crate) fn append_conversation(
     append(connection, segment_id, role, Some(record_id), text)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn append_tool_round(
     connection: &Connection,
     segment_id: &str,
@@ -32,6 +34,7 @@ pub(crate) fn append_tool_round(
     append(connection, segment_id, "tool_round", Some(record_id), &text)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn append(
     connection: &Connection,
     segment_id: &str,

@@ -1,6 +1,9 @@
 use super::*;
 
-pub(crate) fn prepare_runtime_run(state: &AppState, input: &StartTurnInput) -> Result<String, String> {
+pub(crate) fn prepare_runtime_run(
+    state: &AppState,
+    input: &StartTurnInput,
+) -> Result<String, String> {
     let task_mode: String = state.sqlite_readers.read(|connection| {
         connection
             .query_row(

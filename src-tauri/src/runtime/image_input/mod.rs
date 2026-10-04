@@ -8,11 +8,16 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use base64::Engine;
+#[cfg(any(test, feature = "offline-contracts"))]
 use image::codecs::jpeg::JpegEncoder;
+#[cfg(any(test, feature = "offline-contracts"))]
 use image::codecs::png::PngEncoder;
 use image::imageops::FilterType;
-use image::{ExtendedColorType, GenericImageView, ImageEncoder, ImageReader, Limits};
+#[cfg(any(test, feature = "offline-contracts"))]
+use image::{ExtendedColorType, ImageEncoder};
+use image::{GenericImageView, ImageReader, Limits};
 use serde::{Deserialize, Serialize};
+#[cfg(any(test, feature = "offline-contracts"))]
 use serde_json::{json, Value};
 
 #[path = "commands.rs"]
@@ -27,6 +32,7 @@ pub(crate) const MIN_LONG_EDGE: u32 = 1_280;
 const QUALITIES: [f32; 3] = [75.0, 65.0, 60.0];
 const MAX_ENCODE_ATTEMPTS: usize = 4;
 pub(crate) const MAX_WEBP_BYTES: usize = 1_500_000;
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Separate from the 96_000 byte text envelope. Includes Base64 expansion of one image.
 pub(crate) const MAX_IMAGE_REQUEST_BYTES: usize = 3_000_000;
 const SWEEP_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
@@ -135,6 +141,7 @@ pub(crate) fn release(data_directory: &Path, run_id: &str) -> Result<(), ImageEr
     Ok(())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn has_claimed(data_directory: &Path, run_id: &str) -> bool {
     claimed_path(data_directory, run_id).is_ok_and(|path| path.is_file())
 }
@@ -177,6 +184,7 @@ pub(crate) fn store_capability(
     write_private(&path, &bytes)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn attach(
     data_directory: &Path,
     messages: &mut Vec<Value>,
@@ -215,12 +223,14 @@ pub(crate) fn attach(
     Ok(())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn body_has_image(body: &Value) -> bool {
     body["messages"]
         .as_array()
         .is_some_and(|messages| messages.iter().any(message_has_image))
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn redact_provider_body(payload: &[u8]) -> Vec<u8> {
     let Ok(mut value) = serde_json::from_slice::<Value>(payload) else {
         return br#"{"messages":[{"role":"user","content":"[image omitted]"}]}"#.to_vec();
@@ -243,6 +253,7 @@ pub(crate) fn redact_provider_body(payload: &[u8]) -> Vec<u8> {
     })
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn message_has_image(message: &Value) -> bool {
     message["content"]
         .as_array()
@@ -341,6 +352,7 @@ fn scaled(width: u32, height: u32, long_edge: u32) -> (u32, u32) {
     (width, height)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn transcode(webp: &[u8], format: SendFormat) -> Result<(&'static str, Vec<u8>), ImageError> {
     match format {
         SendFormat::Unsupported => {
@@ -387,6 +399,7 @@ fn transcode(webp: &[u8], format: SendFormat) -> Result<(&'static str, Vec<u8>),
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn load_format(
     data_directory: &Path,
     endpoint: &str,

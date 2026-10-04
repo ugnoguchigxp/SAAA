@@ -1,11 +1,9 @@
 import receiverFixtures from "./fixtures/ipc-receivers.json";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { invokeCalls, invokeImpl, resetTauriCoreMock } from "./tauriCoreMock";
-import { markReasoningRun } from "../src/lib/reasoningRun";
 
 const {
   backupDatabase,
-  cancelRun,
   deleteProviderApiKey,
   deleteVoiceEnrollmentSample,
   deleteVoiceProfile,
@@ -24,23 +22,12 @@ const {
   setProviderApiKey,
   setTargetSpeakerFilterEnabled,
   setVoiceListeningEnabled,
-  startTurn,
+  enqueueConversationText,
+  cancelConversationInput,
   stopTts,
   testModelProvider,
 } = await import("../src/lib/runtime");
-const { appendVoiceAsrAudio, commitVoiceAsrUtterance, startVoiceAsrSession, stopVoiceAsrSession } =
-  await import("../src/lib/voiceAsrRuntime");
-const { getConversationVoicePolicy, resetConversationVoicePolicy, updateConversationVoicePolicy } =
-  await import("../src/lib/voiceBehaviorRuntime");
 const { recordAuditEvent } = await import("../src/lib/auditRuntime");
-const {
-  currentLarmVoice,
-  endLarmVoice,
-  failLarmVoiceSession,
-  ownLarmVoice,
-  prepareLarmVoiceSession,
-} = await import("../src/lib/larmVoiceRuntime");
-const { cancelReasoningRun } = await import("../src/lib/reasoningRunControl");
 const { stageAudioUpload } = await import("../src/lib/audioIpc");
 const { notifyUiHistoryChanged, uiApi } = await import("../src/features/chat/ui/api");
 
@@ -171,26 +158,10 @@ beforeEach(() => {
   ensureWindow();
 });
 
-afterEach(async () => {
-  const current = currentLarmVoice();
-  if (current) await endLarmVoice(current).catch(() => undefined);
-});
-
 describe("frontend IPC wrappers", () => {
   test("forwards conversation, settings, and situation commands", async () => {
-    const events: unknown[] = [];
-    await startTurn(
-      {
-        runId: "run-1",
-        conversationId: "c1",
-        content: "hello",
-        workspacePath: null,
-        inputOrigin: "text",
-        presentationMode: "visual",
-      },
-      (event) => events.push(event),
-    );
-    await cancelRun("run-1", "user-stop");
+    await enqueueConversationText("input-1", "hello");
+    await cancelConversationInput("input-1");
     await testModelProvider({
       kind: "openai-compatible",
       id: "local",
@@ -224,10 +195,9 @@ describe("frontend IPC wrappers", () => {
     });
 
     const names = invokeCalls.map((call) => call.command);
-    expect(names).toContain("start_turn");
-    expect(invokeCalls.find((call) => call.command === "cancel_run")?.args).toEqual({
-      runId: "run-1",
-      reason: "user-stop",
+    expect(names).toContain("enqueue_conversation_text");
+    expect(invokeCalls.find((call) => call.command === "cancel_conversation_input")?.args).toEqual({
+      inputId: "input-1",
     });
     expect(names).toContain("save_settings_documents");
     expect(invokeCalls.find((call) => call.command === "list_audit_events")?.args).toEqual({
@@ -235,7 +205,6 @@ describe("frontend IPC wrappers", () => {
     });
     expect(names).not.toContain("watch_meeting");
     expect(names).not.toContain("get_situation_snapshot");
-    expect(events).toEqual([]);
   });
 
   test("stages enrollment audio before invoking", async () => {
@@ -260,21 +229,6 @@ describe("frontend IPC wrappers", () => {
     await setProviderApiKey("local", "secret");
     await deleteProviderApiKey("local");
     await getProviderCredentialState("local");
-    await getConversationVoicePolicy("c1");
-    await updateConversationVoicePolicy({
-      conversationId: "c1",
-      speechOutput: "muted",
-      listeningPace: null,
-      expectedRevision: 1,
-    });
-    await resetConversationVoicePolicy({ conversationId: "c1", expectedRevision: 2 });
-    await startVoiceAsrSession(
-      { sessionId: "asr-1", conversationId: "c1", sampleRate: 16_000 },
-      () => undefined,
-    );
-    await appendVoiceAsrAudio("asr-1", 1, new Uint8Array([1, 2]));
-    await commitVoiceAsrUtterance({ sessionId: "asr-1", reason: "silence" });
-    await stopVoiceAsrSession({ sessionId: "asr-1", finalizeCurrent: true });
     recordAuditEvent({ component: "frontend", eventName: "ready", phase: "start" });
     await uiApi.enabled();
     await uiApi.setEnabled(true);
@@ -293,121 +247,7 @@ describe("frontend IPC wrappers", () => {
     });
     notifyUiHistoryChanged("c1");
     expect(events).toEqual(["c1"]);
-    expect(invokeCalls.some((call) => call.command === "start_voice_asr_session")).toBe(true);
-  });
-
-  test("releases a LARM voice owner after a non-cancelled ASR start failure", async () => {
-    ownLarmVoice("c2");
-    invokeImpl.handler = async (command) => {
-      if (command === "start_voice_asr_session") throw new Error("asr-provider-unavailable");
-      return command;
-    };
-    await expect(
-      startVoiceAsrSession(
-        {
-          sessionId: "asr-2",
-          conversationId: "c2",
-          sampleRate: 16_000,
-        },
-        () => undefined,
-      ),
-    ).rejects.toThrow("asr-provider-unavailable");
-    expect(invokeCalls.map((call) => call.command)).toContain("end_larm_voice_session");
-  });
-
-  test("starts ASR when the LARM provider lease cannot be prepared", async () => {
-    ownLarmVoice("c-lease-failure");
-    invokeImpl.handler = async (command) => {
-      if (command === "begin_larm_voice_session") throw new Error("LLM lease unavailable");
-      return command;
-    };
-    await startVoiceAsrSession(
-      { sessionId: "asr-after-lease-failure", conversationId: "c-lease-failure", sampleRate: 16_000 },
-      () => undefined,
-    );
-    expect(invokeCalls.map((call) => call.command)).toContain("start_voice_asr_session");
-  });
-
-  test("starts ASR while the LARM conversation lease is still preparing", async () => {
-    ownLarmVoice("c-pending-lease");
-    let finishPreparation = () => undefined;
-    const preparation = new Promise<void>((resolve) => {
-      finishPreparation = resolve;
-    });
-    invokeImpl.handler = async (command) => {
-      if (command === "begin_larm_voice_session") await preparation;
-      return command;
-    };
-    await startVoiceAsrSession(
-      { sessionId: "asr-pending-lease", conversationId: "c-pending-lease", sampleRate: 16_000 },
-      () => undefined,
-    );
-    expect(invokeCalls.map((call) => call.command)).toContain("start_voice_asr_session");
-    finishPreparation();
-  });
-
-  test("ends a pending LARM lease when ASR startup fails", async () => {
-    ownLarmVoice("c-asr-failure-during-lease");
-    let finishPreparation = () => undefined;
-    const preparation = new Promise<void>((resolve) => {
-      finishPreparation = resolve;
-    });
-    invokeImpl.handler = async (command) => {
-      if (command === "begin_larm_voice_session") await preparation;
-      if (command === "start_voice_asr_session") throw new Error("asr-provider-unavailable");
-      if (command === "end_larm_voice_session") finishPreparation();
-      return command;
-    };
-    await expect(
-      startVoiceAsrSession(
-        {
-          sessionId: "asr-failure-during-lease",
-          conversationId: "c-asr-failure-during-lease",
-          sampleRate: 16_000,
-        },
-        () => undefined,
-      ),
-    ).rejects.toThrow("asr-provider-unavailable");
-    expect(currentLarmVoice()).toBeNull();
-    expect(invokeCalls.map((call) => call.command)).toContain("end_larm_voice_session");
-  });
-
-  test("does not fail a LARM owner when ASR start is cancelled", async () => {
-    invokeImpl.handler = async (command) => {
-      if (command === "start_voice_asr_session") throw new Error("asr-cancelled");
-      return command;
-    };
-    await expect(
-      startVoiceAsrSession(
-        {
-          sessionId: "asr-3",
-          conversationId: "c3",
-          sampleRate: 16_000,
-        },
-        () => undefined,
-      ),
-    ).rejects.toThrow("asr-cancelled");
-    expect(invokeCalls.filter((call) => call.command === "end_larm_voice_session")).toHaveLength(0);
-  });
-
-  test("owns, prepares, and ends a LARM voice session through the runtime adapters", async () => {
-    const owner = ownLarmVoice("c4");
-    expect(currentLarmVoice()?.id).toBe(owner.id);
-    await prepareLarmVoiceSession("c4");
-    await failLarmVoiceSession(null);
-    await endLarmVoice(owner);
-    expect(currentLarmVoice()).toBeNull();
-  });
-
-  test("cancels a marked reasoning run and restores cancellation state on failure", async () => {
-    markReasoningRun("reason-1", "c1");
-    await cancelReasoningRun(null);
-    await cancelReasoningRun("reason-1");
-    invokeImpl.handler = async () => {
-      throw new Error("busy");
-    };
-    markReasoningRun("reason-2", "c1");
-    await expect(cancelReasoningRun("reason-2")).rejects.toThrow("busy");
+    expect(invokeCalls.some((call) => call.command === "resolve_service_harness")).toBe(true);
   });
 
   test("rejects empty staged audio and still clears PCM after a successful upload", async () => {

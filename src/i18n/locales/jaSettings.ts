@@ -196,7 +196,8 @@ export const jaSettings = {
       asrTransport: "ASR通信方式",
       asrHttp: "録音後に送信（HTTP）",
       asrQwenRealtime: "Qwen ASR Realtime（WebSocket）",
-      asrQwenHelp: "エンドポイントに https://dashscope-intl.aliyuncs.com/api-ws/v1/realtime、モデルに qwen3-asr-flash-realtime を指定してください。APIキーはこのProviderに保存します。",
+      asrQwenHelp:
+        "エンドポイントに https://dashscope-intl.aliyuncs.com/api-ws/v1/realtime、モデルに qwen3-asr-flash-realtime を指定してください。APIキーはこのProviderに保存します。",
       model: "モデル",
       modelPlaceholder: "モデル名",
       authentication: "認証",

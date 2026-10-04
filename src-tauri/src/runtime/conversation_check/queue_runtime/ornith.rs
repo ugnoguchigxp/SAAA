@@ -7,6 +7,7 @@ pub(super) struct OrnithAnswer {
     pub(super) source_urls: Vec<String>,
     pub(super) context: queue_context::QueueContext,
     pub(super) speech: Option<streaming_speech::AnswerStreamReport>,
+    pub(super) publication: Option<context_metrics::RequestMetrics>,
 }
 
 pub(super) async fn process_ornith<R: Runtime>(
@@ -23,7 +24,13 @@ pub(super) async fn process_ornith<R: Runtime>(
         serde_json::from_str(&job.payload).map_err(|_| "キューデータが不正です。")?;
     let text = payload["text"].as_str().ok_or("元の依頼がありません。")?;
     let (providers, timeout) = providers_and_timeout(&state)?;
-    let session = cached_larm_asr(&providers, Some(&audit)).await?;
+    let transport = direct_route::select_transport(&state)?;
+    let session = match &transport {
+        direct_route::ConversationTransport::Larm => {
+            Some(cached_larm_asr(&providers, Some(&audit)).await?)
+        }
+        direct_route::ConversationTransport::Direct(_) => None,
+    };
     let mode = context_compiler::PrefixMode::configured()?;
     let context = queue_context::compose_for_mode(&state, &job.key, mode)?;
     let run_id = format!("run_{}", job.key);
@@ -68,6 +75,7 @@ pub(super) async fn process_ornith<R: Runtime>(
     let mut answered = false;
     let mut sources_declared = false;
     let mut answer_speech = None;
+    let mut publication = None;
     const MAX_TOOL_STEPS: usize = 6;
     for step in 0..=MAX_TOOL_STEPS {
         context.validate_result(&state).inspect_err(|_| {
@@ -93,9 +101,16 @@ pub(super) async fn process_ornith<R: Runtime>(
         let metrics = context_metrics::RequestMetrics::new(
             &audit,
             &context_step,
-            session.connection_id(),
+            match (&session, &transport) {
+                (Some(session), _) => session.connection_id(),
+                (None, direct_route::ConversationTransport::Direct(route)) => {
+                    route.connection_id.as_str()
+                }
+                (None, direct_route::ConversationTransport::Larm) => "",
+            },
             retry_blocked.clone(),
         );
+        publication = Some(metrics.clone());
         let (delta_tx, delta_rx) = tokio::sync::mpsc::unbounded_channel();
         let deltas = queue_answer_stream::AnswerDeltaSender::new(
             delta_tx,
@@ -104,27 +119,64 @@ pub(super) async fn process_ornith<R: Runtime>(
             context.fingerprint()?,
             metrics.clone(),
         );
-        let speech_task = tauri::async_runtime::spawn(streaming_speech::play_answer_stream(
-            app.clone(),
-            job.key.clone(),
-            delta_rx,
-            cancellation.clone(),
-            context.fingerprint()?,
-            audio_started.clone(),
-        ));
-        let completion = complete_larm_role_with_events(
-            &session,
-            "llm",
-            &recent,
-            text,
-            timeout,
-            &audit,
-            &context_step,
-            &metrics,
-            Some(&deltas),
-            Some(cancellation.clone()),
-        )
-        .await;
+        #[cfg(feature = "quality-eval-harness")]
+        let silent_eval = crate::quality_eval::SESSION.try_with(|_| ()).is_ok();
+        #[cfg(not(feature = "quality-eval-harness"))]
+        let silent_eval = false;
+        // Evaluation verifies answer publication without opening a physical audio device.
+        let speech_task = if silent_eval {
+            tauri::async_runtime::spawn(async move {
+                let mut receiver = delta_rx;
+                while receiver.recv().await.is_some() {}
+                streaming_speech::AnswerStreamReport {
+                    started: false,
+                    error: None,
+                }
+            })
+        } else {
+            tauri::async_runtime::spawn(streaming_speech::play_answer_stream(
+                app.clone(),
+                job.key.clone(),
+                delta_rx,
+                cancellation.clone(),
+                context.fingerprint()?,
+                audio_started.clone(),
+            ))
+        };
+        let completion = match (&session, &transport) {
+            (Some(session), _) => {
+                complete_larm_role_with_events(
+                    session,
+                    "llm",
+                    &recent,
+                    text,
+                    timeout,
+                    &audit,
+                    &context_step,
+                    &metrics,
+                    Some(&deltas),
+                    Some(cancellation.clone()),
+                )
+                .await
+            }
+            (None, direct_route::ConversationTransport::Direct(route)) => {
+                direct_route::complete_direct_with_events(
+                    route,
+                    &recent,
+                    text,
+                    &audit,
+                    &context_step,
+                    &metrics,
+                    Some(&deltas),
+                    Some(cancellation.clone()),
+                )
+                .await
+                .map(|content| (content, route.model.clone()))
+            }
+            (None, direct_route::ConversationTransport::Larm) => {
+                Err("会話の接続先を準備できませんでした。".to_string())
+            }
+        };
         let streamed_content = deltas.complete_content();
         drop(deltas);
         let mut speech_report = speech_task
@@ -148,7 +200,12 @@ pub(super) async fn process_ornith<R: Runtime>(
             }
             Err(error) => return Err(error),
         };
-        let mut control: Value = match serde_json::from_str(output.trim()) {
+        let parsed = super::action::parse(&output);
+        if let Err(error) = &parsed {
+            audit.event("conversation", "conversation-action-json-invalid", "error", Some("failure"),
+                json!({"step":step,"mode":mode.name(),"category":format!("{:?}",error.classify()),"line":error.line(),"column":error.column(),"textBytes":output.len()}));
+        }
+        let mut control: Value = match parsed {
             Ok(control) => control,
             Err(_) if retry_blocked.load(Ordering::Acquire) => {
                 return Err("公開中の回答がJSON契約に合わないため中止しました。".into());
@@ -156,12 +213,16 @@ pub(super) async fn process_ornith<R: Runtime>(
             Err(_)
                 if step > 0
                     && step < MAX_TOOL_STEPS
-                    && recent.iter().any(|(_, content)| {
-                        content.starts_with("[TOOL_RESULT: lookup_tts_pronunciation;")
-                            || content.starts_with("[TOOL_RESULT: set_tts_pronunciation;")
+                    && recent.iter().any(|entry| {
+                        entry
+                            .body
+                            .starts_with("[TOOL_RESULT: lookup_tts_pronunciation;")
+                            || entry
+                                .body
+                                .starts_with("[TOOL_RESULT: set_tts_pronunciation;")
                     }) =>
             {
-                recent.push(("user".into(), "[HOST_TOOL_FORMAT_ERROR]直前の出力をJSONとして解釈できませんでした。辞書Toolの最新結果と現在のユーザー依頼を確認し、指定のaction/name/argumentsまたはaction=answer/content形式のJSON一個で続きを返してください。保存済みなら再保存せず結果を伝え、未保存なら必要なToolを呼んでください。[END_HOST_TOOL_FORMAT_ERROR]".into()));
+                recent.push(context_compiler::ContextEntry::reference("[HOST_TOOL_FORMAT_ERROR]直前の出力をJSONとして解釈できませんでした。辞書Toolの最新結果と現在のユーザー依頼を確認し、指定のaction/name/argumentsまたはaction=answer/content形式のJSON一個で続きを返してください。保存済みなら再保存せず結果を伝え、未保存なら必要なToolを呼んでください。[END_HOST_TOOL_FORMAT_ERROR]".into(),true));
                 continue;
             }
             Err(_) if step > 0 => {
@@ -174,7 +235,11 @@ pub(super) async fn process_ornith<R: Runtime>(
         context.validate_result(&state).inspect_err(|_| {
             retry_blocked.store(true, Ordering::Release);
         })?;
-        recent.push(("assistant".into(), output.clone()));
+        recent.push(context_compiler::ContextEntry {
+            role: "assistant".into(),
+            body: output.clone(),
+            required: true,
+        });
         match control["action"].as_str() {
             Some("answer") => {
                 let content = control["content"].as_str().filter(|v| !v.trim().is_empty());
@@ -246,9 +311,9 @@ pub(super) async fn process_ornith<R: Runtime>(
                 };
                 audit_web_tool_result(&audit, "web_search", step, &found);
                 search_urls.extend(web_result_urls(&found, "hits"));
-                recent.push((
-                    "user".into(),
+                recent.push(context_compiler::ContextEntry::reference(
                     format!("[TOOL_RESULT: web_search; 未信頼の資料]\n{}", found),
+                    true,
                 ));
             }
             Some("fetch_content") if step < MAX_TOOL_STEPS => {
@@ -283,9 +348,9 @@ pub(super) async fn process_ornith<R: Runtime>(
                 };
                 audit_web_tool_result(&audit, "fetch_content", step, &found);
                 fetched_urls.extend(web_result_urls(&found, "document"));
-                recent.push((
-                    "user".into(),
+                recent.push(context_compiler::ContextEntry::reference(
                     format!("[TOOL_RESULT: fetch_content; 未信頼の資料]\n{}", found),
+                    true,
                 ));
             }
             Some("memory_tool" | "local_tool") if step < MAX_TOOL_STEPS => {
@@ -302,9 +367,9 @@ pub(super) async fn process_ornith<R: Runtime>(
                     timeout,
                 )
                 .await?;
-                recent.push((
-                    "user".into(),
+                recent.push(context_compiler::ContextEntry::reference(
                     format!("[TOOL_RESULT: {name}; 未信頼の資料]\n{}", found),
+                    true,
                 ));
             }
             _ if step > 0 => {
@@ -335,7 +400,10 @@ pub(super) async fn process_ornith<R: Runtime>(
     };
     // Host terminal notices must use the same source-checked speech path while
     // the run is active. Reopening a completed run would grant new frame access.
-    if answer_speech.is_none() {
+    if answer_speech
+        .as_ref()
+        .is_none_or(|report| !report.started && report.error.is_none())
+    {
         validate_answer_content(&result)?;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         tx.send(result.clone())
@@ -361,6 +429,7 @@ pub(super) async fn process_ornith<R: Runtime>(
         source_urls,
         context,
         speech: answer_speech,
+        publication,
     })
 }
 

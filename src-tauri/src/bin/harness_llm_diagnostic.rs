@@ -2,7 +2,9 @@
 #[tokio::main]
 async fn main() {
     let Some(target) = std::env::args().nth(1) else {
-        eprintln!("Usage: harness_llm_diagnostic <control-base-url|database> [--enable-role-routing]");
+        eprintln!(
+            "Usage: harness_llm_diagnostic <control-base-url|database> [--enable-role-routing]"
+        );
         std::process::exit(2);
     };
     let result = if std::env::args().nth(2).as_deref() == Some("--enable-role-routing") {

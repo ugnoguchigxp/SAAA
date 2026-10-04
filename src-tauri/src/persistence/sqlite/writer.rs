@@ -70,7 +70,11 @@ impl SqliteWriter {
         })
     }
 
-    #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
+    #[cfg(any(
+        test,
+        feature = "quality-eval-harness",
+        feature = "conversation-queue-e2e"
+    ))]
     pub(crate) fn from_connection(connection: Connection) -> Self {
         Self {
             connection: Mutex::new(connection),

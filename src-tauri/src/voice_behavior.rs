@@ -7,9 +7,13 @@ mod tests;
 
 use std::{collections::HashMap, sync::Mutex};
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
+#[cfg(any(test, feature = "offline-contracts"))]
+use rusqlite::OptionalExtension;
 
-use crate::{database_error, now_iso, validate_identifier, AppState, StartTurnInput};
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::validate_identifier;
+use crate::{database_error, now_iso, AppState, StartTurnInput};
 pub(crate) use completion::{
     completion_state, effective_presentation, presentation_and_snapshot,
     upper_policies_allow_speech,
@@ -79,6 +83,7 @@ pub(crate) fn reset_conversation_voice_policy(
     reset_policy_from_ui(&state, input)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn begin_run(
     state: &AppState,
     run_id: &str,
@@ -125,6 +130,7 @@ pub(crate) fn begin_run(
     Ok(true)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn begin_turn_speech_policy(
     state: &AppState,
     input: &StartTurnInput,
@@ -150,6 +156,7 @@ pub(crate) fn begin_turn_speech_policy(
     policy
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn end_run(state: &AppState, run_id: &str) {
     if let Ok(mut runs) = state.voice_behavior.runs.lock() {
         runs.remove(run_id);

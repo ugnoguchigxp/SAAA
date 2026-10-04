@@ -1,9 +1,11 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::*;
 pub(crate) struct RoundGeneration(
     pub(super) Option<crate::runtime::context::generation::GenerationHandle>,
 );
 
 impl RoundGeneration {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn complete(&self) -> Result<(), ProviderFailureKind> {
         self.0
             .as_ref()
@@ -13,6 +15,7 @@ impl RoundGeneration {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn revalidate_before_tool(&self) -> Result<(), ProviderFailureKind> {
         self.0
             .as_ref()
@@ -22,18 +25,21 @@ impl RoundGeneration {
             .map_err(context_dependency_failure)
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn cancel(&self) {
         if let Some(generation) = &self.0 {
             let _ = generation.cancel();
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn fail(&self, reason: &str) {
         if let Some(generation) = &self.0 {
             let _ = generation.fail(reason);
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn finish_outcome(&self, outcome: &ProviderAttemptOutcome) {
         match outcome {
             ProviderAttemptOutcome::Cancelled { .. } => self.cancel(),
@@ -43,6 +49,7 @@ impl RoundGeneration {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn context_dependency_failure(error: String) -> ProviderFailureKind {
     if error.contains("scope dependency changed") {
         ProviderFailureKind::ContextScopeChanged

@@ -4,7 +4,9 @@
 //! authority of the item.  All personal-state candidates remain untrusted data.
 
 use super::source::{Candidate, Requirement};
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+#[cfg(any(test, feature = "offline-contracts"))]
+use sha2::Sha256;
 
 /// Why an item must survive context reduction.  This is deliberately derived from the current
 /// projection rather than persisted as another copy of the memory record.
@@ -26,10 +28,12 @@ pub(crate) struct RequiredContextSet {
 }
 
 impl RequiredContextSet {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn from_selected(selected: &[Candidate]) -> Self {
         Self::from_references(selected.iter())
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn from_references<'a>(selected: impl IntoIterator<Item = &'a Candidate>) -> Self {
         let mut items = selected
             .into_iter()

@@ -92,6 +92,7 @@ pub(crate) async fn execute_turn(
         "The legacy conversation runtime was removed pending replacement".into(),
     ))
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) async fn wait_for_role_routing_dispatch(
     state: &AppState,
     input: &StartTurnInput,
@@ -180,6 +181,7 @@ pub(super) async fn wait_for_role_routing_dispatch(
         }
     }
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Fails a barrier that outlived its immutable classification budget, then promotes one FIFO
 /// receipt. This prevents a crashed or unavailable classifier from deadlocking the conversation.
 pub(crate) fn expire_stale_input_barrier(

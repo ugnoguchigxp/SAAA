@@ -1,11 +1,19 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::sync::Arc;
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::time::Duration;
 
 use super::attempt::*;
-use super::{stream_model_provider_with_api_key, ModelStreamContext};
+#[cfg(any(test, feature = "offline-contracts"))]
+use super::stream_model_provider_with_api_key;
+#[cfg(any(test, feature = "offline-contracts"))]
+use super::ModelStreamContext;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::ipc_contract::ConversationMessage;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::{DynamicLanProviderSettings, OpenAiCompatibleProviderSettings, RunCancellation};
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn stream_dynamic_lan_provider(
     provider: &DynamicLanProviderSettings,
     stored_profile: Option<&str>,
@@ -69,6 +77,7 @@ pub(crate) async fn stream_dynamic_lan_provider(
     )
     .await
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn stream_allocated_dynamic_lan(
     provider: &DynamicLanProviderSettings,
     history: &[ConversationMessage],
@@ -137,6 +146,7 @@ pub(crate) struct DynamicLanConnectionFailure {
     pub(crate) cleanup: CleanupOutcome,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn dynamic_lan_cleanup_from_release(
     release: Result<(), crate::providers::dynamic_lan::DynamicLanError>,
 ) -> CleanupOutcome {
@@ -148,6 +158,7 @@ pub(crate) fn dynamic_lan_cleanup_from_release(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn merge_dynamic_lan_cleanup(
     previous: CleanupOutcome,
     current: CleanupOutcome,
@@ -160,6 +171,7 @@ pub(crate) fn merge_dynamic_lan_cleanup(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn dynamic_lan_release_failure_kind(
     kind: crate::providers::dynamic_lan::ErrorKind,
 ) -> &'static str {
@@ -175,9 +187,12 @@ pub(crate) fn dynamic_lan_release_failure_kind(
 }
 
 mod initialization;
+#[cfg(any(test, feature = "offline-contracts"))]
 use initialization::release_in_background;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use initialization::resolve as resolve_dynamic_lan_connection_for_request;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 async fn resolve_connection(
     provider: &DynamicLanProviderSettings,
     stored_profile: Option<&str>,
@@ -246,6 +261,7 @@ async fn resolve_connection(
     })
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn dynamic_lan_cleanup_from_release_failure(
     kind: Option<crate::providers::dynamic_lan::ErrorKind>,
 ) -> CleanupOutcome {

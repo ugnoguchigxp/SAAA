@@ -9,7 +9,7 @@ describe("MVP UI reachability contracts", () => {
     const app = source("src/App.tsx");
     const contracts = source("src/lib/contracts.ts");
     expect(contracts).toContain("primaryConversationId: string");
-    expect(app).toContain("nextSnapshot.primaryConversationId");
+    expect(app).toContain("snapshot.primaryConversationId");
     expect(app).toContain('useState<AppRoute>("conversation")');
     expect(app).not.toContain("新しい会話");
     expect(app).not.toContain("最近の会話");
@@ -17,29 +17,16 @@ describe("MVP UI reachability contracts", () => {
     expect(app).not.toContain("MeetingPage");
     expect(app).not.toContain("SituationPage");
     expect(app).toContain("AuditLogPage");
-    expect(source("src/features/chat/ChatPage.tsx")).not.toContain("ChatOverflowMenu");
+    expect(source("src/features/chat/ConversationCheckPage.tsx")).not.toContain("ChatOverflowMenu");
     expect(source("src/shell/appRoute.ts")).toContain('"audit"');
   });
-  test("keeps normal Chat workspace-free", () => {
-    const app =
-      source("src/App.tsx") +
-      source("src/features/chat/useConversationTurn.ts") +
-      source("src/useOwnedSignalHeartbeat.ts");
-    expect(app).toContain("workspacePath: null");
-    expect(app).toContain('conversationState: activeRunId ? "model-running"');
-    expect(app).not.toContain("workspacePath.trim()");
-    expect(app).not.toContain("agent-running");
-  });
-  test("keeps the active run controls reachable while settings is requested", () => {
+  test("keeps the current conversation mounted across navigation", () => {
     const app = source("src/App.tsx");
-    const navigate = app.slice(
-      app.indexOf("function navigate("),
-      app.indexOf("function openSettings()"),
-    );
-    expect(navigate).toContain('next === "settings" && !canChangeConversation()');
-    expect(navigate).toContain("setRoute(next)");
-    expect(app).toContain("onOpenSettings={openSettings}");
-    expect(app).not.toContain("音声入力を停止してからSurfaceを切り替えてください。");
+    expect(app).toContain('hidden={route !== "conversation"}');
+    expect(app).toContain("onRouteChange={setRoute}");
+    const page = source("src/features/chat/ConversationCheckPage.tsx");
+    expect(page).toContain("enqueueConversationText(");
+    expect(page).not.toContain("workspacePath");
   });
   test("removes Codex controls from Settings while preserving the stored document", () => {
     const settings = source("src/features/settings/SettingsPage.tsx");
@@ -66,18 +53,11 @@ describe("MVP UI reachability contracts", () => {
     expect(settings).toContain('t("settings.general.userNamePlaceholder")');
     expect(settingsPersistence).toContain("userName: draft.codex.userName.trim()");
   });
-  test("uses one bounded final-segment path for voice transcription", () => {
-    const contracts = source("src/lib/contracts.ts");
-    const voice =
-      source("src/features/voice/useAmbientVoiceSession.ts") +
-      source("src/features/voice/ambientVoiceCaptureActions.ts");
-    const transcriber = source("src/features/voice/voiceAsrPacketSender.ts");
-    expect(contracts).not.toContain('type: "transcriptDelta"');
-    expect(voice).toContain("packetVoiceFrame");
-    expect(transcriber).toContain("enqueueAudio");
-    expect(transcriber).toContain("this.operations.push");
-    expect(contracts).not.toContain('type: "transcriptPartial"');
-    expect(contracts).not.toContain("MeetingSnapshot");
-    expect(source("src/App.tsx")).not.toContain("MeetingPage");
+  test("uses bounded final recognition and preserves PCM capture during playback", () => {
+    const voice = source("src/lib/conversationAsrCapture.ts");
+    expect(voice).toContain("MAX_PENDING_FINALS = 8");
+    expect(voice).toContain("MAX_UTTERANCE_SAMPLES = SAMPLE_RATE * 30");
+    expect(voice).toContain("queueConversationAsrDelivery");
+    expect(voice).not.toContain("suspendVoiceForSpeech");
   });
 });

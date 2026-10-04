@@ -12,8 +12,11 @@ use std::{
     time::Duration,
 };
 
+#[path = "local_audio_output/playback.rs"]
 mod playback;
+#[path = "local_audio_output/playback_started.rs"]
 mod playback_started;
+#[path = "local_audio_output/playback_vpio.rs"]
 mod playback_vpio;
 
 pub(crate) use playback::{Packet, Playback};

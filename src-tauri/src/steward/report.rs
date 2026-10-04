@@ -4,7 +4,9 @@ use crate::{database_error, new_id, AppState};
 use rusqlite::{params, Connection};
 #[path = "report/publish.rs"]
 mod publish;
-pub(crate) use publish::{flush_all_held_reports, flush_held_reports, publish, queue_terminals};
+#[cfg(any(test, feature = "offline-contracts"))]
+pub(crate) use publish::flush_held_reports;
+pub(crate) use publish::{flush_all_held_reports, publish, queue_terminals};
 #[allow(unused_imports)]
 use publish::{flush_unflushed, speech_event_state, start_pending_speech};
 #[cfg(test)]

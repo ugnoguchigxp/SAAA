@@ -66,6 +66,7 @@ pub(super) struct VoiceAsrAuditContext {
     pub(super) conversation_id: String,
 }
 impl VoiceAsrAuditChannel {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn new(
         channel: Channel<VoiceAsrStreamEvent>,
         connection: Arc<super::SqliteWriter>,
@@ -88,6 +89,7 @@ impl VoiceAsrAuditChannel {
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn send(&self, event: VoiceAsrStreamEvent) -> tauri::Result<()> {
         if let Some(context) = &self.audit {
             context.record(&event);
@@ -96,6 +98,7 @@ impl VoiceAsrAuditChannel {
     }
 }
 impl VoiceAsrAuditContext {
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn record(&self, event: &VoiceAsrStreamEvent) {
         let Some((event_name, phase, outcome, subject_id, failure_code, attributes)) =
             voice_asr_event_fields(event)
@@ -121,6 +124,7 @@ impl VoiceAsrAuditContext {
             .write(|connection| record_event(connection, &input));
     }
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 type VoiceAsrAuditFields = (
     &'static str,
     &'static str,
@@ -129,6 +133,7 @@ type VoiceAsrAuditFields = (
     Option<String>,
     BTreeMap<String, AuditAttributeValue>,
 );
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn voice_asr_event_fields(event: &VoiceAsrStreamEvent) -> Option<VoiceAsrAuditFields> {
     let fields = match event {
         VoiceAsrStreamEvent::Ready {
@@ -189,6 +194,7 @@ pub(super) fn voice_asr_event_fields(event: &VoiceAsrStreamEvent) -> Option<Voic
     };
     Some(fields)
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn session_id(event: &VoiceAsrStreamEvent) -> &str {
     match event {
         VoiceAsrStreamEvent::Ready { session_id, .. }
@@ -199,12 +205,14 @@ pub(super) fn session_id(event: &VoiceAsrStreamEvent) -> &str {
         | VoiceAsrStreamEvent::Stopped { session_id } => session_id,
     }
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn wire_tag<T: Serialize>(value: &T) -> String {
     serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(str::to_string))
         .unwrap_or_else(|| "unknown".to_string())
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn tag_attributes<const N: usize>(
     values: [(&str, &str); N],
 ) -> BTreeMap<String, AuditAttributeValue> {
@@ -431,6 +439,7 @@ pub(crate) fn record_frontend_event(
         .sqlite_writer
         .write(|connection| record_event(connection, input))
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn record_voice_asr_command(
     state: &AppState,
     event_name: &str,

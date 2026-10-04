@@ -1,28 +1,35 @@
 impl DynamicLanConnection {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn endpoint(&self) -> &str {
         &self.endpoint
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn allocation_id(&self) -> &str {
         &self.identity.allocation_id
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn stream_protocol(&self) -> &str {
         "openai.chat-completions.v1"
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn model(&self) -> &str {
         &self.model
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn api_key(&self) -> Option<&str> {
         self.api_key.as_ref().map(|value| value.as_str())
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn prior_release_failure(&self) -> Option<ErrorKind> {
         self.prior_release_failure
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn validate_request_budget(
         &self,
         max_output_tokens: u32,
@@ -49,6 +56,7 @@ impl DynamicLanConnection {
         )
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) async fn acquire_capacity(
         &self,
     ) -> Result<tokio::sync::OwnedSemaphorePermit, DynamicLanError> {
@@ -66,6 +74,7 @@ impl DynamicLanConnection {
         .map_err(|_| DynamicLanError::new(ErrorKind::Internal, "The LARM capacity gate closed."))
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) async fn ensure_lifetime(
         &mut self,
         request_timeout: Duration,

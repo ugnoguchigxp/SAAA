@@ -13,7 +13,7 @@
     "build:frontend": "bun run s11tnext:check && tsc && vite build",
     "build": "bun run build:frontend && bun run ipc:check",
     "typecheck": "tsc --noEmit",
-    "test:frontend": "bun run s11tnext:check && bun test tests",
+    "test:frontend": "bun run s11tnext:check && bun scripts/frontend-tests.ts",
     "test:provider-unit": "bun test tests/provider-unit-test-page.test.tsx tests/provider-unit-tts.test.tsx tests/provider-unit-asr.test.tsx",
     "test:asr": "bun test tests/conversation-asr-continuous.test.ts tests/settings-review.test.ts tests/voice-asr-packetizer.test.ts tests/qwen-realtime-asr-ipc.test.ts && bun test tests/browser-voice-capture.test.ts tests/provider-unit-asr.test.tsx tests/audio-backend.test.ts && cargo test --manifest-path src-tauri/Cargo.toml --features provider-unit-test-harness --test qwen_realtime_asr_e2e",
     "e2e:provider-unit": "cargo test --manifest-path src-tauri/Cargo.toml --features provider-unit-test-harness --test provider_unit_test_e2e",

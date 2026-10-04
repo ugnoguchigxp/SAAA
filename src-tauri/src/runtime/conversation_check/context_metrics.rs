@@ -84,9 +84,9 @@ impl RequestMetrics {
 }
 
 impl ObservationSink for RequestMetrics {
-    fn sent(&self, body: &Value, receipt: &mut AttemptReceipt) {
+    fn sent(&self, body: &Value, receipt: &mut AttemptReceipt, started: Instant) {
         if let Ok(mut latest) = self.latest.lock() {
-            *latest = Some((receipt.http_attempt_id.clone(), Instant::now(), false));
+            *latest = Some((receipt.http_attempt_id.clone(), started, false));
         }
         let mut configuration = body.clone();
         if let Some(object) = configuration.as_object_mut() {

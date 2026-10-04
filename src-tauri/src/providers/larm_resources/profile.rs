@@ -26,6 +26,7 @@ pub(crate) fn label(preference: &saaa_larm_session::ProfilePreference) -> String
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn from_label(label: &str) -> saaa_larm_session::ProfilePreference {
     match label
         .strip_prefix("@selector:")

@@ -15,6 +15,7 @@ pub(crate) mod reachability_watcher;
 pub(crate) mod reasoning_mcp;
 pub(crate) mod routing;
 pub(crate) mod service_harness;
+pub(crate) mod service_registry;
 pub(crate) mod session_store;
 pub(crate) mod stream;
 pub(crate) use completion::{

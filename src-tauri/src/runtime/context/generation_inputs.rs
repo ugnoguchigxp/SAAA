@@ -1,7 +1,11 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::{generation::GenerationHandle, source::Candidate};
+#[cfg(any(test, feature = "offline-contracts"))]
 use serde_json::Value;
+#[cfg(any(test, feature = "offline-contracts"))]
 use sha2::{Digest, Sha256};
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Final transport validation.  Selection is not evidence of delivery: adapter wrappers and
 /// follow-up rebuilding must still contain every required item in the actual provider body.
 pub(crate) fn verify_required_wire(body: &Value, selected: &[Candidate]) -> Result<(), String> {
@@ -19,6 +23,7 @@ pub(crate) fn verify_required_wire(body: &Value, selected: &[Candidate]) -> Resu
     Ok(())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn value_contains(value: &Value, required: &str) -> bool {
     match value {
         Value::String(text) => text.contains(required),
@@ -28,6 +33,7 @@ fn value_contains(value: &Value, required: &str) -> bool {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn record(
     generation: &GenerationHandle,
     health: &str,

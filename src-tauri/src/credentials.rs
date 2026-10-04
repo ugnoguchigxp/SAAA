@@ -4,6 +4,8 @@ use std::sync::{Arc, OnceLock};
 use zeroize::Zeroizing;
 
 pub(crate) const PROVIDER_CREDENTIAL_SERVICE: &str = "com.saaa.provider-api-key";
+/// Secrets of connections created through the service registry.
+pub(crate) const SERVICE_CONNECTION_CREDENTIAL_SERVICE: &str = "com.saaa.service-connection";
 const MAX_CREDENTIAL_BYTES: usize = 2_560;
 static CREDENTIAL_DATABASE: OnceLock<Arc<crate::persistence::SqliteWriter>> = OnceLock::new();
 
@@ -33,7 +35,7 @@ fn validate_provider_id(provider_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_api_key(api_key: &str) -> Result<(), String> {
+pub(crate) fn validate_api_key(api_key: &str) -> Result<(), String> {
     if api_key.is_empty()
         || api_key.len() > MAX_CREDENTIAL_BYTES
         || api_key.trim() != api_key

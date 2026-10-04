@@ -3,11 +3,16 @@
 //! These are compact references to host-owned execution state, never copies of tool payloads or
 //! grants of authority. The execution boundary still authorizes each operation independently.
 
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::source::{Candidate, Requirement};
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::database_error;
+#[cfg(any(test, feature = "offline-contracts"))]
 use rusqlite::{params, Connection};
+#[cfg(any(test, feature = "offline-contracts"))]
 use serde_json::json;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn load(
     connection: &Connection,
     conversation_id: &str,
@@ -17,6 +22,7 @@ pub(crate) fn load(
     Ok(candidates)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn coding_candidates(
     connection: &Connection,
     conversation_id: &str,
@@ -61,6 +67,7 @@ fn coding_candidates(
     Ok(candidates)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn delegation_candidates(
     connection: &Connection,
     conversation_id: &str,

@@ -250,9 +250,17 @@ mod tests {
         let mut result = FakeContentFetcher::ok(&"天".repeat(4_000)).result.unwrap();
         result.truncated = false;
         let rendered: serde_json::Value = serde_json::from_str(&render_compact(&result)).unwrap();
-        let text = rendered.pointer("/document/text").and_then(|value| value.as_str()).unwrap();
+        let text = rendered
+            .pointer("/document/text")
+            .and_then(|value| value.as_str())
+            .unwrap();
         assert_eq!(text.chars().count(), 3_000);
-        assert_eq!(rendered.pointer("/document/truncated").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(
+            rendered
+                .pointer("/document/truncated")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
     }
 
     #[test]

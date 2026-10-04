@@ -4,8 +4,7 @@ export const jaMemoryPage = {
   askLabel: "Worldへの質問",
   askPlaceholder: "例: キャッシュが変わると何が影響を受ける？",
   askSubmit: "会話で質問する",
-  correctionPrompt:
-    "訂正する対象と正しい内容を入力してください。現在の会話の範囲で処理します。",
+  correctionPrompt: "訂正する対象と正しい内容を入力してください。現在の会話の範囲で処理します。",
 
   columns: { content: "内容", kind: "種類", status: "状態", sources: "根拠" },
   disabled: "メモリ抽出は停止中です。",

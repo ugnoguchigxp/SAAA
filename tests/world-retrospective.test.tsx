@@ -27,9 +27,7 @@ test("retrospective controls persist mode and inspect evidence without turning p
       updatedAt: 0,
       retrospective: {
         mode: "preview",
-        stages: [
-          { stage: "preview", reason: "selected", count: 1, updatedAt: 1 },
-        ],
+        stages: [{ stage: "preview", reason: "selected", count: 1, updatedAt: 1 }],
       },
     },
   });
@@ -75,15 +73,9 @@ test("retrospective controls persist mode and inspect evidence without turning p
         />,
       ),
     );
-    expect(document.querySelector<HTMLSelectElement>("select")?.value).toBe(
-      "preview",
-    );
-    await act(async () =>
-      document.querySelector<HTMLButtonElement>("button")!.click(),
-    );
-    expect(document.querySelector("blockquote")?.textContent).toBe(
-      "初回のみ速くなった",
-    );
+    expect(document.querySelector<HTMLSelectElement>("select")?.value).toBe("preview");
+    await act(async () => document.querySelector<HTMLButtonElement>("button")!.click());
+    expect(document.querySelector("blockquote")?.textContent).toBe("初回のみ速くなった");
     expect(snapshot.worldItems).toHaveLength(0);
     await act(async () => {
       const select = document.querySelector<HTMLSelectElement>("select")!;
@@ -91,9 +83,7 @@ test("retrospective controls persist mode and inspect evidence without turning p
       select.dispatchEvent(new window.Event("change", { bubbles: true }));
     });
     expect(modes).toEqual(["apply"]);
-    expect(document.querySelector<HTMLSelectElement>("select")?.value).toBe(
-      "apply",
-    );
+    expect(document.querySelector<HTMLSelectElement>("select")?.value).toBe("apply");
   } finally {
     await act(async () => root.unmount());
     env.restore();

@@ -3,7 +3,9 @@
 //! A routing step receives the root's initial must-context plus each still-valid amendment once.
 //! This is intentionally independent of the legacy broker so existing callers keep their exact
 //! selection behaviour until they opt into a role projection.
-use super::source::{Candidate, Requirement};
+use super::source::Candidate;
+#[cfg(any(test, feature = "offline-contracts"))]
+use super::source::Requirement;
 use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
@@ -14,6 +16,7 @@ pub(crate) struct RoleProjectionInput {
     pub(crate) revoked_source_ids: HashSet<String>,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn project(input: RoleProjectionInput) -> Result<Vec<Candidate>, String> {
     let mut seen = HashSet::new();
     let mut projected = Vec::new();

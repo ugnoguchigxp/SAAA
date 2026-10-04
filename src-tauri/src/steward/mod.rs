@@ -41,7 +41,9 @@ pub(crate) use invalidation::forget_source;
 #[cfg(test)]
 pub(crate) use reduce::inspect_coding_transition;
 pub(crate) use reduce::on_user_message;
-pub(crate) use report::{flush_all_held_reports, flush_held_reports};
+pub(crate) use report::flush_all_held_reports;
+#[cfg(any(test, feature = "offline-contracts"))]
+pub(crate) use report::flush_held_reports;
 
 pub(crate) const START_TRIGGER: &str = "テストを確認して";
 pub(crate) const CONTINUE_TRIGGER: &str = "続きを";
@@ -68,8 +70,8 @@ mod dwr_tests {
         flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER,
     };
     pub(super) use crate::persistence::schema::initialize_database;
-    pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;
+    pub(super) use crate::test_support::prepare_user_turn as prepare_runtime_run;
     pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
     pub(super) use rusqlite::{params, Connection};
     pub(super) use std::fs;
@@ -95,8 +97,8 @@ mod migration_tests {
     };
     pub(super) use crate::persistence::schema::initialize_database;
     pub(super) use crate::persistence::schema::DATABASE_SCHEMA_VERSION;
-    pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;
+    pub(super) use crate::test_support::prepare_user_turn as prepare_runtime_run;
     pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
     pub(super) use rusqlite::{params, Connection};
     pub(super) use std::fs;
@@ -122,8 +124,8 @@ mod latency_tests {
         flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER,
     };
     pub(super) use crate::persistence::schema::initialize_database;
-    pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;
+    pub(super) use crate::test_support::prepare_user_turn as prepare_runtime_run;
     pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
     pub(super) use rusqlite::{params, Connection};
     pub(super) use std::fs;
@@ -148,8 +150,8 @@ mod rf5_tests {
         flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER,
     };
     pub(super) use crate::persistence::schema::initialize_database;
-    pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;
+    pub(super) use crate::test_support::prepare_user_turn as prepare_runtime_run;
     pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
     pub(super) use rusqlite::{params, Connection};
     pub(super) use std::fs;
@@ -174,8 +176,8 @@ mod sc_tests {
         flush_held_reports, on_user_message, CONTINUE_TRIGGER, START_REQUEST, START_TRIGGER,
     };
     pub(super) use crate::persistence::schema::initialize_database;
-    pub(super) use crate::runtime::turns::prepare_runtime_run;
     pub(super) use crate::test_support::app_state;
+    pub(super) use crate::test_support::prepare_user_turn as prepare_runtime_run;
     pub(super) use crate::{now_iso, AppState, StartTurnInput, PRIMARY_CONVERSATION_ID};
     pub(super) use rusqlite::{params, Connection};
     pub(super) use std::fs;

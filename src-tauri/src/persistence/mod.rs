@@ -4,21 +4,23 @@ pub(crate) mod audit;
 mod conversation_page;
 pub(crate) mod conversations;
 pub(crate) mod effective_route;
-pub(crate) mod migrate;
 mod legacy_conversation_schema;
+pub(crate) mod migrate;
 mod provider_identity;
 mod remove_legacy_provider;
 pub(crate) mod runs;
 pub(crate) mod schema;
+pub(crate) mod service_registry_store;
 pub(crate) mod settings;
 mod settings_migration;
 pub(crate) mod sqlite;
 pub(crate) use conversation_page::list_message_page_from_connection;
 pub(crate) use conversations::list_conversations_from_connection;
+#[cfg(any(test, feature = "offline-contracts"))]
+pub(crate) use settings::load_security_settings;
 pub(crate) use settings::{
     list_settings_documents, load_codex_settings, load_model_providers, load_role_routing_settings,
-    load_routing_settings, load_security_settings, load_voice_settings,
-    save_settings_documents_to_connection, validate_model_providers, validate_settings_batch,
-    validate_settings_document,
+    load_routing_settings, load_voice_settings, save_settings_documents_to_connection,
+    validate_model_providers, validate_settings_batch, validate_settings_document,
 };
 pub(crate) use sqlite::{SqliteReaders, SqliteWriter};

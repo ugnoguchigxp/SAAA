@@ -1,0 +1,37 @@
+{
+  "status": "ready",
+  "stage": "cleanup",
+  "durationMs": 153391,
+  "stages": [
+    {
+      "stage": "build",
+      "durationMs": 148212,
+      "exitCode": 0
+    },
+    {
+      "stage": "bundle",
+      "durationMs": 852
+    },
+    {
+      "stage": "launch",
+      "durationMs": 2
+    },
+    {
+      "stage": "ready",
+      "durationMs": 4276
+    },
+    {
+      "stage": "cleanup",
+      "durationMs": 49
+    }
+  ],
+  "checks": {
+    "databaseInitialized": true,
+    "frontendRendered": true,
+    "ipcReady": true,
+    "primaryConversationLoaded": true,
+    "situationSampled": true,
+    "snapshotLoaded": true,
+    "speakerRuntimeAvailable": true
+  }
+}

@@ -21,6 +21,8 @@ mod context_trial;
 #[path = "conversation_queue_e2e/server.rs"]
 mod server;
 use server::serve;
+#[path = "conversation_queue_e2e/cloud_route.rs"]
+mod cloud_route;
 #[path = "conversation_queue_e2e/scenario.rs"]
 mod scenario;
 use scenario::run_with_server;
@@ -333,6 +335,10 @@ pub async fn run() -> Result<Value, String> {
     run_variant(false, false, false, false, false).await
 }
 
+pub async fn run_cloud_conversation() -> Result<Value, String> {
+    run_variant_with(false, false, false, false, false, true).await
+}
+
 pub async fn run_failure_after_search() -> Result<Value, String> {
     run_variant(true, false, false, false, false).await
 }
@@ -375,6 +381,25 @@ async fn run_variant(
     authentication_failure: bool,
     context_trial: bool,
 ) -> Result<Value, String> {
+    run_variant_with(
+        fail_after_search,
+        slow_ornith,
+        invalid_reply,
+        authentication_failure,
+        context_trial,
+        false,
+    )
+    .await
+}
+
+async fn run_variant_with(
+    fail_after_search: bool,
+    slow_ornith: bool,
+    invalid_reply: bool,
+    authentication_failure: bool,
+    context_trial: bool,
+    cloud_route: bool,
+) -> Result<Value, String> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|error| error.to_string())?;
@@ -400,7 +425,11 @@ async fn run_variant(
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    let result = run_with_server(&base, &fixture).await;
+    let result = if cloud_route {
+        cloud_route::run_with_server(&base, &fixture).await
+    } else {
+        run_with_server(&base, &fixture).await
+    };
     if result.is_err() {
         eprintln!(
             "conversation queue fixture calls: {:?}",

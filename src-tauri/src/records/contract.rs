@@ -23,6 +23,7 @@ impl RecordKind {
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "web_search" | "webSearch" => Self::WebSearch,

@@ -1,3 +1,9 @@
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use crate::memory::{
+    contracts::{RecallConversationInput, RECALL_TOOL_NAME},
+    typed_recall::{is_typed_recall_tool, typed_recall_tool_definitions},
+};
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::memory::{
     contracts::{RecallConversationInput, RECALL_TOOL_NAME},
     typed_recall::{is_typed_recall_tool, typed_recall_tool_definitions, TYPED_RECALL_TOOL_NAMES},

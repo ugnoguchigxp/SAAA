@@ -2,6 +2,7 @@
 //! A JSON control object may span SSE deltas and lines; body bytes stay separate.
 use serde_json::Value;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 const MAX_CONTROL_BYTES: usize = 4_096;
 
 #[derive(Debug, PartialEq)]
@@ -40,6 +41,7 @@ pub(crate) struct Parser {
 }
 
 impl Parser {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn push(&mut self, delta: &str) -> Result<Vec<Event>, Error> {
         let mut events = Vec::new();
         let mut body = String::new();
@@ -70,6 +72,7 @@ impl Parser {
         Ok(events)
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn push_control(&mut self, ch: char, events: &mut Vec<Event>) -> Result<(), Error> {
         if self.control.is_empty() && ch.is_whitespace() {
             return Ok(());
@@ -111,6 +114,7 @@ impl Parser {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn finish(&self) -> Result<(), Error> {
         match self.phase {
             Phase::Control => Err(Error::Incomplete),

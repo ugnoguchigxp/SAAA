@@ -28,9 +28,9 @@ pub mod world;
 pub use codec::{decode, encode, now};
 #[cfg(feature = "quality-eval-harness")]
 pub mod live_harness;
+pub mod local_binding;
 pub mod product;
 pub mod product_binding;
-pub mod local_binding;
 mod product_cleanup;
 mod product_extract;
 mod product_tests;

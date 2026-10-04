@@ -14,6 +14,12 @@ pub use config::{
 pub use probe::run as run_probe;
 
 use crate::RunCancellation;
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, OnceLock,
+};
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     path::Path,
     sync::{
@@ -31,6 +37,7 @@ pub fn global() -> Arc<AudioBackend> {
         .clone()
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub fn aec_is_active() -> bool {
     global().status().aec_active
 }
@@ -59,7 +66,7 @@ impl AudioBackend {
     pub fn status(&self) -> AudioBackendStatus {
         #[cfg(target_os = "macos")]
         {
-            return self.engine.status();
+            self.engine.status()
         }
         #[cfg(not(target_os = "macos"))]
         AudioBackendStatus {
@@ -84,7 +91,7 @@ impl AudioBackend {
         {
             let status = self.engine.start_capture(config, sink)?;
             self.running.store(true, Ordering::Release);
-            return Ok(status);
+            Ok(status)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -102,7 +109,7 @@ impl AudioBackend {
     pub fn queue_i16(&self, rate: u32, channels: u16, samples: &[i16]) -> bool {
         #[cfg(target_os = "macos")]
         {
-            return self.engine.queue_i16(rate, channels, samples);
+            self.engine.queue_i16(rate, channels, samples)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -119,7 +126,7 @@ impl AudioBackend {
     pub fn wait_playback_drained(&self, cancellation: &RunCancellation) -> Result<(), String> {
         #[cfg(target_os = "macos")]
         {
-            return self.engine.wait_playback_drained(cancellation);
+            self.engine.wait_playback_drained(cancellation)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -128,6 +135,7 @@ impl AudioBackend {
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub fn play_wav_blocking(
         &self,
         path: &Path,
@@ -150,7 +158,7 @@ impl AudioBackend {
     pub fn is_capturing(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
-            return self.engine.is_capturing();
+            self.engine.is_capturing()
         }
         #[cfg(not(target_os = "macos"))]
         self.running.load(Ordering::Acquire)

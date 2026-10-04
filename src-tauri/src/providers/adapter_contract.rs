@@ -26,6 +26,7 @@ pub(crate) struct AdapterContract {
     pub(crate) byte_transport_limit: usize,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) const CHAT_COMPLETIONS: AdapterContract = AdapterContract {
     cache_support: CacheSupport::Unknown,
     history_binding: HistoryBinding::None,

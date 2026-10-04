@@ -1,5 +1,7 @@
 use super::items::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 use rusqlite::OptionalExtension;
 #[cfg(test)]
 use rusqlite::Transaction;
@@ -171,6 +173,7 @@ pub fn cancel_unhandled_jobs(connection: &Connection, now: &str) -> rusqlite::Re
         params![now],
     )
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub fn record_projection_event(
     connection: &Connection,
     health_state: &str,

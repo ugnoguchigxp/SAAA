@@ -78,8 +78,14 @@ mod single_llm_migration_tests {
         assert_eq!(shipped["limits"], original["limits"]);
 
         let mut extended = original.clone();
-        extended["actors"].as_array_mut().unwrap().push(json!({"id":"custom"}));
-        extended["recipes"].as_array_mut().unwrap().push(json!({"id":"custom","roles":["reasoner"]}));
+        extended["actors"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"custom"}));
+        extended["recipes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"custom","roles":["reasoner"]}));
         migrate_shipped_ornith_frontdesk(&mut extended);
         assert!(extended["roles"]["frontend"].is_null());
         assert_eq!(extended["actors"].as_array().unwrap().len(), 2);
@@ -92,7 +98,10 @@ mod single_llm_migration_tests {
         assert_eq!(customized, before);
 
         let mut referenced = original.clone();
-        referenced["recipes"].as_array_mut().unwrap().push(json!({"id":"custom","roles":["frontend"]}));
+        referenced["recipes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"custom","roles":["frontend"]}));
         let before = referenced.clone();
         migrate_shipped_ornith_frontdesk(&mut referenced);
         assert_eq!(referenced, before);
@@ -179,103 +188,10 @@ pub(crate) fn migrate_provider_document(value: &mut Value, system_voice: &str, l
         .entry("reasoningEffort")
         .or_insert_with(|| Value::String("medium".to_string()));
 }
-pub(super) fn migrate_routing_document(value: &mut Value) {
-    let Some(document) = value.as_object_mut() else {
-        return;
-    };
-    if let Some(conversation) = document
-        .get_mut("conversationRespond")
-        .and_then(Value::as_object_mut)
-    {
-        if !conversation.contains_key("source") {
-            let harness_selected = conversation
-                .get("primaryProviderId")
-                .and_then(Value::as_str)
-                == Some("dynamic-lan-primary");
-            conversation.insert(
-                "source".to_string(),
-                Value::String(
-                    if harness_selected {
-                        "harness"
-                    } else {
-                        "provider"
-                    }
-                    .to_string(),
-                ),
-            );
-            if harness_selected {
-                conversation.insert("primaryProviderId".to_string(), Value::Null);
-                conversation.insert("fallbackProviderIds".to_string(), json!([]));
-            }
-        }
-    }
-    document
-        .entry("voiceTranscribe")
-        .or_insert_with(|| json!({ "source": "harness", "providerId": null, "timeoutMs": 120000 }));
-    document.entry("voiceSpeak").or_insert_with(
-        || json!({ "source": "provider", "providerId": "system-tts", "timeoutMs": 30000 }),
-    );
-}
-pub(crate) fn migrate_obsolete_direct_lan_route(providers: &Value, routing: &mut Value) {
-    let Some(conversation) = routing
-        .get_mut("conversationRespond")
-        .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
-    if conversation.get("source").and_then(Value::as_str) != Some("provider") {
-        return;
-    }
-    let Some(primary_id) = conversation
-        .get("primaryProviderId")
-        .and_then(Value::as_str)
-    else {
-        return;
-    };
-    let Some(items) = providers.get("providers").and_then(Value::as_array) else {
-        return;
-    };
-    let Some(dynamic) = items.iter().find(|provider| {
-        provider.get("id").and_then(Value::as_str) == Some(DYNAMIC_LAN_PROVIDER_ID)
-            && provider.get("kind").and_then(Value::as_str) == Some("dynamic-lan")
-            && provider.get("enabled").and_then(Value::as_bool) == Some(true)
-    }) else {
-        return;
-    };
-    let Some(dynamic_host) = dynamic.get("host").and_then(Value::as_str) else {
-        return;
-    };
-    let harness_matches = providers
-        .pointer("/harness/address")
-        .and_then(Value::as_str)
-        .and_then(|address| url::Url::parse(address).ok())
-        .is_some_and(|url| {
-            url.scheme() == "http"
-                && url.host_str() == Some(dynamic_host)
-                && url.port() == Some(crate::providers::dynamic_lan::CONTROL_PORT)
-                && url.path() == "/"
-        });
-    let direct_matches = items
-        .iter()
-        .find(|provider| provider.get("id").and_then(Value::as_str) == Some(primary_id))
-        .filter(|provider| {
-            provider.get("kind").and_then(Value::as_str) == Some("openai-compatible")
-                && provider.get("location").and_then(Value::as_str) == Some("local")
-                && provider.get("enabled").and_then(Value::as_bool) == Some(true)
-        })
-        .and_then(|provider| provider.get("endpoint").and_then(Value::as_str))
-        .and_then(|endpoint| url::Url::parse(endpoint).ok())
-        .is_some_and(|url| {
-            url.scheme() == "http"
-                && url.host_str() == Some(dynamic_host)
-                && url.port_or_known_default() == Some(8_080)
-        });
-    if harness_matches && direct_matches {
-        conversation.insert("source".to_string(), Value::String("harness".to_string()));
-        conversation.insert("primaryProviderId".to_string(), Value::Null);
-        conversation.insert("fallbackProviderIds".to_string(), json!([]));
-    }
-}
+#[path = "stored_document/routing.rs"]
+mod routing;
+pub(crate) use routing::migrate_obsolete_direct_lan_route;
+pub(super) use routing::migrate_routing_document;
 pub(crate) fn migrated_voice_document(value: &Value, require_fresh_consent: bool) -> Value {
     json!({
         "listeningEnabled": if require_fresh_consent { false } else { value.get("listeningEnabled").and_then(Value::as_bool).unwrap_or(false) },
@@ -355,9 +271,14 @@ pub(super) fn migrate_shipped_ornith_frontdesk(roles: &mut Value) {
     {
         return;
     }
-    let Some(actors) = roles["actors"].as_array() else { return };
-    let Some(recipes) = roles["recipes"].as_array() else { return };
-    if !actors.iter().any(|actor| actor["id"] == "larm-frontdesk"
+    let Some(actors) = roles["actors"].as_array() else {
+        return;
+    };
+    let Some(recipes) = roles["recipes"].as_array() else {
+        return;
+    };
+    if !actors.iter().any(|actor| {
+        actor["id"] == "larm-frontdesk"
             && actor["larmProvider"] == "backchannel"
             && actor["providerId"] == DYNAMIC_LAN_PROVIDER_ID
             && actor["transport"] == "provider"
@@ -367,8 +288,9 @@ pub(super) fn migrate_shipped_ornith_frontdesk(roles: &mut Value) {
             && actor["maxInputBytes"] == 16_000
             && actor["label"] == "LARM 受付（backchannel）"
             && actor["resourceGroup"] == "larm-backchannel"
-            && actor["capabilities"] == json!(["social_reply"]))
-        || !actors.iter().any(|actor| actor["id"] == "larm-reasoner"
+            && actor["capabilities"] == json!(["social_reply"])
+    }) || !actors.iter().any(|actor| {
+        actor["id"] == "larm-reasoner"
             && actor["larmProvider"] == "llm"
             && actor["providerId"] == DYNAMIC_LAN_PROVIDER_ID
             && actor["transport"] == "provider"
@@ -378,19 +300,27 @@ pub(super) fn migrate_shipped_ornith_frontdesk(roles: &mut Value) {
             && actor["maxInputBytes"] == 65_536
             && actor["label"] == "LARM 思考（llm）"
             && actor["resourceGroup"] == "larm-llm"
-            && actor["capabilities"] == json!(["reason", "tools"]))
-        || !recipes.iter().any(|recipe| recipe["id"] == "00-butler-respond"
+            && actor["capabilities"] == json!(["reason", "tools"])
+    }) || !recipes.iter().any(|recipe| {
+        recipe["id"] == "00-butler-respond"
             && recipe["roles"] == json!(["frontend", "reasoner"])
             && recipe["action"] == "respond"
-            && recipe["enabled"] == true)
-        || recipes.iter().any(|recipe| recipe["id"] != "00-butler-respond"
-            && recipe["roles"].as_array().is_some_and(|roles| roles.iter().any(|role| role == "frontend")))
-        || ["advanced", "reviewer", "premium", "toolSpecialist"]
-            .iter().any(|role| roles["roles"][role] == "larm-frontdesk")
+            && recipe["enabled"] == true
+    }) || recipes.iter().any(|recipe| {
+        recipe["id"] != "00-butler-respond"
+            && recipe["roles"]
+                .as_array()
+                .is_some_and(|roles| roles.iter().any(|role| role == "frontend"))
+    }) || ["advanced", "reviewer", "premium", "toolSpecialist"]
+        .iter()
+        .any(|role| roles["roles"][role] == "larm-frontdesk")
     {
         return;
     }
-    roles["actors"].as_array_mut().unwrap().retain(|actor| actor["id"] != "larm-frontdesk");
+    roles["actors"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|actor| actor["id"] != "larm-frontdesk");
     roles["roles"]["frontend"] = Value::Null;
     for recipe in roles["recipes"].as_array_mut().unwrap() {
         if recipe["id"] == "00-butler-respond" {

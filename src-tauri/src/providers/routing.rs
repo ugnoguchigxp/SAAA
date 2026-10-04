@@ -1,6 +1,7 @@
 use crate::{ConversationRouteSettings, ModelProvidersSettings, SecurityRuntimeSettings};
 
 mod service_harness;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use service_harness::resolve_harness_llm_provider;
 
 pub(crate) fn effective_conversation_route_ids(

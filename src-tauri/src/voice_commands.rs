@@ -69,6 +69,7 @@ pub(crate) fn read_voice_enrollment_sample(
         .map(tauri::ipc::Response::new)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 #[tauri::command]
 pub(crate) fn stop_tts(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), String> {
     state.streaming_tts.cancel(&run_id);

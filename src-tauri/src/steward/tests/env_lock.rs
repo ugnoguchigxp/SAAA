@@ -26,7 +26,7 @@ pub(crate) fn db() -> Connection {
 }
 pub(crate) fn turn(run_id: &str, content: &str) -> StartTurnInput {
     StartTurnInput {
-        run_id: run_id.into(),
+        run_id: format!("run_{run_id}"),
         conversation_id: PRIMARY_CONVERSATION_ID.into(),
         content: content.into(),
         workspace_path: None,
@@ -140,7 +140,7 @@ pub(crate) fn ml_01_schema_version_and_empty_goals() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
     assert_eq!(version, DATABASE_SCHEMA_VERSION);
-    assert_eq!(DATABASE_SCHEMA_VERSION, 41);
+    assert_eq!(DATABASE_SCHEMA_VERSION, 43);
     let goals: i64 = connection
         .query_row("SELECT COUNT(*) FROM steward_goals", [], |row| row.get(0))
         .expect("goals");

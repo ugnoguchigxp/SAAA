@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use serde_json::Value;
 use std::time::Duration;
 
@@ -37,10 +38,17 @@ pub(crate) fn available_agent_tools(
             .is_some_and(|persistence| persistence.state.context_still_recall.is_configured());
     let mut definitions =
         agent_tools::agent_tool_definitions(include_conversation, include_typed_memory, false);
-    if output_persistence.is_some() && calls_this_attempt < 12 && crate::memory::personal_state::worker::explicit::requested(&input.content) {
+    if output_persistence.is_some()
+        && calls_this_attempt < 12
+        && crate::memory::personal_state::worker::explicit::requested(&input.content)
+    {
         definitions.push(crate::memory::personal_state::worker::explicit::definition());
     }
-    definitions.extend(output_persistence.into_iter().flat_map(|_| crate::tts_dictionary::tools::definitions()));
+    definitions.extend(
+        output_persistence
+            .into_iter()
+            .flat_map(|_| crate::tts_dictionary::tools::definitions()),
+    );
     let mut direct = None;
     definitions.extend(crate::records::tools::definitions());
     if calls_this_attempt < 12 {
@@ -51,20 +59,17 @@ pub(crate) fn available_agent_tools(
                 let context =
                     crate::tool_selection::RequestContext::new(&principal, &input.conversation_id)
                         .with_run(Some(input.run_id.clone()));
-                match persistence
+                if let Ok(Some(offer)) = persistence
                     .state
                     .tool_selection
                     .offer_direct(&context, "artifact_webview")
                 {
-                    Ok(Some(offer)) => {
-                        direct = Some(crate::generated_capabilities::tools::DirectExecution {
-                            tool_name: "artifact_webview".into(),
-                            execution_ref: offer.execution_ref,
-                            conversation_id: input.conversation_id.clone(),
-                        });
-                        definitions.push(offer.definition);
-                    }
-                    _ => {}
+                    direct = Some(crate::generated_capabilities::tools::DirectExecution {
+                        tool_name: "artifact_webview".into(),
+                        execution_ref: offer.execution_ref,
+                        conversation_id: input.conversation_id.clone(),
+                    });
+                    definitions.push(offer.definition);
                 }
             }
         }
@@ -125,6 +130,7 @@ pub(crate) fn available_agent_tools(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn tool_was_offered(definitions: &[Value], name: &str) -> bool {
     definitions.iter().any(|definition| {
         definition.pointer("/function/name").and_then(Value::as_str) == Some(name)
@@ -143,7 +149,13 @@ pub(crate) async fn execute_agent_tool(
     // A `gc_` name is only ever executed from the snapshot that offered it; it never falls
     // through to recall or another tool.
     if crate::tts_dictionary::tools::NAMES.contains(&call.name.as_str()) {
-        return crate::tts_dictionary::tools::execute(output_persistence.map(|p| p.state), input, &call.name, &call.arguments, run_cancellation);
+        return crate::tts_dictionary::tools::execute(
+            output_persistence.map(|p| p.state),
+            input,
+            &call.name,
+            &call.arguments,
+            run_cancellation,
+        );
     }
     if call.name.starts_with(TOOL_PREFIX) {
         // M2A direct path: the host attaches the same actor context the discovery backend does.
@@ -197,7 +209,14 @@ pub(crate) async fn execute_agent_tool(
         );
     }
     if call.name == crate::memory::personal_state::worker::explicit::TOOL {
-        return crate::memory::personal_state::worker::explicit::execute(output_persistence.map(|p|p.state),input,&call.arguments,timeout,run_cancellation).await;
+        return crate::memory::personal_state::worker::explicit::execute(
+            output_persistence.map(|p| p.state),
+            input,
+            &call.arguments,
+            timeout,
+            run_cancellation,
+        )
+        .await;
     }
     if call.name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME {
         return crate::voice_behavior::execute_tool_for_state(
@@ -344,62 +363,6 @@ pub(crate) async fn execute_agent_tool(
     execute_recall_tool(output_persistence, input, call)
 }
 
-async fn execute_artifact_webview(
-    output_persistence: Option<ProviderOutputPersistence<'_>>,
-    input: &StartTurnInput,
-    call: &crate::runtime::agent_tools::AgentToolCall,
-    run_cancellation: &RunCancellation,
-    direct: Option<&crate::generated_capabilities::tools::DirectExecution>,
-) -> String {
-    let Some(persistence) = output_persistence else {
-        return serde_json::json!({"ok": false, "reason": "not-offered", "stage": "offer"})
-            .to_string();
-    };
-    let Some(direct) = direct.filter(|direct| {
-        direct.tool_name == call.name && direct.conversation_id == input.conversation_id
-    }) else {
-        return serde_json::json!({"ok": false, "reason": "not-offered", "stage": "offer"})
-            .to_string();
-    };
-    let execution_ref = &direct.execution_ref;
-    let arguments: Value = match serde_json::from_str(&call.arguments) {
-        Ok(value) => value,
-        Err(_) => {
-            return serde_json::json!({"ok": false, "reason": "invalid-input", "stage": "schema"})
-                .to_string()
-        }
-    };
-    let Ok(principal) =
-        crate::tool_selection::service::ensure_principal(&persistence.state.sqlite_writer)
-    else {
-        return serde_json::json!({"ok": false, "reason": "not-authorized", "stage": "grant"})
-            .to_string();
-    };
-    let context = crate::tool_selection::RequestContext::new(&principal, &input.conversation_id)
-        .with_run(Some(input.run_id.clone()));
-    match persistence
-        .state
-        .tool_selection
-        .invoke(&context, &execution_ref, &arguments, run_cancellation)
-        .await
-    {
-        Ok(response) => serde_json::json!({
-            "ok": response.status == crate::tool_selection::backends::TechnicalStatus::Succeeded,
-            "stage": "invoke",
-            "invocationId": response.invocation_id,
-            "runId": input.run_id,
-            "status": response.status.as_str(),
-            "errorCode": response.error_code,
-            "result": response.result,
-        })
-        .to_string(),
-        Err(error) => serde_json::json!({
-            "ok": false,
-            "stage": "invoke",
-            "runId": input.run_id,
-            "reason": error.code.as_str(),
-            "message": error.message,
-        })
-        .to_string(),
-    }
-}
+#[path = "artifact_webview_dispatch.rs"]
+mod artifact_webview_dispatch;
+use artifact_webview_dispatch::execute_artifact_webview;

@@ -14,9 +14,9 @@ mod queue_progress;
 #[path = "queue_recovery.rs"]
 mod queue_recovery;
 
-static JOB_CANCEL: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, (String, Arc<RunCancellation>)>>,
-> = std::sync::OnceLock::new();
+type JobCancellations = std::collections::HashMap<String, (String, Arc<RunCancellation>)>;
+static JOB_CANCEL: std::sync::OnceLock<std::sync::Mutex<JobCancellations>> =
+    std::sync::OnceLock::new();
 
 struct JobCancelGuard(String);
 
@@ -471,16 +471,7 @@ async fn process_conversation<R: Runtime>(
                         &format!("run_{}", job.key),
                         false,
                     );
-                    state.sqlite_writer.write(|connection| {
-                        let tx = connection.transaction().map_err(database_error)?;
-                        task_queue::fail_terminal(&tx, job, &error)?;
-                        queue_progress::cancel(&tx, &job.scope, &job.key)?;
-                        tx.execute(
-                            "UPDATE runtime_runs SET status='failed',error_message=?2,completed_at=?3 WHERE id=?1 AND status='running'",
-                            params![format!("run_{}",job.key),error,now_iso()],
-                        ).map_err(database_error)?;
-                        tx.commit().map_err(database_error)
-                    })?;
+                    fail_answer_terminal(&state, job, &error)?;
                     return Ok(());
                 }
                 Err(error) => {
@@ -508,7 +499,17 @@ async fn process_conversation<R: Runtime>(
                 &format!("run_{}", job.key),
                 committed.is_ok(),
             );
-            committed?;
+            if let Err(error) = committed {
+                // Saving is the final acceptance boundary. Never regenerate a
+                // displayed/spoken answer or repeat its tools after this fails.
+                fail_answer_terminal(&state, job, &error)?;
+                return Ok(());
+            }
+            if app.emit("conversation-queue-updated", ()).is_ok() {
+                if let Some(metrics) = answer.publication {
+                    metrics.visible();
+                }
+            }
             super::cancel_active_progress_speech(&job.key);
         }
     } else if job.kind == "ornith_result" {
@@ -595,6 +596,19 @@ async fn process_conversation<R: Runtime>(
     Ok(())
 }
 
+fn fail_answer_terminal(state: &AppState, job: &Job, error: &str) -> Result<(), String> {
+    state.sqlite_writer.write(|connection| {
+        let tx = connection.transaction().map_err(database_error)?;
+        let cancelled:bool=tx.query_row("SELECT state='cancelled' FROM task_queue_jobs WHERE id=?1",[&job.id],|r|r.get(0)).map_err(database_error)?;
+        if !cancelled {
+            task_queue::fail_terminal(&tx, job, error)?;
+            queue_progress::cancel(&tx, &job.scope, &job.key)?;
+            tx.execute("UPDATE runtime_runs SET status='failed',error_message=?2,completed_at=?3 WHERE id=?1 AND status='running'",params![format!("run_{}",job.key),error.chars().take(500).collect::<String>(),now_iso()]).map_err(database_error)?;
+        }
+        tx.commit().map_err(database_error)
+    })
+}
+
 fn validate_answer_content(answer: &str) -> Result<(), String> {
     if answer.trim().is_empty()
         || answer.len() > MAX_ANSWER_BYTES
@@ -642,7 +656,7 @@ fn commit_answer(
         if saved != answer { return Err("同じ発話IDの回答本文が一致しません。".into()); }
         let speech_id = task_queue::enqueue(&tx,&job.scope,"speech","speech",&job.key,job.generation,
             &json!({"messageId":answer_id,"contextDigest":context_digest}).to_string(),None)?;
-        if let Some(report) = streamed_speech.filter(|report| report.started) {
+        if let Some(report) = streamed_speech.filter(|report| report.started || report.error.is_some()) {
             tx.execute(
                 "UPDATE task_queue_jobs SET state=?2,error=?3,updated_at_ms=?4 WHERE id=?1 AND state='queued'",
                 params![speech_id,
@@ -722,6 +736,7 @@ fn finish_stream_speech_job(
     })
 }
 
+mod action;
 #[path = "queue_runtime/ornith.rs"]
 mod ornith;
 use ornith::process_ornith;
@@ -733,3 +748,14 @@ pub(super) use speech::{
     validate_speech_context,
 };
 use speech::{process_progress_speech, process_speech};
+
+/// Execute the production conversation lane once against an isolated evaluation DB.
+#[cfg(feature = "quality-eval-harness")]
+pub(crate) async fn evaluate_one<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    let job = app
+        .state::<AppState>()
+        .sqlite_writer
+        .write(|c| task_queue::claim(c, "conversation"))?
+        .ok_or("evaluation input was not claimed")?;
+    process_job(app, &job).await
+}

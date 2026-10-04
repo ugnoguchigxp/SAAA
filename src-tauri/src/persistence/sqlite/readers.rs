@@ -1,4 +1,8 @@
-#[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
+#[cfg(any(
+    test,
+    feature = "quality-eval-harness",
+    feature = "conversation-queue-e2e"
+))]
 use super::SqliteWriter;
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
@@ -24,7 +28,11 @@ pub(crate) struct SqliteReaders {
 #[derive(Clone)]
 enum ReaderSource {
     Persistent(Arc<PersistentReaders>),
-    #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
+    #[cfg(any(
+        test,
+        feature = "quality-eval-harness",
+        feature = "conversation-queue-e2e"
+    ))]
     Serialized(Arc<SqliteWriter>),
 }
 
@@ -52,7 +60,11 @@ impl SqliteReaders {
         })
     }
 
-    #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
+    #[cfg(any(
+        test,
+        feature = "quality-eval-harness",
+        feature = "conversation-queue-e2e"
+    ))]
     pub(crate) fn serialized(writer: Arc<SqliteWriter>) -> Self {
         Self {
             source: ReaderSource::Serialized(writer),
@@ -87,7 +99,11 @@ impl SqliteReaders {
                 transaction.commit().map_err(crate::database_error)?;
                 Ok(result)
             }
-            #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
+            #[cfg(any(
+                test,
+                feature = "quality-eval-harness",
+                feature = "conversation-queue-e2e"
+            ))]
             ReaderSource::Serialized(writer) => writer.read_serialized(operation),
         }
     }
@@ -134,31 +150,14 @@ impl SqliteReaders {
                 });
                 Ok(documents)
             }
-            #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
+            #[cfg(any(
+                test,
+                feature = "quality-eval-harness",
+                feature = "conversation-queue-e2e"
+            ))]
             ReaderSource::Serialized(_) => {
                 crate::persistence::settings::list_settings_documents(connection)
             }
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn lane_count(&self) -> usize {
-        match self.source {
-            ReaderSource::Persistent(_) => READER_LANES,
-            #[cfg(any(test, feature = "quality-eval-harness", feature = "conversation-queue-e2e"))]
-            ReaderSource::Serialized(_) => 1,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn cached_settings_revision(&self) -> Option<i64> {
-        match &self.source {
-            ReaderSource::Persistent(readers) => readers
-                .settings_snapshot
-                .lock()
-                .ok()
-                .and_then(|cache| cache.as_ref().map(|cached| cached.revision)),
-            ReaderSource::Serialized(_) => None,
         }
     }
 }
@@ -177,39 +176,9 @@ fn open_reader(database_path: &Path) -> Result<Connection, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{sync::mpsc, time::Duration};
+#[path = "readers_tests.rs"]
+mod tests;
 
-    #[test]
-    fn a_read_uses_the_free_lane_when_the_round_robin_lane_is_busy() {
-        let directory = tempfile::tempdir().expect("temporary directory creates");
-        let path = directory.path().join("free-lane.sqlite3");
-        let _writer = SqliteWriter::open(&path).expect("writer opens");
-        let readers = SqliteReaders::open(&path).expect("readers open");
-        let persistent = match &readers.source {
-            ReaderSource::Persistent(readers) => readers.clone(),
-            ReaderSource::Serialized(_) => unreachable!("fixture uses persistent readers"),
-        };
-        persistent.next_lane.store(0, Ordering::Relaxed);
-        let blocked_lane = persistent.lanes[0].lock().expect("lane lock");
-        let (completed, received) = mpsc::sync_channel(1);
-        std::thread::spawn(move || {
-            let result = readers.read(|connection| {
-                connection
-                    .query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
-                    .map_err(crate::database_error)
-            });
-            completed.send(result).expect("result sends");
-        });
-
-        assert_eq!(
-            received
-                .recv_timeout(Duration::from_secs(1))
-                .expect("free reader lane completes")
-                .expect("read succeeds"),
-            1
-        );
-        drop(blocked_lane);
-    }
-}
+#[cfg(test)]
+#[path = "readers_test_access.rs"]
+mod test_access;

@@ -59,6 +59,7 @@ pub(crate) fn validate_allowed_languages(languages: &[String]) -> Result<(), Str
     Ok(())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn canonical_code(language: &str) -> Option<&'static str> {
     let normalized = language.trim();
     SUPPORTED_LANGUAGES.iter().find_map(|(code, name)| {
@@ -67,6 +68,7 @@ fn canonical_code(language: &str) -> Option<&'static str> {
     })
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn enforce_allowed_language(
     detected: Option<&str>,
     allowed: &[String],

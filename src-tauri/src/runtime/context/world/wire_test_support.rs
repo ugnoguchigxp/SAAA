@@ -1,7 +1,7 @@
 #![cfg(test)]
 use super::{
-    g1_tests as graph,
     compose_test_support::{compose_fixture, ComposedFixture},
+    g1_tests as graph,
 };
 use crate::memory::personal_state::world::runtime_test_support::{Fixture, RUN_ID};
 use std::sync::Arc;

@@ -1,4 +1,5 @@
 //! Bounded transport measurements, without prompts, transcripts, URLs, or credentials.
+#[cfg(any(test, feature = "offline-contracts"))]
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -18,6 +19,7 @@ pub(crate) fn record(metric: &'static str, elapsed: Duration) {
         values.push_back(elapsed.as_micros().min(u64::MAX as u128) as u64);
     }
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn snapshot() -> Value {
     let Ok(samples) = samples().lock() else {
         return json!({});

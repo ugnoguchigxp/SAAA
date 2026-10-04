@@ -1,5 +1,6 @@
 import { PersonalStateSection } from "./PersonalStateSection";
 import { CodingSettingsSection } from "../coding/CodingSettingsSection";
+import { PurposeRoutesSection } from "./PurposeRoutesSection";
 import { SecuritySection } from "./SecuritySection";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -28,6 +29,7 @@ import type { VoiceCaptureState as AmbientVoiceAvailability } from "../../lib/vo
 type SettingsTab =
   | "general"
   | "connection"
+  | "purposes"
   | "providers"
   | "coding"
   | "routing"
@@ -73,6 +75,7 @@ export function SettingsPage({
       label: t("settings.tabs.connection.label"),
       detail: t("settings.tabs.connection.detail"),
     },
+    { id: "purposes", label: "用途別の接続先", detail: "会話・音声のサービス" },
     {
       id: "providers",
       label: t("settings.tabs.providers.label"),
@@ -269,6 +272,7 @@ export function SettingsPage({
               onCodexChange={(codex) => changeDraft((current) => ({ ...current, codex }))}
             />
           )}
+          {activeTab === "purposes" && <PurposeRoutesSection />}
           {activeTab === "coding" && <CodingSettingsSection />}
           {activeTab === "routing" && (
             <RoleRoutingSection
@@ -307,25 +311,27 @@ export function SettingsPage({
           )}
         </div>
       </div>
-      {activeTab !== "coding" && <footer className="settings-save-bar">
-        <p>{dirty ? t("settings.pendingRuntime") : t("settings.showingSaved")}</p>
-        <div>
-          <button
-            className="discard-button"
-            onClick={discard}
-            disabled={!dirty || saveState === "saving"}
-          >
-            {t("settings.discard")}
-          </button>
-          <button
-            className="save-button"
-            onClick={() => void save()}
-            disabled={!dirty || !connectionSettingsValid || saveState === "saving"}
-          >
-            {saveState === "saving" ? t("settings.saving") : t("settings.saveSettings")}
-          </button>
-        </div>
-      </footer>}
+      {activeTab !== "coding" && activeTab !== "purposes" && (
+        <footer className="settings-save-bar">
+          <p>{dirty ? t("settings.pendingRuntime") : t("settings.showingSaved")}</p>
+          <div>
+            <button
+              className="discard-button"
+              onClick={discard}
+              disabled={!dirty || saveState === "saving"}
+            >
+              {t("settings.discard")}
+            </button>
+            <button
+              className="save-button"
+              onClick={() => void save()}
+              disabled={!dirty || !connectionSettingsValid || saveState === "saving"}
+            >
+              {saveState === "saving" ? t("settings.saving") : t("settings.saveSettings")}
+            </button>
+          </div>
+        </footer>
+      )}
     </section>
   );
 }

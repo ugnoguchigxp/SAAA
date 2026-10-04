@@ -15,7 +15,9 @@ pub fn interrupt() {
 }
 mod foreground;
 pub(super) use foreground::foreground_requested;
-pub use foreground::{blocking_generation, foreground, ForegroundSlot};
+#[cfg(any(test, feature = "offline-contracts"))]
+pub use foreground::ForegroundSlot;
+pub use foreground::{blocking_generation, foreground};
 pub fn generation_slot_busy() -> bool {
     foreground_requested() || SLOT.try_write().is_err()
 }

@@ -1,9 +1,13 @@
+#[cfg(any(test, feature = "offline-contracts"))]
+use super::{database_error, now_iso};
 use super::{
-    database_error, now_iso, spawn_situation_monitor, validate_identifier, AppSnapshot,
-    ListMessagesInput, LocalArtifactResult, ProviderTestResult, SaveSettingsDocumentsInput,
+    spawn_situation_monitor, validate_identifier, AppSnapshot, ListMessagesInput,
+    LocalArtifactResult, ProviderTestResult, SaveSettingsDocumentsInput,
     SetVoiceListeningEnabledInput, SettingsDocument, TestProviderInput,
 };
-use crate::app_state::{AppState, ProviderProbeStatus, RunCancellation};
+use crate::app_state::AppState;
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::app_state::{ProviderProbeStatus, RunCancellation};
 #[cfg(test)]
 use crate::ipc_contract::ConversationMessage;
 use crate::ipc_contract::ConversationMessagePage;
@@ -13,7 +17,9 @@ use crate::ipc_contract::RuntimeEvent;
 use crate::persistence::conversations::list_messages_from_connection;
 #[cfg(test)]
 use crate::persistence::schema::initialize_database;
-use crate::persistence::{list_message_page_from_connection, SqliteReaders, SqliteWriter};
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::persistence::SqliteReaders;
+use crate::persistence::{list_message_page_from_connection, SqliteWriter};
 #[cfg(test)]
 pub(crate) use crate::runtime::codex_turn::{
     persist_codex_thread, receive_supervised_codex_result, run_codex_turn_process,
@@ -23,10 +29,12 @@ pub(crate) use crate::runtime::codex_turn::{
 pub(crate) use crate::runtime::turns::finish_runtime_run;
 #[cfg(test)]
 pub(crate) use crate::runtime::turns::prepare_runtime_run;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::voice_behavior::{
     get_conversation_voice_policy, reset_conversation_voice_policy,
     update_conversation_voice_policy,
 };
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::voice_commands::{
     delete_voice_enrollment_sample, delete_voice_profile, get_voice_profile_snapshot,
     read_voice_enrollment_sample, save_voice_enrollment_sample, set_target_speaker_filter_enabled,
@@ -36,6 +44,7 @@ use crate::voice_commands::{
 use rusqlite::Connection;
 #[cfg(test)]
 use std::fs;
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -45,6 +54,9 @@ use std::{
     },
     time::Duration,
 };
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::{path::PathBuf, sync::Arc, time::Duration};
+#[cfg(any(test, feature = "offline-contracts"))]
 use tauri::Manager;
 pub(crate) const WINDOW_SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 pub(crate) const DYNAMIC_LAN_PROVIDER_ID: &str = "lan-llm-dynamic";

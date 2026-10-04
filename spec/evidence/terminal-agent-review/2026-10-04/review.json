@@ -1,0 +1,300 @@
+{
+  "rubric_version": "1.1.0",
+  "mode": "technical",
+  "depth": "quick",
+  "technical_profile": "agent",
+  "assessment_kind": "current",
+  "target": {
+    "locator": "/Users/y.noguchi/Code/SAAA",
+    "snapshot": "294f4969e8b54d7074279d2cddb1fb773aff7227 + inspected working-tree files identified in source-snapshot.json",
+    "reviewed_at": "2026-10-04",
+    "stage": "Claimed completion; implementation target not located",
+    "scope": "専用端末・Codex CLI／Claude Code連携の対象探索。current working tree、全ローカルbranch、登録worktree、直近50チャット、ローカルarchive、当日の関連CLI履歴を調査。既存Pi/Codex SDK全般、クラウドAPI切替、リモート未取得branch、別PC、削除済み履歴は評価対象外。製品実装のテストと実CLI起動は未実施。"
+  },
+  "evidence": [
+    {
+      "id": "E01",
+      "kind": "code",
+      "locator": "src-tauri/src/coding/settings.rs:6-19,41-45",
+      "observed_at": "2026-10-04",
+      "observation": "CodingSettingsに端末選択はなく、valid_implementationはpi/codex-sdkのみを許可する。",
+      "scope": "対象の所在・現行入口の確認。動作試験や他場所での実装の否定ではない。"
+    },
+    {
+      "id": "E02",
+      "kind": "code",
+      "locator": "src/features/coding/CodingSettingsSection.tsx:52-58,76-139",
+      "observed_at": "2026-10-04",
+      "observation": "UIの実装方法はPiとCodex SDKの二択で、Kitty/GhosttyやClaude Codeの選択はない。",
+      "scope": "対象の所在・現行入口の確認。動作試験や他場所での実装の否定ではない。"
+    },
+    {
+      "id": "E03",
+      "kind": "code",
+      "locator": "src-tauri/src/runtime/conversation_check/queue_tools.rs:8-14; queue_runtime/ornith.rs:37-63",
+      "observed_at": "2026-10-04",
+      "observation": "現在の会話キューはcodingツールを許可集合に含めず、workspace_pathをNoneにしている。",
+      "scope": "対象の所在・現行入口の確認。動作試験や他場所での実装の否定ではない。"
+    },
+    {
+      "id": "E04",
+      "kind": "code",
+      "locator": "src-tauri/src/coding/service.rs:275-294",
+      "observed_at": "2026-10-04",
+      "observation": "現在の起動/probe経路に専用端末CLI方式はない。",
+      "scope": "対象の所在・現行入口の確認。動作試験や他場所での実装の否定ではない。"
+    },
+    {
+      "id": "E05",
+      "kind": "execution",
+      "locator": "git worktree list --porcelain; git grep across refs/heads; rg current and webfetch-finalize worktree",
+      "observed_at": "2026-10-04",
+      "observation": "登録worktreeはmainとwebfetch-finalizeの二つ。git worktree listはexit 0。全ローカルbranchのsrc/src-tauri/contexts/tests/scriptsでghostty/kitty/tool_deferred/terminal_agentを検索したgit grepはexit 1（該当なし）。現在の製品codeを対象にしたrgも専用端末実装に該当しない。credential不要、read-only、macOS現行作業フォルダ。",
+      "scope": "対象の所在・現行入口の確認。動作試験や他場所での実装の否定ではない。"
+    },
+    {
+      "id": "E06",
+      "kind": "external_observation",
+      "locator": "Claude SAAA session a4c2c815-0c7d-40a2-a9ae-60f4f5f7f6a1; 2026-10-04T10:35:29Z user request; 11:21:33Z last assistant text",
+      "observed_at": "2026-10-04",
+      "observation": "当日のClaude作業指示はpurpose-based-cloud-api-switching.mdの実装。末尾は全体テスト未完了・失敗の原因未確認という報告。toolchain-terminal-agents.mdの実装依頼ではない。",
+      "scope": "対象の所在・現行入口の確認。動作試験や他場所での実装の否定ではない。"
+    },
+    {
+      "id": "E07",
+      "kind": "primary_doc",
+      "locator": "docs/plans/toolchain-terminal-agents.md:180-188,238",
+      "observed_at": "2026-10-04",
+      "observation": "計画の受入条件は両CLIの依頼→質問→回答→再開→検証→報告、二種の端末設定・起動・復旧。現在はその対象コードと受入記録を特定できない。",
+      "scope": "対象の所在・現行入口の確認。動作試験や他場所での実装の否定ではない。"
+    }
+  ],
+  "claims": [
+    {
+      "id": "C01",
+      "type": "Fact",
+      "statement": "この作業フォルダで確認した実装設定・会話入口は、専用端末連携の計画を実現していない。",
+      "evidence_ids": [
+        "E01",
+        "E02",
+        "E03",
+        "E04",
+        "E07"
+      ],
+      "limitations": "別PC、未取得remote、未発見の作業場所については未確認。"
+    },
+    {
+      "id": "C02",
+      "type": "Inference",
+      "statement": "別計画の実装報告が端末連携の完了報告として認識された可能性がある。",
+      "evidence_ids": [
+        "E06"
+      ],
+      "limitations": "ユーザーが見た完了報告そのものは未特定。断定しない。"
+    },
+    {
+      "id": "C03",
+      "type": "Unknown",
+      "statement": "専用端末連携の完成実装の品質は評価不能。",
+      "evidence_ids": [],
+      "limitations": "レビュー対象の差分と動作証跡を特定できていない。"
+    }
+  ],
+  "findings": [],
+  "tracks": {
+    "technical": {
+      "dimensions": {
+        "architecture": {
+          "criteria": {
+            "boundaries": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "flow": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "fit": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        },
+        "correctness": {
+          "criteria": {
+            "contracts": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "edge_cases": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "concurrency": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        },
+        "security": {
+          "criteria": {
+            "access": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "input_secrets": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "abuse": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        },
+        "reliability": {
+          "criteria": {
+            "failure": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "recovery": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "resilience": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        },
+        "maintainability": {
+          "criteria": {
+            "clarity": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "change": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "debt": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        },
+        "common_components": {
+          "criteria": {
+            "duplication": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "reuse": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "abstraction": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        },
+        "testing": {
+          "criteria": {
+            "risk_coverage": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "quality": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "automation": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        },
+        "supply_chain": {
+          "criteria": {
+            "dependencies": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "build_release": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "license": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        },
+        "performance": {
+          "criteria": {
+            "budget": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "hot_path": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "measurement": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        },
+        "operability": {
+          "criteria": {
+            "signals": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "lifecycle": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            },
+            "interaction": {
+              "status": "unknown",
+              "value": null,
+              "unknown_reason": "完成した専用端末連携の実装対象を特定できておらず、既存基盤から新機能の品質を推定しない。"
+            }
+          }
+        }
+      }
+    }
+  }
+}

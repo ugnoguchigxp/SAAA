@@ -12,11 +12,18 @@ describe("top-level workspace redesign", () => {
     const shell = source("src/shell/AppShell.tsx");
     const shellStyles = source("src/shell/appShell.css");
     const app = source("src/App.tsx");
-    const chat = source("src/features/chat/ChatPage.tsx");
+    const chat = source("src/features/chat/ConversationCheckPage.tsx");
 
-    expect(routes).toContain(
-      '[\n  "conversation",\n  "memory",\n  "work",\n  "records",\n  "audit",\n  "diagnosis",\n  "settings",\n]',
-    );
+    for (const route of [
+      "conversation",
+      "memory",
+      "work",
+      "records",
+      "audit",
+      "diagnosis",
+      "settings",
+    ])
+      expect(routes).toContain(`"${route}"`);
     expect(shell).toContain("<TopNavigation");
     expect(shellStyles).toContain("position: absolute");
     expect(shellStyles).toContain("pointer-events: none");
@@ -33,8 +40,8 @@ describe("top-level workspace redesign", () => {
     expect(chat).not.toContain("WorldScopeSelector");
     expect(chat).not.toContain('className="topbar"');
     expect(chat).not.toContain("<CodingJobs");
-    expect(chat).toContain('className="latest-message-button"');
-    expect(chat).toContain('name="down"');
+    expect(chat).toContain("conversation-check-history");
+
     expect(chat).toContain('className="llm-thinking-indicator"');
     expect(chat).toContain("voice-activity-indicator");
     expect(chat).not.toContain("transcript-stable");

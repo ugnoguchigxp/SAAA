@@ -16,11 +16,7 @@ pub(crate) async fn run_fast_diagnosis(app: tauri::AppHandle) -> Result<Diagnosi
 pub(crate) fn get_diagnosis_report(
     state: tauri::State<'_, AppState>,
 ) -> Result<DiagnosisReport, String> {
-    Ok(current_report(&state))
-}
-
-pub(crate) fn current_report(state: &AppState) -> DiagnosisReport {
-    state.diagnosis.snapshot()
+    Ok(state.diagnosis.snapshot())
 }
 
 #[cfg(test)]
@@ -40,7 +36,7 @@ mod tests {
         report.overall = DiagnosisStatus::Warn;
         report.running = true;
         state.diagnosis.publish(report);
-        let snapshot = current_report(&state);
+        let snapshot = state.diagnosis.snapshot();
         assert_eq!(snapshot.revision, revision);
         assert!(!snapshot.running);
         assert_eq!(snapshot.overall, DiagnosisStatus::Warn);

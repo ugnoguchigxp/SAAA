@@ -1,7 +1,11 @@
 import { ProviderCard } from "./ProviderCard";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { CodexAgentSettings, ModelProviderSettings, ModelProvidersSettings } from "../../lib/contracts";
+import type {
+  CodexAgentSettings,
+  ModelProviderSettings,
+  ModelProvidersSettings,
+} from "../../lib/contracts";
 import { localizeProviderLabel } from "../../i18n/presentation";
 import "./IndividualProvidersSection.css";
 
@@ -105,26 +109,37 @@ export function IndividualProvidersSection({
   }
 
   const configuredMiMo = settings.providers.find((provider) => provider.id === mimoPreset.id);
-  const individualProviders = settings.providers.filter((provider) => provider.kind !== "dynamic-lan");
+  const individualProviders = settings.providers.filter(
+    (provider) => provider.kind !== "dynamic-lan",
+  );
   const allProviders = [
     configuredMiMo ?? mimoPreset,
     ...individualProviders.filter((provider) => provider.id !== mimoPreset.id),
   ];
   const visible = allProviders.filter((provider) => {
     if (filter === "all") return true;
-    if (filter === "llm") return provider.kind === "openai-compatible" || provider.kind === "agent-session";
+    if (filter === "llm")
+      return provider.kind === "openai-compatible" || provider.kind === "agent-session";
     if (filter === "asr") return provider.kind === "cloud-asr";
     return provider.kind === "cloud-tts" || provider.kind === "system-tts";
   });
   const codexVisible = filter === "all" || filter === "llm";
   const codexSelected = selectedId === "codex-sdk" && codexVisible;
-  const selected = codexSelected ? undefined : visible.find((provider) => provider.id === selectedId)
-    ?? visible.find((provider) => provider.id === mimoPreset.id)
-    ?? visible[0];
+  const selected = codexSelected
+    ? undefined
+    : (visible.find((provider) => provider.id === selectedId) ??
+      visible.find((provider) => provider.id === mimoPreset.id) ??
+      visible[0]);
   return (
     <div className="individual-services">
       <div className="individual-services-summary">
-        <span>会話の既定接続先: <strong>{settings.providers.find((provider) => provider.id === primaryProviderId)?.label ?? "未設定"}</strong></span>
+        <span>
+          会話の既定接続先:{" "}
+          <strong>
+            {settings.providers.find((provider) => provider.id === primaryProviderId)?.label ??
+              "未設定"}
+          </strong>
+        </span>
         <span>登録済み個別プロバイダー: {individualProviders.length + 1}</span>
       </div>
       <div className="individual-services-grid">
@@ -132,21 +147,50 @@ export function IndividualProvidersSection({
           <h3>{t("settings.providers.title")}</h3>
           <div className="individual-services-filters" aria-label="プロバイダーの種類">
             {(["all", "llm", "asr", "tts"] as const).map((kind) => (
-              <button key={kind} type="button" className={filter === kind ? "active" : ""} onClick={() => setFilter(kind)}>
+              <button
+                key={kind}
+                type="button"
+                className={filter === kind ? "active" : ""}
+                onClick={() => setFilter(kind)}
+              >
                 {kind === "all" ? "すべて" : kind.toUpperCase()}
               </button>
             ))}
           </div>
           <div className="individual-services-items">
             {visible.map((provider) => (
-              <button key={provider.id} type="button" className={selected?.id === provider.id ? "individual-services-item selected" : "individual-services-item"} onClick={() => setSelectedId(provider.id)}>
+              <button
+                key={provider.id}
+                type="button"
+                className={
+                  selected?.id === provider.id
+                    ? "individual-services-item selected"
+                    : "individual-services-item"
+                }
+                onClick={() => setSelectedId(provider.id)}
+              >
                 <strong>{localizeProviderLabel(t, provider.label)}</strong>
-                {provider.id === primaryProviderId && <span className="individual-services-default">会話の既定</span>}
-                <small>{provider.kind === "cloud-asr" ? "ASR" : provider.kind === "cloud-tts" || provider.kind === "system-tts" ? "TTS" : "LLM"} · {persistedProviderIds.has(provider.id) ? provider.id : "保存前"}</small>
+                {provider.id === primaryProviderId && (
+                  <span className="individual-services-default">会話の既定</span>
+                )}
+                <small>
+                  {provider.kind === "cloud-asr"
+                    ? "ASR"
+                    : provider.kind === "cloud-tts" || provider.kind === "system-tts"
+                      ? "TTS"
+                      : "LLM"}{" "}
+                  · {persistedProviderIds.has(provider.id) ? provider.id : "保存前"}
+                </small>
               </button>
             ))}
             {codexVisible && (
-              <button type="button" className={codexSelected ? "individual-services-item selected" : "individual-services-item"} onClick={() => setSelectedId("codex-sdk") }>
+              <button
+                type="button"
+                className={
+                  codexSelected ? "individual-services-item selected" : "individual-services-item"
+                }
+                onClick={() => setSelectedId("codex-sdk")}
+              >
                 <strong>Codex SDK</strong>
                 <small>高度推論 · {codex.model}</small>
               </button>
@@ -155,34 +199,34 @@ export function IndividualProvidersSection({
           <details className="individual-services-add">
             <summary>＋ プロバイダーを追加</summary>
             <div>
-            <button
-              className="add-provider-button"
-              type="button"
-              onClick={() => addProvider("llm")}
-            >
-              ＋ LLM
-            </button>
-            <button
-              className="add-provider-button"
-              type="button"
-              onClick={() => addProvider("agent-llm")}
-            >
-              ＋ Agent LLM
-            </button>
-            <button
-              className="add-provider-button"
-              type="button"
-              onClick={() => addProvider("asr")}
-            >
-              ＋ ASR
-            </button>
-            <button
-              className="add-provider-button"
-              type="button"
-              onClick={() => addProvider("tts")}
-            >
-              ＋ TTS
-            </button>
+              <button
+                className="add-provider-button"
+                type="button"
+                onClick={() => addProvider("llm")}
+              >
+                ＋ LLM
+              </button>
+              <button
+                className="add-provider-button"
+                type="button"
+                onClick={() => addProvider("agent-llm")}
+              >
+                ＋ Agent LLM
+              </button>
+              <button
+                className="add-provider-button"
+                type="button"
+                onClick={() => addProvider("asr")}
+              >
+                ＋ ASR
+              </button>
+              <button
+                className="add-provider-button"
+                type="button"
+                onClick={() => addProvider("tts")}
+              >
+                ＋ TTS
+              </button>
             </div>
           </details>
         </section>
@@ -190,18 +234,29 @@ export function IndividualProvidersSection({
           {codexSelected && (
             <section className="settings-card provider-card">
               <h3>Codex SDK</h3>
-              <p className="settings-help">高度推論の候補です。会話の既定接続先はここでは変更しません。役割への割当は「Role routing」で設定します。</p>
+              <p className="settings-help">
+                高度推論の候補です。会話の既定接続先はここでは変更しません。役割への割当は「Role
+                routing」で設定します。
+              </p>
               <div className="settings-form-grid">
                 <label className="settings-field">
                   <span>利用状態</span>
-                  <select value={codex.enabled ? "enabled" : "disabled"} onChange={(event) => onCodexChange({ ...codex, enabled: event.target.value === "enabled" })}>
+                  <select
+                    value={codex.enabled ? "enabled" : "disabled"}
+                    onChange={(event) =>
+                      onCodexChange({ ...codex, enabled: event.target.value === "enabled" })
+                    }
+                  >
                     <option value="disabled">無効</option>
                     <option value="enabled">有効</option>
                   </select>
                 </label>
                 <label className="settings-field">
                   <span>モデル</span>
-                  <input value={codex.model} onChange={(event) => onCodexChange({ ...codex, model: event.target.value })} />
+                  <input
+                    value={codex.model}
+                    onChange={(event) => onCodexChange({ ...codex, model: event.target.value })}
+                  />
                 </label>
                 <label className="settings-field">
                   <span>ランタイム</span>
@@ -214,20 +269,25 @@ export function IndividualProvidersSection({
               </div>
             </section>
           )}
-          {selected?.id === mimoPreset.id && !settings.providers.some((provider) => provider.id === mimoPreset.id) && (
-            <div className="individual-services-preset">
-              <span>MiMo API の設定を保存すると、APIキーを入力できます。</span>
-              <button type="button" onClick={() => replace(mimoPreset.id, mimoPreset)}>MiMo APIを登録</button>
-            </div>
+          {selected?.id === mimoPreset.id &&
+            !settings.providers.some((provider) => provider.id === mimoPreset.id) && (
+              <div className="individual-services-preset">
+                <span>MiMo API の設定を保存すると、APIキーを入力できます。</span>
+                <button type="button" onClick={() => replace(mimoPreset.id, mimoPreset)}>
+                  MiMo APIを登録
+                </button>
+              </div>
+            )}
+          {selected && (
+            <ProviderCard
+              key={selected.id}
+              provider={selected}
+              persisted={persistedProviderIds.has(selected.id)}
+              removable={selected.id !== mimoPreset.id || persistedProviderIds.has(selected.id)}
+              onChange={(next) => replace(selected.id, next)}
+              onRemove={() => remove(selected)}
+            />
           )}
-          {selected && <ProviderCard
-            key={selected.id}
-            provider={selected}
-            persisted={persistedProviderIds.has(selected.id)}
-            removable={selected.id !== mimoPreset.id || persistedProviderIds.has(selected.id)}
-            onChange={(next) => replace(selected.id, next)}
-            onRemove={() => remove(selected)}
-          />}
         </div>
       </div>
     </div>

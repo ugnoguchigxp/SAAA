@@ -34,6 +34,7 @@ impl ProviderInputBudget {
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) const fn agent_session() -> Self {
         Self {
             // AgentSession uses a distinct `{input:[...]}` envelope and does not offer the

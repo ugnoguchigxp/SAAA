@@ -1,6 +1,8 @@
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 use futures_util::StreamExt;
 impl Client {
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn post(&self, session: Option<&str>, body: Value) -> reqwest::RequestBuilder {
         let mut request = self
             .http
@@ -14,6 +16,7 @@ impl Client {
         }
         request
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(super) async fn notify(
         &self,
         session: Option<&str>,
@@ -33,6 +36,7 @@ impl Client {
         }
         Ok(())
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(super) async fn rpc(
         &self,
         session: Option<&str>,
@@ -84,6 +88,7 @@ impl Client {
         Ok((value, session))
     }
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 fn sse_result(bytes: &[u8], expected: &Value) -> Result<Option<Value>, String> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Ok(None);

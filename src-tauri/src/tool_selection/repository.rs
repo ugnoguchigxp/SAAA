@@ -8,6 +8,7 @@ use serde_json::Value;
 mod epochs;
 #[path = "repository/insert_decision.rs"]
 mod insert_decision;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use epochs::effect_for_backend_key;
 pub use epochs::{
     bump_epochs, delete_fts, epochs, insert_revision, set_current_revision, upsert_embedding,

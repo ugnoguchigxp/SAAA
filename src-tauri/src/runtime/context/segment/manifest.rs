@@ -14,6 +14,7 @@ pub(crate) struct SegmentManifest {
     pub(crate) last_entry_sequence: i64,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn load_active(
     connection: &Connection,
     conversation_id: &str,
@@ -44,6 +45,7 @@ pub(crate) fn load_active(
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn create(
     connection: &Connection,
     conversation_id: &str,
@@ -71,6 +73,7 @@ pub(crate) fn create(
     load_active(connection, conversation_id)?.ok_or_else(|| "segment missing".into())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn close(connection: &Connection, id: &str) -> Result<(), String> {
     connection
         .execute(

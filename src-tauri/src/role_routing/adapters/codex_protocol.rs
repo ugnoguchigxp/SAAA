@@ -4,9 +4,13 @@
 //! step id, size, version, and terminal sequencing have all been checked here.
 use serde::Deserialize;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 const PROTOCOL_VERSION: u8 = 1;
+#[cfg(any(test, feature = "offline-contracts"))]
 const MAX_FRAME_BYTES: usize = 1_024 * 1_024;
+#[cfg(any(test, feature = "offline-contracts"))]
 const MAX_FINAL_BYTES: usize = 64 * 1_024;
+#[cfg(any(test, feature = "offline-contracts"))]
 const FIXED_FAILURE_CODES: &[&str] = &[
     "invalid_request",
     "stream_limit",
@@ -39,6 +43,7 @@ pub(crate) struct SidecarUsage {
 }
 
 impl SidecarUsage {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn as_json(&self) -> String {
         serde_json::json!({
             "inputTokens": self.input_tokens,
@@ -49,6 +54,7 @@ impl SidecarUsage {
         .to_string()
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn valid(&self) -> bool {
         const MAX_TOKENS: u64 = 100_000_000;
         self.input_tokens <= MAX_TOKENS
@@ -98,6 +104,7 @@ enum Frame {
 }
 
 impl Frame {
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn header(&self) -> (u8, &str, &str) {
         match self {
             Self::Started {
@@ -130,6 +137,7 @@ impl Frame {
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     fn event(self) -> SidecarEvent {
         match self {
             Self::Started { .. } => SidecarEvent::Started,
@@ -149,6 +157,7 @@ pub(crate) struct FrameValidator {
 }
 
 impl FrameValidator {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn new(id: impl Into<String>, step_id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -157,6 +166,7 @@ impl FrameValidator {
         }
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn validate(&mut self, line: &[u8]) -> Result<SidecarEvent, String> {
         if self.terminal {
             return Err("Codex sidecar emitted a frame after its terminal frame".into());
@@ -192,6 +202,7 @@ impl FrameValidator {
         Ok(event)
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn terminal(&self) -> bool {
         self.terminal
     }

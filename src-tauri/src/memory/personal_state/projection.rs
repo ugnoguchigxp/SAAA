@@ -1,10 +1,15 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::database_error;
+#[cfg(any(test, feature = "offline-contracts"))]
 use rusqlite::{params, Connection};
+#[cfg(any(test, feature = "offline-contracts"))]
 use saaa_personal_state_core::Status;
 #[cfg(test)]
 use saaa_personal_state_core::{AccessRequest, Classification, Purpose};
+#[cfg(any(test, feature = "offline-contracts"))]
 use serde_json::{json, Value};
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn context_candidates(
     c: &Connection,
     scope: &crate::runtime::context::scope::ScopeSnapshot,
@@ -147,6 +152,7 @@ pub(crate) fn context_candidates(
     Ok(candidates)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn canonical_scope_key(value: &str) -> String {
     if ["user:", "project:", "task:", "resource:", "request:"]
         .iter()

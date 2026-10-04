@@ -13,9 +13,9 @@ export function WorldReviewMaintenance({
   const { t } = useTranslation();
   const [review, setReview] = useState(snapshot.maintenance?.retrospective);
   const [busy, setBusy] = useState(false);
-  const [candidates, setCandidates] = useState<
-    Awaited<ReturnType<typeof reviewApi.candidates>>
-  >([]);
+  const [candidates, setCandidates] = useState<Awaited<ReturnType<typeof reviewApi.candidates>>>(
+    [],
+  );
   useEffect(() => {
     setReview(snapshot.maintenance?.retrospective);
     setCandidates([]);
@@ -29,16 +29,12 @@ export function WorldReviewMaintenance({
           value={review.mode}
           disabled={busy}
           onChange={(event) => {
-            const mode = event.currentTarget.value as
-              "off" | "preview" | "apply";
+            const mode = event.currentTarget.value as "off" | "preview" | "apply";
             setBusy(true);
             void reviewApi
               .setMode(mode)
               .then((next) => {
-                setReview(
-                  personalStateSnapshotSchema.parse(next).maintenance
-                    ?.retrospective,
-                );
+                setReview(personalStateSnapshotSchema.parse(next).maintenance?.retrospective);
                 setCandidates([]);
                 setError("");
               })
@@ -88,8 +84,7 @@ export function WorldReviewMaintenance({
             <ul>
               {item.sources.map((source) => (
                 <li key={`${source.id}:${source.version}`}>
-                  {source.id} · v{source.version} ·{" "}
-                  {new Date(source.observedAt).toLocaleString()}
+                  {source.id} · v{source.version} · {new Date(source.observedAt).toLocaleString()}
                 </li>
               ))}
             </ul>

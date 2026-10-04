@@ -28,11 +28,13 @@ use zeroize::Zeroizing;
 mod context_still_recall_error;
 #[path = "context_still_recall/load_manifest.rs"]
 mod load_manifest;
-use context_still_recall_error::{
-    validate_tool_catalog, EndpointManifest, ENDPOINT_MANIFEST_FILE, MAX_HTTP_RESPONSE_BYTES,
-    MAX_MANIFEST_BYTES, MAX_TOKEN_BYTES, MCP_PROTOCOL_VERSION,
-};
+#[cfg(any(test, feature = "offline-contracts"))]
+use context_still_recall_error::{validate_tool_catalog, MAX_HTTP_RESPONSE_BYTES};
 pub use context_still_recall_error::{ContextStillRecallClient, ContextStillRecallError};
+use context_still_recall_error::{
+    EndpointManifest, ENDPOINT_MANIFEST_FILE, MAX_MANIFEST_BYTES, MAX_TOKEN_BYTES,
+    MCP_PROTOCOL_VERSION,
+};
 use load_manifest::{load_manifest, read_token, valid_session_id};
 #[cfg(test)]
 #[path = "context_still_recall/tests/mod.rs"]

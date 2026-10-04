@@ -1,10 +1,16 @@
 //! Maps an in-memory reachability snapshot onto actor ids. No database or network I/O.
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::contracts::RoleRoutingSettings;
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::selection::SelectionInput;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::providers::reachability::{Reachability, ReachabilitySnapshot};
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::DYNAMIC_LAN_PROVIDER_ID;
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::collections::HashSet;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// AppState の観測を、policy 上の actor id 集合に写す。DB も I/O も触らない。
 pub(crate) fn selection_input_for(
     policy: &RoleRoutingSettings,

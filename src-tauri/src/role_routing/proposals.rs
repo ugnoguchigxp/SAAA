@@ -1,6 +1,7 @@
 //! Explicit approval gate for premium reasoning proposals.
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+#[cfg(any(test, feature = "offline-contracts"))]
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,6 +235,7 @@ pub(crate) fn decline(
     Ok(())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Consumes an approved proposal exactly once and creates the premium step in the same ambient
 /// transaction, so a crash cannot leave a consumed approval without its step (or vice versa).
 /// The current policy, revision, expiry, cloud permission, and named candidate are rechecked at

@@ -28,7 +28,7 @@ pub(crate) struct AttemptReceipt {
 }
 
 pub(crate) trait ObservationSink: Send + Sync {
-    fn sent(&self, body: &Value, receipt: &mut AttemptReceipt);
+    fn sent(&self, body: &Value, receipt: &mut AttemptReceipt, started: Instant);
     fn finished(&self, receipt: &AttemptReceipt);
 }
 
@@ -45,6 +45,7 @@ pub(crate) fn digest(bytes: impl AsRef<[u8]>) -> String {
 
 impl<'a> Attempt<'a> {
     pub(super) fn new(sink: Option<&'a dyn ObservationSink>, body: &Value) -> Self {
+        let started = Instant::now();
         let fixed = body["messages"][0]["content"].as_str().unwrap_or_default();
         let mut receipt = AttemptReceipt {
             schema_version: 1,
@@ -76,11 +77,11 @@ impl<'a> Attempt<'a> {
             outcome: "interrupted",
         };
         if let Some(sink) = sink {
-            sink.sent(body, &mut receipt);
+            sink.sent(body, &mut receipt, started);
         }
         Self {
             sink,
-            started: Instant::now(),
+            started,
             receipt,
         }
     }
@@ -115,9 +116,16 @@ impl<'a> Attempt<'a> {
 
 impl Drop for Attempt<'_> {
     fn drop(&mut self) {
+        if self.receipt.outcome == "interrupted" && self.receipt.usage_status == "missing" {
+            self.receipt.usage_status = "disconnected";
+        }
         self.receipt.completed_ms = self.started.elapsed().as_millis() as u64;
         if let Some(sink) = self.sink {
             sink.finished(&self.receipt);
         }
     }
 }
+
+#[cfg(test)]
+#[path = "observation_tests.rs"]
+mod tests;

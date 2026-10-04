@@ -1,0 +1,2 @@
+$ bun scripts/module-size.ts check
+module-size ok (1391 files)

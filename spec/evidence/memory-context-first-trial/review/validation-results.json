@@ -1,0 +1,282 @@
+{
+  "recordedAt": "2026-10-01",
+  "passingTestCount": 68,
+  "reviewedSourceWarnings": [],
+  "checks": [
+    {
+      "name": "queue-e2e",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "ignored": 2,
+      "log": "/tmp/saaa-context-review-final-e2e.log",
+      "logSha256": "409f4eea4d43b2c115d340af355903583b591868230086a0146ba508f02c4b57"
+    },
+    {
+      "name": "memory-on",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/saaa-context-review-final-memory-on.log",
+      "logSha256": "e653aad7a8bc427dd83f3f6578c49407442c8054bd9c590058e2775e8f8c1032"
+    },
+    {
+      "name": "conversation-unit",
+      "status": "passed",
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/saaa-context-review-final-unit.log",
+      "logSha256": "dc5d1c18be89abcf0401dbde1b525402e9addce97e4f1030f94aaf2a1e61d5ad"
+    },
+    {
+      "name": "transport-unit",
+      "status": "passed",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/saaa-context-review-final-transport.log",
+      "logSha256": "7e0f21fdb6432110559128960d891c9b6e612ce80e411eb2cad5eaba04bdf760"
+    },
+    {
+      "name": "task-queue",
+      "status": "passed",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/saaa-context-review-task_queue.log",
+      "logSha256": "6a00e0cc75eb9672718dacf010630dd716fce505857a402786411531821f16df"
+    },
+    {
+      "name": "tts-dictionary",
+      "status": "passed",
+      "passed": 9,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/saaa-context-review-tts_dictionary.log",
+      "logSha256": "d08573d118b1616c1262e4afece0c4d8665506f4229c3f27fe09a7c717b1eea5"
+    },
+    {
+      "name": "tts-chunker",
+      "status": "passed",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/saaa-context-review-final-tts-chunker.log",
+      "logSha256": "41a07939c25d19162d581bc61a460b6fb0cfe978f42cc0e347ee0062f9bee7c9"
+    },
+    {
+      "name": "context-window",
+      "status": "passed",
+      "passed": 20,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/saaa-context-review-memory-context_window.log",
+      "logSha256": "ce30ec636ed34197552805014f8fb45a4e9e2a07deb9cd163c8e66f2875f870a"
+    },
+    {
+      "name": "offline-report",
+      "status": "passed",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/saaa-context-review-final-report.log",
+      "logSha256": "641863bf0fe39399f95cde384d01e89466c87767a55028ffea30564d482f3ad2"
+    },
+    {
+      "name": "typecheck",
+      "status": "passed",
+      "log": "/tmp/saaa-context-review-final-typecheck.log",
+      "logSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "name": "desktop-smoke",
+      "status": "passed",
+      "log": "/tmp/saaa-context-review-final-desktop.log",
+      "logSha256": "b0b9aed1d49129192db91ca941c94392c11999cf3b39bdb132fe51dbfa6c8b30"
+    },
+    {
+      "name": "clippy-lib",
+      "status": "passed",
+      "log": "/tmp/saaa-context-review-final-clippy.stderr",
+      "logSha256": "ed71c73cc0addf04cbbed4e6fb27aec2febd5a4ea3619575c7c9104c161ffdc9"
+    },
+    {
+      "name": "rustfmt-target",
+      "status": "passed",
+      "log": "/tmp/saaa-context-review-final-fmt.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "size-whole-repository",
+      "status": "failed",
+      "log": "/tmp/saaa-context-review-final-size.log",
+      "logSha256": "77e89e5ac3bb694e1c60454e5d2da61a8b08cbec0bbb677cbdde36be0ed628ad"
+    },
+    {
+      "name": "scope-rebind-before-fix",
+      "status": "failed-as-expected",
+      "log": "/tmp/saaa-context-review-scope-before.log",
+      "logSha256": "6835056061e766afd747ed3a2650918920cb138e59b79db6969391dd67ff6759"
+    },
+    {
+      "name": "runtime-conversation_check-queue_progress",
+      "status": "no-matching-tests",
+      "passed": 0,
+      "log": "/tmp/saaa-context-review-runtime-conversation_check-queue_progress.log",
+      "logSha256": "6f0b3dcfb1ff5df86d84963b16e541d23fc6160c2aa69ff38f9c19b3fb0f9607"
+    },
+    {
+      "name": "tts_recovery",
+      "status": "no-matching-tests",
+      "passed": 0,
+      "log": "/tmp/saaa-context-review-tts_recovery.log",
+      "logSha256": "2659781423020d66b1a6fc5a8106bb700eec9d440e6f22d5a664b2631357bfab"
+    },
+    {
+      "name": "runtime-conversation_check-streaming_speech",
+      "status": "no-matching-tests",
+      "passed": 0,
+      "log": "/tmp/saaa-context-review-runtime-conversation_check-streaming_speech.log",
+      "logSha256": "6a68bc8950f43e2d802d19233c697cf517d3ad14da0efb0d5e20b6e642fd39fd"
+    },
+    {
+      "name": "size-reviewed-modules",
+      "status": "passed",
+      "result": {
+        "reviewed": [
+          {
+            "path": "scripts/conversation-context-report.ts",
+            "total": 95,
+            "production": 95
+          },
+          {
+            "path": "src-tauri/src/conversation_queue_e2e/context_trial.rs",
+            "total": 320,
+            "production": 320
+          },
+          {
+            "path": "src-tauri/src/conversation_queue_e2e/context_trial/regressions.rs",
+            "total": 78,
+            "production": 78
+          },
+          {
+            "path": "src-tauri/src/providers/chat_completions/observation_tests.rs",
+            "total": 53,
+            "production": 0
+          },
+          {
+            "path": "src-tauri/src/providers/chat_completions/observation.rs",
+            "total": 132,
+            "production": 132
+          },
+          {
+            "path": "src-tauri/src/runtime/conversation_check/context_compiler_tests.rs",
+            "total": 131,
+            "production": 131
+          },
+          {
+            "path": "src-tauri/src/runtime/conversation_check/context_compiler.rs",
+            "total": 201,
+            "production": 201
+          },
+          {
+            "path": "src-tauri/src/runtime/conversation_check/context_metrics.rs",
+            "total": 160,
+            "production": 160
+          },
+          {
+            "path": "src-tauri/src/runtime/conversation_check/queue_answer_stream.rs",
+            "total": 255,
+            "production": 209
+          },
+          {
+            "path": "src-tauri/src/runtime/conversation_check/queue_context.rs",
+            "total": 213,
+            "production": 213
+          },
+          {
+            "path": "src-tauri/src/runtime/conversation_check/queue_runtime.rs",
+            "total": 751,
+            "production": 751
+          },
+          {
+            "path": "src-tauri/src/runtime/conversation_check/queue_runtime/action.rs",
+            "total": 53,
+            "production": 33
+          },
+          {
+            "path": "src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs",
+            "total": 445,
+            "production": 445
+          },
+          {
+            "path": "src-tauri/src/runtime/conversation_check/queue_runtime/speech.rs",
+            "total": 94,
+            "production": 94
+          },
+          {
+            "path": "tests/conversation-context-report-input.test.ts",
+            "total": 22,
+            "production": 22
+          },
+          {
+            "path": "tests/conversation-context-report.test.ts",
+            "total": 56,
+            "production": 56
+          }
+        ],
+        "failures": []
+      }
+    }
+  ],
+  "desktopSummary": {
+    "status": "ready",
+    "stage": "cleanup",
+    "durationMs": 100179,
+    "stages": [
+      {
+        "stage": "build",
+        "durationMs": 96397,
+        "exitCode": 0
+      },
+      {
+        "stage": "bundle",
+        "durationMs": 415
+      },
+      {
+        "stage": "launch",
+        "durationMs": 7
+      },
+      {
+        "stage": "ready",
+        "durationMs": 3353
+      },
+      {
+        "stage": "cleanup",
+        "durationMs": 6
+      }
+    ],
+    "checks": {
+      "databaseInitialized": true,
+      "frontendRendered": true,
+      "ipcReady": true,
+      "primaryConversationLoaded": true,
+      "situationSampled": true,
+      "snapshotLoaded": true,
+      "speakerRuntimeAvailable": true
+    }
+  },
+  "realModelAcceptance": "not rerun; previous failed results preserved",
+  "contextTools": {
+    "current": {
+      "compile": 1,
+      "eval": 1
+    },
+    "cumulative": {
+      "compile": 5,
+      "eval": 5
+    }
+  }
+}

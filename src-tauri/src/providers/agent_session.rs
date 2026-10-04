@@ -5,16 +5,18 @@ use serde_json::json;
 use std::time::Duration;
 use url::Url;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::ipc_contract::ConversationMessage;
 use crate::AgentSessionProviderSettings;
 
-use super::stream::{
-    CleanupOutcome, ModelStreamContext, ProviderAttemptOutcome, ProviderFailureKind,
-};
+use super::stream::ProviderFailureKind;
+#[cfg(any(test, feature = "offline-contracts"))]
+use super::stream::{CleanupOutcome, ModelStreamContext, ProviderAttemptOutcome};
 
 mod creation;
 mod sse;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn initial_input_reserve(
     state: &crate::AppState,
     input: &crate::StartTurnInput,
@@ -82,6 +84,7 @@ pub(crate) async fn probe_agent_session_provider(
     ))
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn stream_agent_session_provider(
     provider: &AgentSessionProviderSettings,
     history: &[ConversationMessage],
@@ -153,6 +156,7 @@ pub(crate) async fn stream_agent_session_provider(
     .await;
     apply_release(attempt, release)
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 fn apply_release(
     attempt: ProviderAttemptOutcome,
     release: Result<(), ProviderFailureKind>,
@@ -387,6 +391,7 @@ async fn release_session_request(
     .map(|_| ())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 async fn release_session_with_retry(
     client: &Client,
     provider: &AgentSessionProviderSettings,
@@ -477,6 +482,7 @@ fn failure_for_status(status: StatusCode) -> ProviderFailureKind {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn failed(kind: ProviderFailureKind, output_started: bool) -> ProviderAttemptOutcome {
     ProviderAttemptOutcome::Failed {
         kind,
@@ -486,6 +492,7 @@ fn failed(kind: ProviderFailureKind, output_started: bool) -> ProviderAttemptOut
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn cancelled(output_started: bool) -> ProviderAttemptOutcome {
     ProviderAttemptOutcome::Cancelled {
         output_started,

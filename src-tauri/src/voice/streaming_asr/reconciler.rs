@@ -1,4 +1,6 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use unicode_normalization::UnicodeNormalization;
+#[cfg(any(test, feature = "offline-contracts"))]
 use unicode_segmentation::UnicodeSegmentation;
 use zeroize::Zeroize;
 
@@ -22,6 +24,7 @@ impl Drop for ComparableTranscript {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn comparable_transcript(raw: &str) -> ComparableTranscript {
     let raw: String = raw.nfc().collect();
     let mut units = Vec::new();
@@ -46,12 +49,14 @@ pub(crate) fn comparable_transcript(raw: &str) -> ComparableTranscript {
     }
     ComparableTranscript { raw, units }
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn longest_common_prefix(left: &[ComparableUnit], right: &[ComparableUnit]) -> usize {
     left.iter()
         .zip(right)
         .take_while(|(a, b)| a.key == b.key)
         .count()
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn reconcile(
     previous: &[ComparableTranscript],
     stable_units: usize,

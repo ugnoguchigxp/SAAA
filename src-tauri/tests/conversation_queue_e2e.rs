@@ -37,6 +37,16 @@ async fn asr_ornith_tool_saved_answer_tts_reaches_terminal_queue_states() {
         .expect("authentication failure evicts the rejected session without retrying it");
     assert_eq!(authentication["reconnected"], true);
     assert_eq!(authentication["llmCalls"], 2);
+    let cloud = saaa_lib::conversation_queue_e2e::run_cloud_conversation()
+        .await
+        .expect("cloud conversation E2E");
+    // The bounded tool loop (search, failed fetch, fetch, answer) runs on the cloud route.
+    assert!(cloud["answer"]
+        .as_str()
+        .unwrap()
+        .starts_with("資料では確認済みの事実は42です。"));
+    assert_eq!(cloud["larmRequests"], 0, "{cloud}");
+    assert_eq!(cloud["llmCalls"], 4);
 }
 
 #[test]

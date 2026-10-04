@@ -4,8 +4,11 @@ use crate::runtime::context::scope::ScopeSnapshot;
 use saaa_personal_state_core::world::runtime_frame::{RuntimeKind, RuntimeRef, MAX_RUNTIME_REFS};
 use std::collections::BTreeSet;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use super::dispatch::for_record;
-pub(crate) use super::live::{observe_receipt, WorldBlocks, WorldLive, WorldReceipt};
+#[cfg(any(test, feature = "offline-contracts"))]
+pub(crate) use super::live::WorldBlocks;
+pub(crate) use super::live::{observe_receipt, WorldLive, WorldReceipt};
 
 pub(crate) fn explicit_project(scope: &ScopeSnapshot) -> Result<String, WorldOmission> {
     let mut keys: Vec<&str> = scope

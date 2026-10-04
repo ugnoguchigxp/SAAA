@@ -1,16 +1,25 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::classifier::{classify_with_parameters, shadow_policy, Hysteresis};
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::contracts::{
-    initial_decision, initial_signals, initial_state, AudioSignal, AudioState, CalendarSignal,
-    CalendarState, CalibrationParameters, ConversationSignal, ConversationState,
-    ForegroundCategory, ForegroundSignal, InputActivitySignal, InputActivityState,
-    MicrophoneSignal, MicrophoneState, OwnedSignalInput, QualityWindowCounters, ShadowDecision,
-    SignalHealth, SignalHealthEntry, SignalSnapshot, SituationEvent, SituationLedgerEntry,
-    SituationRuntimeFailure, SituationRuntimeSettings, SituationSnapshot, SituationState,
-    TimeBucket,
+    initial_decision, initial_signals, initial_state, AudioSignal, CalendarSignal, CalendarState,
+    CalibrationParameters, ConversationSignal, ForegroundCategory, ForegroundSignal,
+    InputActivitySignal, InputActivityState, MicrophoneSignal, QualityWindowCounters,
+    ShadowDecision, SignalHealth, SituationLedgerEntry, SituationRuntimeFailure,
+    SituationRuntimeSettings, SituationSnapshot, SituationState, TimeBucket,
+};
+use super::contracts::{
+    AudioState, ConversationState, MicrophoneState, OwnedSignalInput, SignalHealthEntry,
+    SignalSnapshot, SituationEvent,
 };
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::persistence::{SqliteReaders, SqliteWriter};
+#[cfg(any(test, feature = "offline-contracts"))]
 use rusqlite::Connection;
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     collections::VecDeque,
     sync::{
@@ -19,6 +28,7 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(any(test, feature = "offline-contracts"))]
 use tokio::sync::Notify;
 pub(super) fn signal_health(signals: &SignalSnapshot) -> Vec<SignalHealthEntry> {
     vec![

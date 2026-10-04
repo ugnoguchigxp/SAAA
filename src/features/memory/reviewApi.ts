@@ -19,15 +19,12 @@ const candidatesSchema = z.array(
     reason: z.string(),
     sources: reviewSourceLabelsSchema.default([]),
     candidates: z.array(
-      z
-        .object({ kind: z.string(), payload: z.unknown(), quote: z.string() })
-        .passthrough(),
+      z.object({ kind: z.string(), payload: z.unknown(), quote: z.string() }).passthrough(),
     ),
   }),
 );
 export const reviewApi = {
   setMode: (mode: "off" | "preview" | "apply") =>
     invoke<unknown>("set_world_review_mode", { mode }),
-  candidates: async () =>
-    candidatesSchema.parse(await invoke<unknown>("world_review_candidates")),
+  candidates: async () => candidatesSchema.parse(await invoke<unknown>("world_review_candidates")),
 };

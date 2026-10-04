@@ -224,12 +224,24 @@ async fn voice_asr_partial_is_delivered_without_persisting_text_or_dispatching_w
             language: None,
         })
         .expect("partial sends");
-    let encoded = connection.read_serialized(|c| recent_events(c, 20).map(|events| serde_json::to_string(&events).unwrap())).unwrap();
+    let encoded = connection
+        .read_serialized(|c| {
+            recent_events(c, 20).map(|events| serde_json::to_string(&events).unwrap())
+        })
+        .unwrap();
     assert!(!encoded.contains("private words"));
     assert!(!encoded.contains("asr-partial"));
     assert!(encoded.contains("asr-ready"));
-    let runs: i64 = connection.read_serialized(|c| c.query_row("SELECT count(*) FROM runtime_runs", [], |r| r.get(0)).map_err(crate::database_error)).unwrap();
-    assert_eq!(runs, 0, "partial receipt must not dispatch a conversation run");
+    let runs: i64 = connection
+        .read_serialized(|c| {
+            c.query_row("SELECT count(*) FROM runtime_runs", [], |r| r.get(0))
+                .map_err(crate::database_error)
+        })
+        .unwrap();
+    assert_eq!(
+        runs, 0,
+        "partial receipt must not dispatch a conversation run"
+    );
 }
 
 #[test]

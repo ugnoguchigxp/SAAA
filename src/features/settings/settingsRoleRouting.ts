@@ -1,3 +1,4 @@
+import { retainedButlerActors } from "./butlerActors";
 import type { RoleRoutingActor, RoleRoutingSettings } from "../../lib/roleRoutingTypes";
 import { defaultRoleRoutingSettings } from "./settingsRoleRoutingDefaults";
 
@@ -9,14 +10,7 @@ export function applyButlerConfiguration(
   current: RoleRoutingSettings,
   confirmOverwrite: (actorId: string) => boolean,
 ): RoleRoutingSettings | null {
-  const oldFrontendIsUnused =
-    !Object.entries(current.roles).some(([role, id]) => role !== "frontend" && id === "larm-frontdesk") &&
-    !current.recipes.some((recipe) => recipe.id !== "00-butler-respond" && recipe.roles.includes("frontend"));
-  const actors = current.actors.filter((actor) =>
-    !(oldFrontendIsUnused && actor.id === "larm-frontdesk" &&
-      actor.providerId === "lan-llm-dynamic" && actor.larmProvider === "backchannel" &&
-      actor.resourceGroup === "larm-backchannel"),
-  );
+  const actors = retainedButlerActors(current);
   for (const actor of butlerActors) {
     const index = actors.findIndex((existing) => existing.id === actor.id);
     if (index >= 0) {

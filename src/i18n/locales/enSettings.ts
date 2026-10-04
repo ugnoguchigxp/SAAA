@@ -196,7 +196,8 @@ export const enSettings = {
       asrTransport: "ASR transport",
       asrHttp: "Upload recording (HTTP)",
       asrQwenRealtime: "Qwen ASR Realtime (WebSocket)",
-      asrQwenHelp: "Use https://dashscope-intl.aliyuncs.com/api-ws/v1/realtime as the endpoint and qwen3-asr-flash-realtime as the model. Save the API key for this provider.",
+      asrQwenHelp:
+        "Use https://dashscope-intl.aliyuncs.com/api-ws/v1/realtime as the endpoint and qwen3-asr-flash-realtime as the model. Save the API key for this provider.",
       model: "Model",
       modelPlaceholder: "model name",
       authentication: "Authentication",

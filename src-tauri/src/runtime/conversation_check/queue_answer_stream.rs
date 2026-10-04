@@ -67,11 +67,11 @@ impl<R: tauri::Runtime> RuntimeEventSender for AnswerDeltaSender<R> {
             }
             if let Ok(mut state) = self.state.lock() {
                 if let Some(delta) = state.append(&text) {
-                    self.metrics.visible();
-                    let _ = self.app.emit(
+                    self.app.emit(
                         "conversation-answer-delta",
                         serde_json::json!({"inputId":self.input_id,"text":delta}),
-                    );
+                    )?;
+                    self.metrics.visible();
                     let _ = self.output.send(delta);
                 }
             }

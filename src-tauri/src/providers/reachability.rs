@@ -1,5 +1,7 @@
 //! LAN 上の Provider Harness への到達性を観測する。選択ロジックへは snapshot だけを渡す。
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+#[cfg(any(test, feature = "offline-contracts"))]
+use std::sync::RwLockReadGuard;
+use std::sync::{RwLock, RwLockWriteGuard};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -50,6 +52,7 @@ pub(crate) struct ReachabilityState {
 }
 
 impl ReachabilityState {
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn snapshot(&self) -> ReachabilitySnapshot {
         let inner = read_inner(&self.inner);
         ReachabilitySnapshot {
@@ -82,6 +85,7 @@ impl ReachabilityState {
     }
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn read_inner(lock: &RwLock<Inner>) -> RwLockReadGuard<'_, Inner> {
     lock.read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

@@ -44,7 +44,8 @@ export const enVoice = {
       "TTS and the microphone share one VoiceProcessingIO unit so SAAA’s own speech can be subtracted. Other apps cannot be cancelled reliably. Ducking can only be reduced to Min, not zero.",
     aecFallback:
       "On macOS 13 or earlier, AirPlay, or Bluetooth (unless the switch below is on), VoiceProcessing stays off and the microphone opens without echo cancellation, so other apps are not ducked.",
-    nativeInputDevice: "While echo cancellation is on, the microphone uses only the system default input.",
+    nativeInputDevice:
+      "While echo cancellation is on, the microphone uses only the system default input.",
     duckingLevel: "Other-app ducking",
     duckingMin: "Min (recommended)",
     duckingDefault: "Default",

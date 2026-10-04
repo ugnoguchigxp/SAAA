@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(any(test, feature = "offline-contracts"))]
 /// Returns the trusted side-effect classification of the currently-published revision of a tool,
 /// looked up by its backend key. `None` means the tool is not published, which callers must treat
 /// as mutating (fail closed).

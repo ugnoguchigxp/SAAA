@@ -22,7 +22,9 @@ describe("audit log UI", () => {
     const runtime = source("src/lib/runtime.ts");
 
     expect(containsSource(audit, "fn list_audit_events")).toBe(true);
-    expect(containsSource(backend, "persistence::audit::record_event::list_audit_events,")).toBe(true);
+    expect(containsSource(backend, "persistence::audit::record_event::list_audit_events,")).toBe(
+      true,
+    );
     expect(containsSource(audit, "const AUDIT_UI_EVENT_LIMIT: usize = 200;")).toBe(true);
     expect(containsSource(app, "AuditLogPage")).toBe(true);
     expect(containsSource(app, 'route === "audit"')).toBe(true);

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 import artifact from "../.s11tnext/catalog.json";
 import { createAppCatalog } from "../.s11tnext/catalog.generated";
-import { effectiveCaptureSettings } from "../src/features/voice/useAmbientVoiceSession";
+import { effectiveCaptureSettings } from "../src/features/voice/voiceCaptureSettings";
 import { selectVoicePolicySnapshot } from "../src/features/chat/useConversationVoicePolicy";
 import type { ConversationVoicePolicySnapshot, VoiceSettings } from "../src/lib/contracts";
 

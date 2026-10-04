@@ -148,6 +148,7 @@ impl Completion {
         Ok(content.to_string())
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(super) fn provider_progressed(&self) -> bool {
         self.reasoning_started
             || self.tool_started

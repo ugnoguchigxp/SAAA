@@ -1,5 +1,7 @@
 //! Twenty-turn trial through the actual queue, transport, persisted answers and speech.
 use super::*;
+#[path = "context_trial/regressions.rs"]
+mod regressions;
 
 pub(super) fn respond(path: &str, body: &Value) -> Option<String> {
     if !path.starts_with("/llm/") {
@@ -28,6 +30,9 @@ pub(super) fn respond(path: &str, body: &Value) -> Option<String> {
     if text.starts_with("上限") {
         return Some(json!({"action":"web_search","query":"limit fixture"}).to_string());
     }
+    if let Some(response) = regressions::response(text) {
+        return Some(response);
+    }
     Some(json!({"action":"answer","content":"Context基盤から確認します。Profileは次段階です。音声も短く確認します。","sources":[]}).to_string())
 }
 
@@ -41,6 +46,8 @@ pub(super) fn transport_response(fixture: &Fixture, path: &str, body: &Value) ->
         writer.write(|db| {
             if text.ends_with("source") {
                 db.execute("DELETE FROM conversation_messages WHERE id='context-source'",[]).map_err(crate::database_error)?;
+            } else if text.ends_with("rebind") {
+                db.execute("UPDATE runtime_run_scopes SET relation='parent' WHERE run_id='run_context-scope-rebind' AND relation='current'",[]).map_err(crate::database_error)?;
             } else {
                 db.execute("UPDATE context_scopes SET state='revoked' WHERE scope_key IN (SELECT scope_key FROM runtime_run_scopes WHERE run_id='run_context-scope-invalid' AND relation='current')",[]).map_err(crate::database_error)?;
             }
@@ -81,6 +88,7 @@ pub(super) fn transport_response(fixture: &Fixture, path: &str, body: &Value) ->
         );
     }
     if text.contains("usage") {
+        assert_eq!(body["stream_options"]["include_usage"], true);
         let content = respond(path, body)?;
         let usage = json!({"prompt_tokens":123,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens":21});
         let event = json!({"model":"fixture-concrete-model","choices":[{"index":0,"delta":{"content":content},"finish_reason":"stop"}]});
@@ -94,6 +102,7 @@ pub(super) fn transport_response(fixture: &Fixture, path: &str, body: &Value) ->
         );
     }
     if text.contains("fallback") {
+        assert!(body["stream_options"].is_null());
         return Some(Json(json!({"model":"fixture-concrete-model","usage":{"prompt_tokens":12,"completion_tokens":2},
             "choices":[{"message":{"content":respond(path,body)?},"finish_reason":"stop"}]})).into_response());
     }
@@ -162,6 +171,7 @@ pub(super) async fn verify(state: &AppState, fixture: &Fixture) -> Result<Value,
     ] {
         turn(state, key, text, failure).await?;
     }
+    regressions::run(state).await?;
     let requests = fixture.requests.lock().map_err(|_| "request lock")?.clone();
     let requests = &requests[before..];
     let mode = std::env::var("SAAA_CONVERSATION_PREFIX_MODE").unwrap_or_else(|_| "legacy".into());
@@ -278,8 +288,9 @@ pub(super) async fn verify(state: &AppState, fixture: &Fixture) -> Result<Value,
     state.sqlite_writer.write(|db| { db.execute("INSERT INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES('context-source',?1,'assistant','試験用の出典','9999999999999')",[PRIMARY_CONVERSATION_ID]).map_err(crate::database_error)?; Ok(()) })?;
     turn(state, "context-source-invalid", "Context失効:source", true).await?;
     turn(state, "context-scope-invalid", "Context失効:scope", true).await?;
+    turn(state, "context-scope-rebind", "Context失効:rebind", true).await?;
     state.sqlite_readers.read(|db| {
-        let count:i64=db.query_row("SELECT count(*) FROM conversation_messages WHERE id IN ('reply_context-source-invalid','reply_context-scope-invalid')",[],|r|r.get(0)).map_err(crate::database_error)?;
+        let count:i64=db.query_row("SELECT count(*) FROM conversation_messages WHERE id IN ('reply_context-source-invalid','reply_context-scope-invalid','reply_context-scope-rebind')",[],|r|r.get(0)).map_err(crate::database_error)?;
         if count!=0 {return Err("invalidated output was saved".into());}
         Ok(())
     })?;
@@ -295,11 +306,12 @@ pub(super) async fn verify(state: &AppState, fixture: &Fixture) -> Result<Value,
     if receipts(state)?.iter().any(|row| {
         matches!(
             row["correlationId"].as_str(),
-            Some("context-source-invalid" | "context-scope-invalid")
+            Some("context-source-invalid" | "context-scope-invalid" | "context-scope-rebind")
         ) && row["firstVisibleMs"].is_number()
     }) {
         return Err("invalidated answer reached visible output".into());
     }
+    regressions::verify(state, fixture)?;
     Ok(
         json!({"mode":mode,"turns":20,"requests":requests.len(),"fixedPrefixCount":prefixes.len(),
         "invalidationVerified":true,"usageVerified":true,"fallbackVerified":true,"partialNotRetried":true,"metrics":receipts(state)?}),

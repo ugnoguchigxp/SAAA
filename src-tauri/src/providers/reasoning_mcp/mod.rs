@@ -1,6 +1,12 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::RunCancellation;
+#[cfg(any(test, feature = "offline-contracts"))]
 use saaa_reasoning_contract::{Request, Response, PROTOCOL, TOOL};
+#[cfg(any(test, feature = "offline-contracts"))]
 use serde_json::{json, Value};
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::sync::{Arc, OnceLock};
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     sync::{Arc, OnceLock},
     time::Duration,
@@ -66,6 +72,7 @@ impl Client {
             capacity: Arc::new(Semaphore::new(1)),
         })
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     async fn initialize(&self) -> Result<Option<String>, String> {
         let mut cached = self.session.lock().await;
         if let Some(session) = &*cached {
@@ -100,6 +107,7 @@ impl Client {
         *cached = Some(session.clone());
         Ok(session)
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) async fn connect(&self, cancellation: &RunCancellation) -> Result<(), String> {
         tokio::select! {
             _ = cancellation.cancelled() => Err("Cancelled by user".into()),
@@ -109,6 +117,7 @@ impl Client {
             }
         }
     }
+    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) async fn answer(
         &self,
         request: &Request,
@@ -168,6 +177,7 @@ impl Client {
 }
 pub(crate) mod tests;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn for_turn(
     harness_selected: bool,
     input: &crate::StartTurnInput,

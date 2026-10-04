@@ -274,6 +274,7 @@ pub(crate) fn list_audit_events(
     list_ui_events(&state, input)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn record_tool_execution(
     state: &AppState,
     input: &StartTurnInput,

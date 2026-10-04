@@ -73,7 +73,6 @@ pub struct WorkState {
     pub updated_at: String,
 }
 
-
 pub(crate) fn ensure_schema(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(LEDGER_DDL)
 }

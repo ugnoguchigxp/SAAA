@@ -114,6 +114,7 @@ pub(crate) fn apply(text: &str, entries: &[Entry]) -> String {
     compile(entries.to_vec()).apply(text)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn apply_saved(connection: &Connection, text: &str) -> Result<String, String> {
     Ok(compile(list(connection)?).apply(text))
 }
@@ -309,6 +310,9 @@ pub(crate) async fn preview_tts_dictionary(
     }
     player.finish().await
 }
+
+mod dispatch;
+pub(crate) use dispatch::with_handler;
 
 #[cfg(test)]
 mod tests {

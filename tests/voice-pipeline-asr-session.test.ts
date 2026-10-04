@@ -65,5 +65,4 @@ describe("voice pipeline monitor", () => {
     expect(snapshot.stages[0].state).toBe("success");
     expect(snapshot.anchor?.sequence).toBe(2);
   });
-
 });

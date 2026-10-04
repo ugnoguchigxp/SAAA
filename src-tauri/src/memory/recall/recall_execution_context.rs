@@ -2,12 +2,13 @@ use super::search::*;
 use super::*;
 use crate::memory::contracts::{
     RecallConversationInput, RecallConversationOutput, RecallError, RecallErrorCode,
-    RecallTimeFilter, RecallTimePreset, MAX_RECALL_CALLS_PER_TURN, RECALL_NOTICE,
-    RECALL_RETRIEVAL_MODE,
+    MAX_RECALL_CALLS_PER_TURN, RECALL_NOTICE, RECALL_RETRIEVAL_MODE,
 };
-use chrono::{
-    DateTime, Datelike, Duration, LocalResult, Months, NaiveDate, TimeZone, Utc, Weekday,
-};
+#[cfg(any(test, feature = "offline-contracts"))]
+use crate::memory::contracts::{RecallTimeFilter, RecallTimePreset};
+use chrono::{DateTime, TimeZone, Utc};
+#[cfg(any(test, feature = "offline-contracts"))]
+use chrono::{Datelike, Duration, LocalResult, Months, NaiveDate, Weekday};
 use chrono_tz::Tz;
 use rusqlite::{params, Connection, OptionalExtension};
 const MAX_QUERY_CHARS: usize = 256;

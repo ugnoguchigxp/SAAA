@@ -70,9 +70,7 @@ export function TtsVoiceControls({
       <Field label={t("settings.providers.voiceStyle")}>
         <select
           value={provider.style ?? ""}
-          onChange={(event) =>
-            onChange({ ...provider, style: event.target.value || undefined })
-          }
+          onChange={(event) => onChange({ ...provider, style: event.target.value || undefined })}
         >
           <option value="">{t("settings.providers.apiDefault")}</option>
           {selected?.styles.map((style) => (

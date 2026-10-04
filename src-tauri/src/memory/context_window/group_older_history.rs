@@ -144,6 +144,7 @@ pub(super) fn render_group(group: &ContinuityGroup) -> String {
 pub(super) fn quote_history(value: &str) -> String {
     serde_json::to_string(value).expect("serializing a string cannot fail")
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn truncate_utf8(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_string();

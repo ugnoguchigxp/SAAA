@@ -31,7 +31,7 @@ async fn acceptance_core_text_turn_persists_and_is_recalled() {
         initialize_database(&connection).expect("database initializes");
         let state = app_state(connection);
         let input = StartTurnInput {
-            run_id: "acceptance-core-run".to_string(),
+            run_id: "run_acceptance-core".to_string(),
             conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
             content: request.to_string(),
             workspace_path: None,
@@ -41,8 +41,8 @@ async fn acceptance_core_text_turn_persists_and_is_recalled() {
             input_origin: "text".to_string(),
             presentation_mode: "visual".to_string(),
         };
-        prepare_runtime_run(&state, &input).expect("runtime prepares");
-        let session_id = begin_test_provider_session(
+        crate::test_support::prepare_user_turn(&state, &input).expect("runtime prepares");
+        let _session_id = begin_test_provider_session(
             &state,
             &input.run_id,
             "acceptance-fixture",
@@ -59,8 +59,10 @@ async fn acceptance_core_text_turn_persists_and_is_recalled() {
             ..direct_provider("acceptance-fixture", "local")
         };
         let sink = DeltaSink(deltas.clone());
-        let outcome = stream_model_provider(
-            &provider,
+        let outcome = crate::providers::chat_completions::run_with_options(
+            &provider.endpoint,
+            None,
+            &provider.model,
             &history,
             5_000,
             ModelStreamContext {
@@ -72,18 +74,14 @@ async fn acceptance_core_text_turn_persists_and_is_recalled() {
                 context_health: "green",
                 context_sources: &[],
                 context_omissions: &[],
-                output_persistence: Some(ProviderOutputPersistence {
-                    state: &state,
-                    session_id: &session_id,
-                    world: None,
-                }),
+                output_persistence: None,
             },
+            crate::providers::chat_completions::RequestMode::Stream,
+            &saaa_larm_session::http_api::LlmOptions { tools: false, ..Default::default() },
         )
         .await;
         server.await.expect("fixture server joins");
-        let ProviderAttemptOutcome::Completed { content, .. } = outcome else {
-            panic!("mock provider stream should complete");
-        };
+        let content = outcome.expect("bounded diagnostic stream completes");
         assert_eq!(content, "了解しました");
         crate::providers::session_store::persist_conversation_success_with_state(
             &state,
@@ -119,7 +117,7 @@ async fn acceptance_core_text_turn_persists_and_is_recalled() {
     let connection = Connection::open(&database_path).expect("database reopens");
     let state = app_state(connection);
     let input = StartTurnInput {
-        run_id: "acceptance-core-recall".to_string(),
+        run_id: "run_acceptance-core-recall".to_string(),
         conversation_id: PRIMARY_CONVERSATION_ID.to_string(),
         content: "さっきの予定を思い出して".to_string(),
         workspace_path: None,
@@ -129,7 +127,7 @@ async fn acceptance_core_text_turn_persists_and_is_recalled() {
         input_origin: "text".to_string(),
         presentation_mode: "visual".to_string(),
     };
-    prepare_runtime_run(&state, &input).expect("recall turn prepares");
+    crate::test_support::prepare_user_turn(&state, &input).expect("recall turn prepares");
     let recalled = crate::providers::stream::execute_recall_tool(
         Some(ProviderOutputPersistence {
             state: &state,

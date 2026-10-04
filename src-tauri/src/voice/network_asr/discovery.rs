@@ -1,13 +1,19 @@
 use serde::Deserialize;
+#[cfg(any(test, feature = "offline-contracts"))]
 use url::{Host, Url};
 
 #[cfg(test)]
 use super::client;
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::{bounded_response, request_error_message, PROVIDER_ID};
+#[cfg(any(test, feature = "offline-contracts"))]
 use crate::{NetworkAsrResolution, RunCancellation};
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::time::Duration;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 const ASR_PORT: u16 = 8081;
+#[cfg(any(test, feature = "offline-contracts"))]
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +38,7 @@ pub(super) async fn resolve_at(base_url: &str) -> Result<NetworkAsrResolution, S
     resolve_at_with_client(&client()?, base_url, &cancellation).await
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) async fn resolve_at_with_client(
     client: &reqwest::Client,
     base_url: &str,
@@ -92,6 +99,7 @@ pub(super) async fn resolve_at_with_client(
     })
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn base_url_from_host(host: &str) -> Result<String, String> {
     let mut url = crate::providers::dynamic_lan::control_base_url(host)
         .map_err(|error| error.public_message().to_string())?;
@@ -101,6 +109,7 @@ pub(crate) fn base_url_from_host(host: &str) -> Result<String, String> {
     validate_base_url(url.as_str())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(super) fn validate_base_url(value: &str) -> Result<String, String> {
     let url = Url::parse(value.trim())
         .map_err(|_| "LAN ASR endpoint must be a valid private-network HTTP origin".to_string())?;

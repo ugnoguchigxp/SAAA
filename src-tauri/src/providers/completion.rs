@@ -10,6 +10,7 @@ pub(crate) fn valid_conversation_reasoning_effort(value: &str) -> bool {
 #[cfg(test)]
 use serde_json::Value;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 2_048;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

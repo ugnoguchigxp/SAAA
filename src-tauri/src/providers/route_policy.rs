@@ -1,5 +1,7 @@
 //! Shared conservative fallback decisions for adapters with public string errors.
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::stream::ProviderFailureKind as Kind;
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn failure_kind(error: &str) -> Kind {
     for kind in [
         Kind::Authentication,
@@ -64,6 +66,7 @@ pub(crate) fn failure_kind(error: &str) -> Kind {
         _ => Kind::Contract,
     }
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn retryable(error: &str) -> bool {
     matches!(
         failure_kind(error),

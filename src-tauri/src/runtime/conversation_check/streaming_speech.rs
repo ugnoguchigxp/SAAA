@@ -1,7 +1,7 @@
 //! Plays persisted progress messages through the shared speech output.
 use super::*;
-use tauri::Manager;
 use crate::voice::tts_chunker::{SelectReason, SentenceAccumulator};
+use tauri::Manager;
 
 pub(super) struct AnswerStreamReport {
     pub(super) started: bool,
@@ -52,30 +52,49 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
                 break;
             }
             if !initialized {
-                if let Err(cause) = super::queue_runtime::cancel_progress_for_stream(&state, &input_id) {
+                if let Err(cause) =
+                    super::queue_runtime::cancel_progress_for_stream(&state, &input_id)
+                {
                     error = Some(cause);
                     break;
                 }
                 super::cancel_active_progress_speech(&input_id);
-                speech_guard = Some(SPEECH_LOCK.get_or_init(|| tokio::sync::Mutex::new(())).lock().await);
+                speech_guard = Some(
+                    SPEECH_LOCK
+                        .get_or_init(|| tokio::sync::Mutex::new(()))
+                        .lock()
+                        .await,
+                );
                 let settings = state.sqlite_readers.read(|connection| {
-                    Ok((persistence::load_model_providers(connection)?,
-                        persistence::load_routing_settings(connection)?.voice_speak))
+                    Ok((
+                        persistence::load_model_providers(connection)?,
+                        persistence::load_routing_settings(connection)?.voice_speak,
+                    ))
                 });
                 match settings {
                     Ok((providers, voice_route)) => {
                         route = Some((providers, voice_route));
                         match state.tts_dictionary_cache.snapshot(&state.sqlite_readers) {
                             Ok(snapshot) => dictionary = Some(snapshot),
-                            Err(cause) => { error = Some(cause); break; }
+                            Err(cause) => {
+                                error = Some(cause);
+                                break;
+                            }
                         }
                     }
-                    Err(cause) => { error = Some(cause); break; }
+                    Err(cause) => {
+                        error = Some(cause);
+                        break;
+                    }
                 }
                 *ACTIVE_SPEECH_CANCEL
                     .get_or_init(|| std::sync::Mutex::new(None))
-                    .lock().expect("speech cancellation registry") =
-                    Some((input_id.clone(), SpeechPlaybackKind::Answer, cancellation.clone()));
+                    .lock()
+                    .expect("speech cancellation registry") = Some((
+                    input_id.clone(),
+                    SpeechPlaybackKind::Answer,
+                    cancellation.clone(),
+                ));
                 active_guard = Some(ActiveSpeechGuard);
                 playback_guard = Some(PlaybackStateGuard::new(&app, &input_id));
                 initialized = true;
@@ -89,16 +108,30 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
             let ready = pending_spoken[..ready_len].to_string();
             pending_spoken.drain(..ready_len);
             let (providers, voice_route) = route.as_ref().expect("speech route loaded");
-            let played = play_chunk(&app, &input_id, providers, voice_route,
-                &ready, matcher, &audit, cancellation.clone(), &mut player).await;
+            let played = play_chunk(
+                &app,
+                &input_id,
+                providers,
+                voice_route,
+                &ready,
+                matcher,
+                &audit,
+                cancellation.clone(),
+                &mut player,
+            )
+            .await;
             started |= super::speech_playing();
-            if started { audio_started.store(true, Ordering::Release); }
+            if started {
+                audio_started.store(true, Ordering::Release);
+            }
             if let Err(cause) = played {
                 error = Some(cause);
                 break;
             }
         }
-        if error.is_some() || next.is_none() { break; }
+        if error.is_some() || next.is_none() {
+            break;
+        }
     }
     if error.is_none() && !pending_spoken.is_empty() {
         let current_context = super::queue_runtime::stream_context_digest(&state, &input_id);
@@ -106,17 +139,31 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
             error = Some("回答の根拠が変更されたため音声を中止しました。".into());
         } else {
             let (providers, voice_route) = route.as_ref().expect("pending speech has a route");
-            if let Err(cause) = play_chunk(&app, &input_id, providers, voice_route,
-                &pending_spoken, dictionary.as_ref().expect("speech dictionary loaded"),
-                &audit, cancellation.clone(), &mut player).await {
+            if let Err(cause) = play_chunk(
+                &app,
+                &input_id,
+                providers,
+                voice_route,
+                &pending_spoken,
+                dictionary.as_ref().expect("speech dictionary loaded"),
+                &audit,
+                cancellation.clone(),
+                &mut player,
+            )
+            .await
+            {
                 error = Some(cause);
             }
             started |= super::speech_playing();
-            if started { audio_started.store(true, Ordering::Release); }
+            if started {
+                audio_started.store(true, Ordering::Release);
+            }
         }
     }
     if let Some(player) = player {
-        if let Err(cause) = player.finish().await { error.get_or_insert(cause); }
+        if let Err(cause) = player.finish().await {
+            error.get_or_insert(cause);
+        }
     }
     drop(playback_guard);
     drop(active_guard);
@@ -124,88 +171,9 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
     AnswerStreamReport { started, error }
 }
 
-pub(super) async fn play_progress<R: tauri::Runtime>(
-    state: &AppState,
-    app: &tauri::AppHandle<R>,
-    job: &crate::task_queue::Job,
-    audit: &ConversationAudit,
-) -> Result<(), String> {
-    let _speech = SPEECH_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await;
-    ensure_current(state, job)?;
-    if !super::queue_runtime::progress_eligible(state, job)? {
-        return Ok(());
-    }
-    let text = serde_json::from_str::<serde_json::Value>(&job.payload)
-        .ok()
-        .and_then(|payload| payload["text"].as_str().map(str::to_string))
-        .ok_or("待機案内の本文がありません。")?;
-    let cancellation = Arc::new(RunCancellation::default());
-    let _playback_state = PlaybackStateGuard::new(app, &job.key);
-    *ACTIVE_SPEECH_CANCEL
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock()
-        .map_err(|_| "音声の取消し状態を取得できません。")? =
-        Some((job.key.clone(), SpeechPlaybackKind::Progress, cancellation.clone()));
-    let _active = ActiveSpeechGuard;
-    let (providers, route) = state.sqlite_readers.read(|connection| {
-        Ok((
-            persistence::load_model_providers(connection)?,
-            persistence::load_routing_settings(connection)?.voice_speak,
-        ))
-    })?;
-    let dictionary = state.tts_dictionary_cache.snapshot(&state.sqlite_readers)?;
-    ensure_current(state, job)?;
-    if !super::queue_runtime::progress_eligible(state, job)? {
-        return Ok(());
-    }
-    let mut continuous = None;
-    let recorded = super::queue_runtime::record_progress_message(state, job, &text)?;
-    if !recorded {
-        return Ok(());
-    }
-    audit.text("tts", "conversation-tts-text", &text);
-    audit.event(
-        "tts",
-        "conversation-tts-message",
-        "decision",
-        None,
-        json!({"messageId":format!("progress_{}",job.id),"textBytes":text.len()}),
-    );
-    let _ = app.emit("conversation-queue-updated", ());
-    play_chunk(
-        app,
-        &job.key,
-        &providers,
-        &route,
-        &text,
-        &dictionary,
-        audit,
-        cancellation,
-        &mut continuous,
-    )
-    .await?;
-    if let Some(player) = continuous {
-        player.finish().await?;
-    }
-    Ok(())
-}
-
-fn ensure_current(state: &AppState, job: &crate::task_queue::Job) -> Result<(), String> {
-    let current = state.sqlite_readers.read(|connection| {
-        connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM task_queue_jobs WHERE id=?1 AND state='running' AND owner=?2 AND generation=?3)",
-            params![job.id, job.owner, job.generation], |row| row.get::<_, bool>(0),
-        ).map_err(database_error)
-    })?;
-    if current {
-        Ok(())
-    } else {
-        Err("Speech cancelled".into())
-    }
-}
+#[path = "streaming_progress.rs"]
+mod progress;
+pub(super) use progress::play_progress;
 
 #[allow(clippy::too_many_arguments)]
 async fn play_chunk<R: tauri::Runtime>(

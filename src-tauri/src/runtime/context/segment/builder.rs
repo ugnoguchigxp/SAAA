@@ -1,7 +1,10 @@
+#[cfg(any(test, feature = "offline-contracts"))]
 use rusqlite::Connection;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 use super::manifest;
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn ensure_initial(
     connection: &Connection,
     conversation_id: &str,
@@ -44,6 +47,7 @@ pub(crate) struct BuildInput<'a> {
     pub(crate) budget: usize,
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn build(
     connection: &Connection,
     input: &BuildInput<'_>,
@@ -147,6 +151,7 @@ pub(crate) fn build(
     Ok(history)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 fn load_texts(
     connection: &Connection,
     segment_id: &str,
@@ -167,6 +172,7 @@ fn load_texts(
         .map_err(|error| error.to_string())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn must_overflow(must_bytes: usize, budget: usize) -> Result<(), String> {
     if must_bytes > budget {
         Err("required_context_overflow: segment must exceeds budget".into())

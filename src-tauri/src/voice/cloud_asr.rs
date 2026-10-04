@@ -185,100 +185,15 @@ async fn transcribe_impl(
     Ok(transcript)
 }
 
-fn select_transcript(
-    result: TranscriptionResponse,
-    preserve_full_text: bool,
-) -> Result<(String, Option<String>), String> {
-    let language = result.detected_language();
-    if response_is_no_speech(&result.segments) {
-        return Err("ASR_NO_SPEECH: The ASR service classified the audio as non-speech".into());
-    }
-    let text = if preserve_full_text && result.text.trim().is_empty() {
-        result
-            .segments
-            .iter()
-            .filter_map(|segment| segment.text.as_deref())
-            .collect::<String>()
-    } else {
-        result.text
-    };
-    if text.trim().is_empty() {
-        return Err("ASR_NO_SPEECH: Cloud ASR completed without a transcript".into());
-    }
-    let text = if preserve_full_text {
-        text
-    } else {
-        bounded_text(text.trim(), 16_000)
-    };
-    Ok((text, language))
-}
-
-fn response_is_no_speech(segments: &[TranscriptionSegment]) -> bool {
-    !segments.is_empty()
-        && segments.iter().all(|segment| {
-            segment
-                .no_speech_prob
-                .is_some_and(|probability| probability.is_finite() && probability >= 0.6)
-        })
-}
-
-fn credential(
-    provider: &CloudAsrProviderSettings,
-) -> Result<Option<zeroize::Zeroizing<String>>, String> {
-    if provider.authentication == "none" {
-        return Ok(None);
-    }
-    crate::credentials::load_api_key(&provider.id)?
-        .ok_or_else(|| {
-            "API key is not configured in the operating system credential store".to_string()
-        })
-        .map(Some)
-}
-
-fn client(timeout: Duration, claim_scoped: bool) -> Result<reqwest::Client, String> {
-    super::http_audio::client::build(
-        reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::none()),
-        claim_scoped,
-    )
-}
-
-fn operation_url(endpoint: &str, operation: &str) -> Result<String, String> {
-    crate::providers::openai_compatible::provider_operation_url(endpoint, operation)
-}
-
-async fn bounded_body(
-    response: reqwest::Response,
-    cancellation: &RunCancellation,
-    max_response_bytes: usize,
-) -> Result<Zeroizing<Vec<u8>>, String> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > max_response_bytes as u64)
-    {
-        return Err("Cloud ASR response exceeded the size limit".to_string());
-    }
-    let mut stream = response.bytes_stream();
-    let mut body = Zeroizing::new(Vec::new());
-    loop {
-        let chunk = tokio::select! {
-            _ = cancellation.cancelled() => return Err("Transcription cancelled".to_string()),
-            chunk = stream.next() => chunk,
-        };
-        let Some(chunk) = chunk else { break };
-        let chunk = chunk.map_err(|_| "Cloud ASR response was interrupted".to_string())?;
-        if body.len().saturating_add(chunk.len()) > max_response_bytes {
-            return Err("Cloud ASR response exceeded the size limit".to_string());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
+#[path = "cloud_asr/transcript.rs"]
+mod transcript;
+use transcript::select_transcript;
+#[path = "cloud_asr/transport.rs"]
+mod transport;
+use transport::{bounded_body, client, credential, operation_url};
 #[cfg(test)]
 mod tests {
+    use super::transcript::response_is_no_speech;
     use super::*;
 
     #[test]

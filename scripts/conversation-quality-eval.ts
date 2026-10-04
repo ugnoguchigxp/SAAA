@@ -223,7 +223,7 @@ async function answer(
   if (
     typeof response.content !== "string" ||
     typeof response.latencyMs !== "number" ||
-    response.runtimePath !== "execute_turn/conversation.respond"
+    response.runtimePath !== "queue_runtime/process_ornith"
   ) {
     throw new Error("conversation runtime harness returned an invalid response");
   }
@@ -352,7 +352,7 @@ async function run(): Promise<void> {
   const generatedAt = new Date().toISOString();
   const report = {
     evaluatorVersion: "conversation-quality-v3",
-    runtimePath: "execute_turn/conversation.respond",
+    runtimePath: "queue_runtime/process_ornith",
     generatedAt,
     target: { baseUrlHash: hashText(target.baseUrl), modelHash: hashText(target.model) },
     judge: { baseUrlHash: hashText(judge.baseUrl), modelHash: hashText(judge.model) },

@@ -326,10 +326,19 @@ describe("artifact workspace", () => {
     Object.defineProperty(document, "hidden", { configurable: true, value: false });
     const originalRect = HTMLElement.prototype.getBoundingClientRect;
     HTMLElement.prototype.getBoundingClientRect = () => ({
-      x: 400, y: 100, width: 500, height: 400,
-      top: 100, left: 400, right: 900, bottom: 500, toJSON: () => ({}),
+      x: 400,
+      y: 100,
+      width: 500,
+      height: 400,
+      top: 100,
+      left: 400,
+      right: 900,
+      bottom: 500,
+      toJSON: () => ({}),
     });
-    restoreRect = () => { HTMLElement.prototype.getBoundingClientRect = originalRect; };
+    restoreRect = () => {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+    };
     const { createRoot } = await import("react-dom/client");
     root = createRoot(document.getElementById("root")!);
     await act(async () =>
@@ -343,16 +352,20 @@ describe("artifact workspace", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
     }
-    expect(invokeCalls).toContainEqual(expect.objectContaining({
-      command: "mount_source_website",
-      args: expect.objectContaining({ url: "https://example.com/weather" }),
-    }));
+    expect(invokeCalls).toContainEqual(
+      expect.objectContaining({
+        command: "mount_source_website",
+        args: expect.objectContaining({ url: "https://example.com/weather" }),
+      }),
+    );
     expect(document.querySelector(".artifact-source-text")).toBeNull();
     await act(async () => {
       document.querySelector<HTMLButtonElement>(".artifact-source-browser")!.click();
       await Promise.resolve();
     });
-    expect(invokeCalls.some((call) => call.command === "open_source_website_in_browser")).toBe(true);
+    expect(invokeCalls.some((call) => call.command === "open_source_website_in_browser")).toBe(
+      true,
+    );
   });
 
   test("assistant source links open the artifact panel", async () => {
@@ -360,10 +373,19 @@ describe("artifact workspace", () => {
     Object.defineProperty(document, "hidden", { configurable: true, value: false });
     const originalRect = HTMLElement.prototype.getBoundingClientRect;
     HTMLElement.prototype.getBoundingClientRect = () => ({
-      x: 400, y: 100, width: 500, height: 400,
-      top: 100, left: 400, right: 900, bottom: 500, toJSON: () => ({}),
+      x: 400,
+      y: 100,
+      width: 500,
+      height: 400,
+      top: 100,
+      left: 400,
+      right: 900,
+      bottom: 500,
+      toJSON: () => ({}),
     });
-    restoreRect = () => { HTMLElement.prototype.getBoundingClientRect = originalRect; };
+    restoreRect = () => {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+    };
     const { createRoot } = await import("react-dom/client");
     root = createRoot(document.getElementById("root")!);
     await act(async () =>

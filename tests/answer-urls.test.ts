@@ -13,9 +13,10 @@ describe("answer urls", () => {
     expect(urls[0]?.label).toBe("News");
   });
   test("preserves a plain URL before a later markdown link", () => {
-    expect(extractAnswerUrls("https://first.example/a then [Second](https://second.example/b)").map((item) => item.url)).toEqual([
-      "https://first.example/a",
-      "https://second.example/b",
-    ]);
+    expect(
+      extractAnswerUrls("https://first.example/a then [Second](https://second.example/b)").map(
+        (item) => item.url,
+      ),
+    ).toEqual(["https://first.example/a", "https://second.example/b"]);
   });
 });

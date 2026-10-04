@@ -99,4 +99,6 @@ pub(crate) async fn extract(
 }
 
 mod commit;
-pub(crate) use commit::{commit, commit_with_sources};
+#[cfg(any(test, feature = "offline-contracts"))]
+pub(crate) use commit::commit;
+pub(crate) use commit::commit_with_sources;

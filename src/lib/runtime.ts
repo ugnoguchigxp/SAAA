@@ -165,7 +165,10 @@ export async function enqueueConversationText(
   return invoke("enqueue_conversation_text", { inputId, text });
 }
 
-export async function conversationQueueSnapshot(): Promise<{ jobs: ConversationQueueJob[]; speechPlaying: boolean }> {
+export async function conversationQueueSnapshot(): Promise<{
+  jobs: ConversationQueueJob[];
+  speechPlaying: boolean;
+}> {
   return invoke("conversation_queue_snapshot");
 }
 

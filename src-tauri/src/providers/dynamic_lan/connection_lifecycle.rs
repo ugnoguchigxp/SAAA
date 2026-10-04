@@ -15,6 +15,7 @@ impl DynamicLanConnection {
         Self::resolve_at(base, cancel).await
     }
 
+    #[cfg(any(test, feature = "offline-contracts"))]
     async fn resolve_at(
         control_base: Url,
         cancellation: Arc<RunCancellation>,

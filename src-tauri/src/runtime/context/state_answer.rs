@@ -55,9 +55,11 @@ pub(crate) fn answer(
     Ok(Some(answer))
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn is_state_query(content: &str) -> bool {
     classify(content).is_some()
 }
+#[cfg(any(test, feature = "offline-contracts"))]
 fn classify(content: &str) -> Option<Query> {
     let value = content.trim().to_lowercase();
     // Actions and compound requests must reach the normal tool-capable route.

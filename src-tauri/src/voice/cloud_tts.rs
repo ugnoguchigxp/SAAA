@@ -1,4 +1,12 @@
 use futures_util::StreamExt;
+#[cfg(not(any(test, feature = "offline-contracts")))]
+use std::{
+    fs::{self},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
+#[cfg(any(test, feature = "offline-contracts"))]
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -18,8 +26,10 @@ pub(crate) mod speech_request;
 pub(crate) mod tts_catalog;
 use zeroize::Zeroizing;
 
+#[cfg(any(test, feature = "offline-contracts"))]
+use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 
 const MAX_AUDIO_BYTES: usize = 16 * 1_024 * 1_024;
 
@@ -32,6 +42,7 @@ pub(crate) async fn probe(provider: &CloudTtsProviderSettings) -> Result<String,
     Ok("Cloud TTS generated a bounded audio preview".to_string())
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) async fn render_to_artifact(
     provider: &CloudTtsProviderSettings,
     text: &str,
@@ -61,6 +72,7 @@ pub(crate) async fn render_to_artifact(
     Ok(path)
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn spawn_audio_player(path: &Path) -> Result<Child, String> {
     spawn_player(path)
 }
@@ -276,6 +288,7 @@ fn is_wav(audio: &[u8]) -> bool {
     audio.len() >= 12 && &audio[..4] == b"RIFF" && &audio[8..12] == b"WAVE"
 }
 
+#[cfg(any(test, feature = "offline-contracts"))]
 #[cfg(target_os = "macos")]
 fn spawn_player(path: &Path) -> Result<Child, String> {
     Command::new("afplay")
