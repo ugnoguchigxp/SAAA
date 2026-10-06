@@ -1,15 +1,13 @@
-use super::contract::DiagnosisReport;
-use super::runner;
+use super::contract::{DiagnosisReport, DiagnosisScope};
+use super::engine;
 use crate::AppState;
 
 #[tauri::command]
-pub(crate) async fn run_diagnosis(app: tauri::AppHandle) -> Result<DiagnosisReport, String> {
-    Ok(runner::run_and_publish(&app, super::contract::DiagnosisMode::Operational).await)
-}
-
-#[tauri::command]
-pub(crate) async fn run_fast_diagnosis(app: tauri::AppHandle) -> Result<DiagnosisReport, String> {
-    Ok(runner::run_and_publish(&app, super::contract::DiagnosisMode::Fast).await)
+pub(crate) async fn run_diagnosis(
+    app: tauri::AppHandle,
+    scope: DiagnosisScope,
+) -> Result<DiagnosisReport, String> {
+    Ok(engine::run_and_publish(&app, scope).await)
 }
 
 #[tauri::command]
@@ -17,28 +15,4 @@ pub(crate) fn get_diagnosis_report(
     state: tauri::State<'_, AppState>,
 ) -> Result<DiagnosisReport, String> {
     Ok(state.diagnosis.snapshot())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::diagnosis::contract::DiagnosisStatus;
-    use rusqlite::Connection;
-
-    #[test]
-    fn dg_10_get_report_returns_store_snapshot() {
-        let connection = Connection::open_in_memory().expect("database opens");
-        crate::initialize_database(&connection).expect("database initializes");
-        let state = crate::test_support::app_state(connection);
-        let revision = state.diagnosis.try_begin().expect("run starts");
-        let mut report = state.diagnosis.snapshot();
-        report.revision = revision;
-        report.overall = DiagnosisStatus::Warn;
-        report.running = true;
-        state.diagnosis.publish(report);
-        let snapshot = state.diagnosis.snapshot();
-        assert_eq!(snapshot.revision, revision);
-        assert!(!snapshot.running);
-        assert_eq!(snapshot.overall, DiagnosisStatus::Warn);
-    }
 }

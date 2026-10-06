@@ -50,7 +50,34 @@ export type WorldCapabilities = { stateInput: boolean, graph: boolean, freshTool
 export type ScopeRef = { kind: string, id: string, relation: string, };
 export type ScopeChoice = { key: string, label: string, refs: Array<ScopeRef>, };
 export type WorldContextStatus = { choices: Array<ScopeChoice>, messageScopes: { [key in string]: Array<string> }, latestScopeKeys: Array<string>, latestProvider: string | null, delivery: string | null, omissionReason: string | null, };
-export type DiagnosisStatus = "ok" | "warn" | "fail" | "skipped" | "running";
-export type DiagnosisSeverity = "fatal" | "degraded" | "info";
-export type DiagnosisItem = { id: string, group: string, label: string, status: DiagnosisStatus, severity: DiagnosisSeverity, message: string, latencyMs: number | null, };
-export type DiagnosisReport = { revision: number, startedAt: string, finishedAt: string | null, running: boolean, overall: DiagnosisStatus, items: Array<DiagnosisItem>, };
+export type DiagnosisCapability = "storage" | "conversation" | "voice-listen" | "voice-speak" | "voice-echo" | "memory" | "coding";
+export type DiagnosisTier = "static" | "observed" | "probe";
+export type DiagnosisOutcome = "pass" | "degraded" | "fail" | "unverified" | "disabled";
+export type DiagnosisImportance = "required" | "advisory";
+export type DiagnosisReason = "ok" | "disabled" | "not-configured" | "not-proven" | "not-observed" | "expired" | "timeout" | "unreachable" | "auth-failed" | "not-advertised" | "not-ready" | "unavailable" | "schema-mismatch" | "capacity-high" | "recent-failure" | "capture-failed" | "aec-inactive" | "echo-leak" | "speech-suppressed" | "internal";
+export type DiagnosisEvidence = { 
+/**
+ * Stable machine id, such as `larm.asr` or `runs.conversation`.
+ */
+source: string, capability: DiagnosisCapability, 
+/**
+ * `core` evidence must all hold. Other routes are alternatives; one working route is enough.
+ */
+route: string, tier: DiagnosisTier, importance: DiagnosisImportance, outcome: DiagnosisOutcome, reason: DiagnosisReason, 
+/**
+ * User-configured name, such as a provider label.
+ */
+subject: string | null, 
+/**
+ * Short redacted note. Never a URL or token.
+ */
+detail: string | null, latencyMs: number | null, observedAt: number, expiresAt: number | null, };
+export type DiagnosisState = "ready" | "degraded" | "unavailable" | "unverified" | "disabled";
+export type DiagnosisAction = "open-settings" | "retest";
+export type DiagnosisCapabilityReport = { capability: DiagnosisCapability, state: DiagnosisState, reason: DiagnosisReason, 
+/**
+ * Newest time a probe or real use proved this capability.
+ */
+verifiedAt: number | null, optional: boolean, actions: Array<DiagnosisAction>, evidence: Array<DiagnosisEvidence>, };
+export type DiagnosisReport = { schemaVersion: number, revision: number, startedAt: number, finishedAt: number | null, running: boolean, overall: DiagnosisState, capabilities: Array<DiagnosisCapabilityReport>, };
+export type DiagnosisScope = { "kind": "quick" } | { "kind": "full" } | { "kind": "capability", capability: DiagnosisCapability, };

@@ -17,7 +17,7 @@ Read only the affected domain. Paths in domain READMEs are relative to that dire
 - records: planned (P2). Immutable tool/web captures, authorization before LIMIT, manual FTS sync.
 - runtime/context/segment: F/L/D types and tables. Prompt assembly stays on the legacy path until `SegmentBuilder` owns the history. Flag `SAAA_CONTEXT_SEGMENTS=1`.
 - [persistence](persistence/README.md): writer/readers, transactions, migrations/settings/audit.
-- [diagnosis](diagnosis/README.md): startup self-diagnosis report, single-flight rerun, redacted items.
+- [diagnosis](diagnosis/README.md): capability-level self-diagnosis: typed evidence, per-check deadlines, unproven is never green.
 
 Shared checks: preserve authority, identity/revision, cancellation, and atomic state transitions at cross-domain boundaries. Commit before external effects; no I/O awaits under DB transactions. Keep source/tool/model text untrusted.
 Tests: from repo root, `cargo test --manifest-path src-tauri/Cargo.toml <module-or-test-filter>`; choose the touched boundary, then its consumer. Real provider/process/audio changes require live evidence; fixture success is not remote completion. Documentation-only edits require path/contract checks, not runtime test suites.

@@ -3,6 +3,23 @@ mod config;
 mod converter;
 #[cfg(target_os = "macos")]
 mod echo_reference;
+
+/// (TTS-only silenced, overlapping speech preserved, unrelated voice untouched).
+/// `None` where the echo handling is not compiled in.
+#[cfg(target_os = "macos")]
+pub(crate) fn echo_contract_self_test() -> Option<(bool, bool, bool)> {
+    let check = echo_reference::contract_self_test();
+    Some((
+        check.playback_only_silenced,
+        check.overlapping_speech_preserved,
+        check.unrelated_voice_untouched,
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn echo_contract_self_test() -> Option<(bool, bool, bool)> {
+    None
+}
 #[cfg(target_os = "macos")]
 mod macos;
 mod probe;

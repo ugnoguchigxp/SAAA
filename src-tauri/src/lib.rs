@@ -377,7 +377,7 @@ pub fn run() {
             });
             // Startup diagnosis reads local state and the LARM catalog without
             // allocating a Connection or blocking the window setup.
-            diagnosis::runner::spawn_startup(app.handle().clone());
+            diagnosis::engine::spawn_startup(app.handle().clone());
             let recovery_now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_millis() as i64)

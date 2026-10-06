@@ -1,16 +1,31 @@
-use super::item;
-use crate::diagnosis::contract::{DiagnosisItem, DiagnosisSeverity, DiagnosisStatus};
+//! Model, ASR and TTS providers and the Codex SDK. Each configured provider is its own route,
+//! so one working provider keeps the capability available.
+use super::{classify_failure, evidence, pass, CheckFuture};
+use crate::diagnosis::contract::{Capability, Evidence, Outcome, Reason, Tier};
 use crate::persistence::load_model_providers;
 use crate::{AppState, ModelProviderSettings, TestProviderInput};
 use std::time::Duration;
 
-/// Flip to skip billable Cloud TTS probes. Startup and rerun share this check.
-const SKIP_CLOUD_TTS_PROBE: bool = false;
+const PROVIDER_PROBE_LIMIT: Duration = Duration::from_secs(45);
 
-pub(in crate::diagnosis) fn enabled_providers(state: &AppState) -> Vec<ModelProviderSettings> {
-    let settings = match state.sqlite_readers.read(load_model_providers) {
-        Ok(settings) => settings,
-        Err(_) => return Vec::new(),
+fn capability_of(provider: &ModelProviderSettings) -> Capability {
+    match provider {
+        ModelProviderSettings::CloudAsr(_) => Capability::VoiceListen,
+        ModelProviderSettings::CloudTts(_) | ModelProviderSettings::SystemTts(_) => {
+            Capability::VoiceSpeak
+        }
+        _ => Capability::Conversation,
+    }
+}
+
+fn route_of(provider: &ModelProviderSettings) -> String {
+    format!("provider:{}", provider.id())
+}
+
+/// Enabled providers, excluding the legacy LARM host entry that the LARM session covers.
+fn enabled_providers(state: &AppState) -> Vec<ModelProviderSettings> {
+    let Ok(settings) = state.sqlite_readers.read(load_model_providers) else {
+        return Vec::new();
     };
     let legacy_host =
         crate::providers::service_harness::legacy_dynamic_lan_host(&settings.harness.address)
@@ -32,70 +47,153 @@ pub(in crate::diagnosis) fn enabled_providers(state: &AppState) -> Vec<ModelProv
         .collect()
 }
 
-pub(in crate::diagnosis) async fn probe_one(
-    state: &AppState,
-    provider: &ModelProviderSettings,
-) -> Vec<DiagnosisItem> {
-    vec![probe_provider(state, provider).await]
-}
-
-pub(in crate::diagnosis) async fn codex_item(state: &AppState) -> Option<DiagnosisItem> {
-    codex_sdk_item(state).await
-}
-
-#[cfg(test)]
-pub(in crate::diagnosis) async fn providers(state: &AppState) -> Vec<DiagnosisItem> {
-    let enabled = enabled_providers(state);
-    let mut items = Vec::new();
-    let mut pending = probe_tasks(state, &enabled);
-    while !pending.is_empty() {
-        let (item, _index, rest) = futures_util::future::select_all(pending).await;
-        pending = rest;
-        if let Some(item) = item {
-            items.push(item);
-        }
-    }
-    items
-}
-
-#[cfg(test)]
-fn probe_tasks<'a>(
-    state: &'a AppState,
-    enabled: &'a [ModelProviderSettings],
-) -> Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Option<DiagnosisItem>> + 'a>>> {
-    let mut pending = enabled
-        .iter()
-        .map(|provider| {
-            Box::pin(async move { Some(probe_provider(state, provider).await) })
-                as std::pin::Pin<Box<dyn std::future::Future<Output = Option<DiagnosisItem>> + 'a>>
-        })
-        .collect::<Vec<_>>();
-    pending.push(Box::pin(async move { codex_sdk_item(state).await }));
-    pending
-}
-
-async fn codex_sdk_item(state: &AppState) -> Option<DiagnosisItem> {
-    let settings = state
+fn codex_enabled(state: &AppState) -> Option<String> {
+    state
         .sqlite_readers
         .read(crate::persistence::load_codex_settings)
-        .ok()?;
-    if !settings.enabled {
-        return None;
-    }
-    let detail = match tokio::task::spawn_blocking(probe_codex_sdk).await {
-        Ok(Ok(())) => (DiagnosisStatus::Ok, format!("{} responded", settings.model)),
-        Ok(Err(error)) => (DiagnosisStatus::Fail, error),
-        Err(_) => (DiagnosisStatus::Fail, "check failed".to_string()),
+        .ok()
+        .filter(|settings| settings.enabled)
+        .map(|settings| settings.model)
+}
+
+pub(super) fn config(state: &AppState) -> CheckFuture<'_> {
+    Box::pin(async move {
+        let providers = enabled_providers(state);
+        let codex = codex_enabled(state);
+        let harness_configured = state
+            .sqlite_readers
+            .read(load_model_providers)
+            .is_ok_and(|settings| !settings.harness.address.trim().is_empty());
+        let mut out: Vec<Evidence> = providers
+            .iter()
+            .map(|provider| {
+                pass(
+                    &format!("provider.{}", provider.id()),
+                    capability_of(provider),
+                    Tier::Static,
+                )
+                .route(route_of(provider))
+                .subject(provider.label())
+            })
+            .collect();
+        if let Some(model) = &codex {
+            out.push(
+                pass("codex.config", Capability::Conversation, Tier::Static)
+                    .route("codex")
+                    .detail(model),
+            );
+        }
+        let has_reasoning = providers
+            .iter()
+            .any(|provider| capability_of(provider) == Capability::Conversation);
+        if !has_reasoning && codex.is_none() && !harness_configured {
+            out.push(evidence(
+                "conversation.sources",
+                Capability::Conversation,
+                Tier::Static,
+                Outcome::Fail,
+                Reason::NotConfigured,
+            ));
+        }
+        out
+    })
+}
+
+pub(super) fn probe(state: &AppState) -> CheckFuture<'_> {
+    Box::pin(async move {
+        // A retest of one capability must not bill providers that serve another.
+        let focus = state.diagnosis.focus();
+        let providers: Vec<_> = enabled_providers(state)
+            .into_iter()
+            .filter(|provider| focus.is_none_or(|capability| capability_of(provider) == capability))
+            .collect();
+        futures_util::future::join_all(providers.iter().map(|provider| probe_one(state, provider)))
+            .await
+    })
+}
+
+async fn probe_one(state: &AppState, provider: &ModelProviderSettings) -> Evidence {
+    // Distinct from the configuration row, which shares the provider id.
+    let source = format!("provider.{}.availability", provider.id());
+    let capability = capability_of(provider);
+    let outcome = tokio::time::timeout(
+        PROVIDER_PROBE_LIMIT,
+        crate::providers::probe::test_model_provider(
+            state,
+            TestProviderInput {
+                provider: provider.clone(),
+            },
+        ),
+    )
+    .await;
+    // System TTS only reports availability without speaking, so it is not proof of output.
+    let tier = if matches!(provider, ModelProviderSettings::SystemTts(_)) {
+        Tier::Static
+    } else {
+        Tier::Probe
     };
-    Some(item(
-        "provider.codex-sdk",
-        "llm",
-        "Codex SDK",
-        detail.0,
-        DiagnosisSeverity::Degraded,
-        &format!("Codex SDK: {}", detail.1),
-        None,
-    ))
+    let item = match outcome {
+        Ok(Ok(tested)) if tested.ok => {
+            pass(&source, capability, tier).latency(u64::try_from(tested.latency_ms).ok())
+        }
+        Ok(Ok(tested)) => evidence(
+            &source,
+            capability,
+            tier,
+            Outcome::Fail,
+            classify_failure(&tested.message),
+        )
+        .detail(&tested.message)
+        .latency(u64::try_from(tested.latency_ms).ok()),
+        Ok(Err(error)) => evidence(
+            &source,
+            capability,
+            tier,
+            Outcome::Fail,
+            classify_failure(&error),
+        )
+        .detail(&error),
+        Err(_) => evidence(&source, capability, tier, Outcome::Fail, Reason::Timeout),
+    };
+    item.route(route_of(provider)).subject(provider.label())
+}
+
+pub(super) fn codex(state: &AppState) -> CheckFuture<'_> {
+    Box::pin(async move {
+        let Some(model) = codex_enabled(state) else {
+            return Vec::new();
+        };
+        // The handshake proves the process starts, not that a model answers: static evidence.
+        if state
+            .diagnosis
+            .focus()
+            .is_some_and(|capability| capability != Capability::Conversation)
+        {
+            return Vec::new();
+        }
+        let started = std::time::Instant::now();
+        let item = match tokio::task::spawn_blocking(probe_codex_sdk).await {
+            Ok(Ok(())) => pass("codex.sdk", Capability::Conversation, Tier::Static).detail(&model),
+            Ok(Err(error)) => evidence(
+                "codex.sdk",
+                Capability::Conversation,
+                Tier::Static,
+                Outcome::Fail,
+                classify_failure(&error),
+            )
+            .detail(&error),
+            Err(_) => evidence(
+                "codex.sdk",
+                Capability::Conversation,
+                Tier::Static,
+                Outcome::Fail,
+                Reason::Internal,
+            ),
+        };
+        vec![item
+            .route("codex")
+            .latency(Some(started.elapsed().as_millis() as u64))]
+    })
 }
 
 fn probe_codex_sdk() -> Result<(), String> {
@@ -138,62 +236,9 @@ fn probe_codex_sdk() -> Result<(), String> {
     outcome
 }
 
-async fn probe_provider(state: &AppState, provider: &ModelProviderSettings) -> DiagnosisItem {
-    let id = format!("provider.{}", provider.id());
-    let group = match provider {
-        ModelProviderSettings::CloudAsr(_)
-        | ModelProviderSettings::CloudTts(_)
-        | ModelProviderSettings::SystemTts(_) => "voice",
-        _ => "llm",
-    };
-    if SKIP_CLOUD_TTS_PROBE && matches!(provider, ModelProviderSettings::CloudTts(_)) {
-        return item(
-            &id,
-            group,
-            provider.label(),
-            DiagnosisStatus::Skipped,
-            DiagnosisSeverity::Degraded,
-            &format!("{}: cloud TTS probe skipped", provider.label()),
-            None,
-        );
-    }
-    match crate::providers::probe::test_model_provider(
-        state,
-        TestProviderInput {
-            provider: provider.clone(),
-        },
-    )
-    .await
-    {
-        Ok(tested) => item(
-            &id,
-            group,
-            provider.label(),
-            if tested.ok {
-                DiagnosisStatus::Ok
-            } else {
-                DiagnosisStatus::Fail
-            },
-            DiagnosisSeverity::Degraded,
-            &format!("{}: {}", provider.label(), tested.message),
-            u64::try_from(tested.latency_ms).ok(),
-        ),
-        Err(error) => item(
-            &id,
-            group,
-            provider.label(),
-            DiagnosisStatus::Fail,
-            DiagnosisSeverity::Degraded,
-            &format!("{}: {error}", provider.label()),
-            None,
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ModelProviderSettings;
     use rusqlite::Connection;
     use std::time::Instant;
 
@@ -203,11 +248,16 @@ mod tests {
         crate::test_support::app_state(connection)
     }
 
-    fn write_settings(state: &AppState, settings: &crate::ModelProvidersSettings) {
-        let value = serde_json::to_string(settings).expect("settings encode");
+    fn configure(state: &AppState, with: impl FnOnce(&mut crate::ModelProvidersSettings)) {
+        let mut settings = state
+            .sqlite_readers
+            .read(load_model_providers)
+            .expect("providers load");
+        with(&mut settings);
+        let value = serde_json::to_string(&settings).expect("settings encode");
         state
             .sqlite_writer
-            .write(|connection| {
+            .write(move |connection| {
                 connection
                     .execute(
                         "UPDATE settings_documents SET value_json=?1
@@ -220,128 +270,61 @@ mod tests {
             .expect("settings update");
     }
 
-    fn loaded(state: &AppState) -> crate::ModelProvidersSettings {
-        state
-            .sqlite_readers
-            .read(load_model_providers)
-            .expect("providers load")
+    fn unreachable_provider(id: &str) -> ModelProviderSettings {
+        let mut provider = crate::test_support::direct_provider(id, "local");
+        provider.endpoint = "http://127.0.0.1:9/v1".to_string();
+        ModelProviderSettings::OpenAiCompatible(provider)
     }
 
     #[tokio::test]
-    async fn dg_05_system_tts_reports_ok() {
+    async fn config_reports_each_enabled_provider_as_its_own_route() {
         let state = fresh();
-        let mut settings = loaded(&state);
-        settings
-            .providers
-            .retain(|provider| matches!(provider, ModelProviderSettings::SystemTts(_)));
-        write_settings(&state, &settings);
-        let items = providers(&state).await;
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].status, DiagnosisStatus::Ok);
-        assert_eq!(items[0].group, "voice");
-        assert_eq!(items[0].id, "provider.system-tts");
+        configure(&state, |settings| {
+            settings.harness.address.clear();
+            settings.providers = vec![unreachable_provider("local-llm")];
+        });
+        let items = config(&state).await;
+        let item = items
+            .iter()
+            .find(|item| item.source == "provider.local-llm")
+            .expect("provider is represented");
+        assert_eq!(item.route, "provider:local-llm");
+        assert_eq!(item.tier, Tier::Static);
+        assert_eq!(item.capability, Capability::Conversation);
     }
 
     #[tokio::test]
-    async fn dg_05_disabled_provider_is_omitted() {
+    async fn no_reasoning_source_at_all_is_not_configured() {
         let state = fresh();
-        let mut settings = loaded(&state);
-        for provider in &mut settings.providers {
-            if !matches!(provider, ModelProviderSettings::SystemTts(_)) {
-                provider.set_enabled(false);
-            }
-        }
-        write_settings(&state, &settings);
-        let items = providers(&state).await;
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id, "provider.system-tts");
+        configure(&state, |settings| {
+            settings.harness.address.clear();
+            settings.providers.clear();
+        });
+        let items = config(&state).await;
+        let missing = items
+            .iter()
+            .find(|item| item.source == "conversation.sources")
+            .expect("missing sources are reported");
+        assert_eq!(
+            (missing.outcome, missing.reason),
+            (Outcome::Fail, Reason::NotConfigured)
+        );
     }
 
     #[tokio::test]
-    async fn dg_05_unreachable_provider_fails_within_timeout() {
+    async fn probe_failure_is_typed_and_scoped_to_its_provider() {
         let state = fresh();
-        let mut settings = loaded(&state);
-        settings.providers.clear();
-        settings
-            .providers
-            .push(crate::test_support::provider("remote", "cloud"));
-        write_settings(&state, &settings);
+        configure(&state, |settings| {
+            settings.harness.address.clear();
+            settings.providers = vec![unreachable_provider("local-llm")];
+        });
         let started = Instant::now();
-        let items = providers(&state).await;
+        let items = probe(&state).await;
         assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id, "provider.remote");
-        assert_eq!(items[0].status, DiagnosisStatus::Fail);
-        assert_eq!(items[0].group, "llm");
-    }
-
-    #[tokio::test]
-    async fn enabled_codex_sdk_is_probed() {
-        let _lock = crate::test_environment::codex_lock()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let directory = tempfile::tempdir().expect("temp dir");
-        let script = directory.path().join("codex");
-        std::fs::write(
-            &script,
-            "#!/usr/bin/env python3\nimport sys\nsys.stdin.readline()\nprint('{\"id\":1,\"result\":{}}', flush=True)\n",
-        )
-        .expect("script");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-                .expect("mode");
-        }
-        let _env = crate::test_environment::EnvGuard::set("SAAA_CODEX_PATH", &script);
-        let state = fresh();
-        let mut settings = loaded(&state);
-        settings.providers.clear();
-        write_settings(&state, &settings);
-        write_codex(&state, true, "unchecked");
-        let items = providers(&state).await;
-        let codex = items
-            .iter()
-            .find(|item| item.id == "provider.codex-sdk")
-            .expect("codex");
-        assert_eq!(codex.group, "llm");
-        assert_eq!(codex.status, DiagnosisStatus::Ok);
-        assert!(!codex.message.contains("not checked"));
-    }
-
-    #[tokio::test]
-    async fn disabled_codex_sdk_is_omitted() {
-        let state = fresh();
-        let mut settings = loaded(&state);
-        settings
-            .providers
-            .retain(|provider| matches!(provider, ModelProviderSettings::SystemTts(_)));
-        write_settings(&state, &settings);
-        write_codex(&state, false, "ready");
-        let items = providers(&state).await;
-        assert!(items.iter().all(|item| item.id != "provider.codex-sdk"));
-    }
-
-    fn write_codex(state: &AppState, enabled: bool, health: &str) {
-        let mut settings = state
-            .sqlite_readers
-            .read(crate::persistence::load_codex_settings)
-            .expect("codex loads");
-        settings.enabled = enabled;
-        settings.health = health.to_string();
-        let value = serde_json::to_string(&settings).expect("codex encodes");
-        state
-            .sqlite_writer
-            .write(|connection| {
-                connection
-                    .execute(
-                        "UPDATE settings_documents SET value_json=?1
-                         WHERE namespace='providers.agent' AND key='codex-sdk'",
-                        [value],
-                    )
-                    .map_err(crate::database_error)?;
-                Ok(())
-            })
-            .expect("codex update");
+        assert_eq!(items[0].outcome, Outcome::Fail);
+        assert_eq!(items[0].tier, Tier::Probe);
+        assert_eq!(items[0].route, "provider:local-llm");
+        assert_ne!(items[0].reason, Reason::Ok);
     }
 }

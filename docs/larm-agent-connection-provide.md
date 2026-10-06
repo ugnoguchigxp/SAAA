@@ -12,7 +12,7 @@ SAAA の会話と画像・楽曲サービスの発見には、それぞれ公開
 
 201 は ready と全 Provider の claimable を検証する。202 は Location の同じ Connection を期限付きで poll する。Warm ProviderはProfileに広告されたllm、asr、tts、embeddingとSystem One（`larm.system-one.v1`）を区別して保持する。旧構成のbackchannelにも対応する。全件接続では広告されたWarm Provider集合を検証する。llmだけを要求するtext adapterではllmだけの応答と旧サーバーの全Warm応答を扱い、名前・protocol・endpoint・model・必要なcontextWindowを確認する。モデル名はProfileとclaimから取得する。画像と音楽の追加サービスは `services` で検証し、claim 対象にしない。claim 後の短期 credential、baseUrl、model を推論の正本とし、作成応答と矛盾した場合は推論を止める。終了時は DELETE で release する。
 
-自己診断では TCP 到達、HTTP 到達、discovery、create、semantic readiness、claim、実推論を別項目で表示する。HTTP の 4xx 応答は到達不能として扱わない。API token と claim token は診断結果、SQLite、設定画面、ログに保存しない。
+自己診断は LARM を機能（応答・音声認識・音声合成・埋め込み）の経路として扱い、カタログでの提供確認（実行は未確認）と、Session を claim して行う実推論の確認を別の証拠として区別する。HTTP の 4xx 応答は到達不能として扱わない。API token と claim token は診断結果、SQLite、設定画面、ログに保存しない。
 
 ## 要求時に起動する画像・楽曲サービス
 

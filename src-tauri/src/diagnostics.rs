@@ -129,9 +129,7 @@ mod tests {
         let mut state = crate::test_support::app_state(connection);
         state.data_directory = directory.path().to_path_buf();
         let revision = state.diagnosis.try_begin().unwrap();
-        let mut report = state.diagnosis.snapshot();
-        report.revision = revision;
-        state.diagnosis.publish(report);
+        state.diagnosis.finish();
         let result = export_diagnostics(&state).unwrap();
         let payload: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(result.path).unwrap()).unwrap();

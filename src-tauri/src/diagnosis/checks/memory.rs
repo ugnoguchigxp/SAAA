@@ -1,122 +1,110 @@
-use super::item;
-use crate::diagnosis::contract::{DiagnosisItem, DiagnosisSeverity, DiagnosisStatus};
+use super::{evidence, pass, CheckFuture};
+use crate::diagnosis::contract::{Capability, Evidence, Outcome, Reason, Tier};
 use crate::runtime::context::world::capabilities;
 use crate::AppState;
 
-pub(crate) const RECORDS_DB_SOFT_LIMIT_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+const CAP: Capability = Capability::Memory;
 
-pub(crate) fn capacity_item(db_bytes: u64, limit: u64) -> DiagnosisItem {
-    let ratio = if limit == 0 {
-        0.0
-    } else {
-        db_bytes as f64 / limit as f64
-    };
-    if ratio >= 0.8 {
-        item(
-            "records.capacity",
-            "memory",
-            "Record store capacity",
-            DiagnosisStatus::Warn,
-            DiagnosisSeverity::Degraded,
-            "Record storage is at least 80% of the soft limit.",
-            None,
-        )
-    } else {
-        item(
-            "records.capacity",
-            "memory",
-            "Record store capacity",
-            DiagnosisStatus::Ok,
-            DiagnosisSeverity::Degraded,
-            "",
-            None,
-        )
-    }
+pub(super) fn run(state: &AppState) -> CheckFuture<'_> {
+    Box::pin(async move { collect(state) })
 }
 
-pub(in crate::diagnosis) fn memory(state: &AppState) -> Vec<DiagnosisItem> {
+fn collect(state: &AppState) -> Vec<Evidence> {
     vec![
         personal_state(state),
         world(state),
+        toolchain(state),
         context_still(
-            "context_still.recall",
-            "ContextStill recall",
+            "context-still.recall",
             state.context_still_recall.is_configured(),
         ),
         context_still(
-            "context_still.search",
-            "ContextStill search",
+            "context-still.search",
             state.context_still_search.is_configured(),
         ),
-        toolchain(state),
-        capacity_item(0, RECORDS_DB_SOFT_LIMIT_BYTES),
     ]
 }
 
-fn personal_state(state: &AppState) -> DiagnosisItem {
+fn personal_state(state: &AppState) -> Evidence {
+    let source = "memory.personal-state";
     match state
-        .sqlite_writer
-        .read_serialized(crate::memory::personal_state::commands::summary)
+        .sqlite_readers
+        .read(crate::memory::personal_state::commands::summary)
     {
-        Ok(summary) => item(
-            "memory.personal_state",
-            "memory",
-            "Personal state",
-            if summary["enabled"] == false {
-                DiagnosisStatus::Skipped
-            } else if summary["ready"] == true {
-                DiagnosisStatus::Ok
-            } else {
-                DiagnosisStatus::Warn
-            },
-            DiagnosisSeverity::Degraded,
-            summary["contractReason"].as_str().unwrap_or(""),
-            None,
+        Ok(summary) if summary["enabled"] == false => evidence(
+            source,
+            CAP,
+            Tier::Static,
+            Outcome::Disabled,
+            Reason::Disabled,
         ),
-        Err(error) => item(
-            "memory.personal_state",
-            "memory",
-            "Personal state",
-            DiagnosisStatus::Fail,
-            DiagnosisSeverity::Degraded,
-            &error,
-            None,
-        ),
+        Ok(summary) if summary["ready"] == true => pass(source, CAP, Tier::Static),
+        Ok(summary) => evidence(
+            source,
+            CAP,
+            Tier::Static,
+            Outcome::Degraded,
+            Reason::NotReady,
+        )
+        .detail(summary["contractReason"].as_str().unwrap_or("")),
+        Err(error) => {
+            evidence(source, CAP, Tier::Static, Outcome::Fail, Reason::Internal).detail(&error)
+        }
     }
 }
 
-fn world(state: &AppState) -> DiagnosisItem {
-    let result = state.sqlite_writer.read_serialized(|c| {
-        capabilities::status(c, crate::PRIMARY_CONVERSATION_ID)?;
-        let summary = crate::memory::personal_state::commands::summary(c)?;
-        let active: u64 = c.query_row("SELECT count(*) FROM personal_projection p JOIN personal_assertions a ON a.id=p.assertion_id WHERE p.status='active' AND json_extract(a.metadata,'$.kind') IN ('world_entity','world_relation','world_focus')", [], |r| r.get(0)).map_err(crate::database_error)?;
+fn world(state: &AppState) -> Evidence {
+    let source = "memory.world";
+    let result = state.sqlite_readers.read(|connection| {
+        capabilities::status(connection, crate::PRIMARY_CONVERSATION_ID)?;
+        let summary = crate::memory::personal_state::commands::summary(connection)?;
+        let active: u64 = connection
+            .query_row(
+                "SELECT count(*) FROM personal_projection p \
+                 JOIN personal_assertions a ON a.id=p.assertion_id \
+                 WHERE p.status='active' \
+                 AND json_extract(a.metadata,'$.kind') IN ('world_entity','world_relation','world_focus')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(crate::database_error)?;
         Ok((summary, active))
     });
     match result {
+        Ok((summary, _)) if summary["enabled"] != true => evidence(
+            source,
+            CAP,
+            Tier::Static,
+            Outcome::Disabled,
+            Reason::Disabled,
+        ),
         Ok((summary, active)) => {
-            let enabled = summary["enabled"] == true;
             let ready = summary["ready"] == true;
-            let reason = summary["maintenance"]["reason"]
+            let maintenance = summary["maintenance"]["reason"]
                 .as_str()
                 .unwrap_or("not-started");
-            item("world.status", "memory", "World model",
-                if !enabled { DiagnosisStatus::Skipped } else if !ready || reason.ends_with("unavailable") { DiagnosisStatus::Warn } else { DiagnosisStatus::Ok },
-                DiagnosisSeverity::Degraded,
-                &format!("enabled={enabled}; contract_ready={ready}; active={active}; maintenance={reason}"), None)
+            let note = active.to_string();
+            if !ready || maintenance.ends_with("unavailable") {
+                evidence(
+                    source,
+                    CAP,
+                    Tier::Static,
+                    Outcome::Degraded,
+                    Reason::NotReady,
+                )
+                .detail(&note)
+            } else {
+                pass(source, CAP, Tier::Static).detail(&note)
+            }
         }
-        Err(error) => item(
-            "world.status",
-            "memory",
-            "World model",
-            DiagnosisStatus::Fail,
-            DiagnosisSeverity::Degraded,
-            &error,
-            None,
-        ),
+        Err(error) => {
+            evidence(source, CAP, Tier::Static, Outcome::Fail, Reason::Internal).detail(&error)
+        }
     }
 }
 
-fn toolchain(state: &AppState) -> DiagnosisItem {
+fn toolchain(state: &AppState) -> Evidence {
+    let source = "memory.toolchain";
     match state.sqlite_readers.read(|connection| {
         connection
             .query_row("SELECT COUNT(*) FROM tool_selection_catalog", [], |row| {
@@ -124,48 +112,36 @@ fn toolchain(state: &AppState) -> DiagnosisItem {
             })
             .map_err(crate::database_error)
     }) {
-        Ok(count) => item(
-            "tool_selection.catalog",
-            "memory",
-            "ToolChain",
-            DiagnosisStatus::Ok,
-            DiagnosisSeverity::Degraded,
-            &format!("{count} tools"),
-            None,
-        ),
-        Err(error) => item(
-            "tool_selection.catalog",
-            "memory",
-            "ToolChain",
-            DiagnosisStatus::Fail,
-            DiagnosisSeverity::Degraded,
-            &error,
-            None,
-        ),
+        Ok(0) => evidence(
+            source,
+            CAP,
+            Tier::Static,
+            Outcome::Degraded,
+            Reason::NotReady,
+        )
+        .advisory()
+        .detail("0"),
+        Ok(count) => pass(source, CAP, Tier::Static)
+            .advisory()
+            .detail(&count.to_string()),
+        Err(error) => evidence(source, CAP, Tier::Static, Outcome::Fail, Reason::Internal)
+            .advisory()
+            .detail(&error),
     }
 }
 
-fn context_still(id: &str, label: &str, configured: bool) -> DiagnosisItem {
+fn context_still(source: &str, configured: bool) -> Evidence {
     if configured {
-        item(
-            id,
-            "memory",
-            label,
-            DiagnosisStatus::Ok,
-            DiagnosisSeverity::Info,
-            "",
-            None,
-        )
+        pass(source, CAP, Tier::Static).advisory()
     } else {
-        item(
-            id,
-            "memory",
-            label,
-            DiagnosisStatus::Skipped,
-            DiagnosisSeverity::Info,
-            "not configured",
-            None,
+        evidence(
+            source,
+            CAP,
+            Tier::Static,
+            Outcome::Disabled,
+            Reason::NotConfigured,
         )
+        .advisory()
     }
 }
 
@@ -181,69 +157,35 @@ mod tests {
     }
 
     #[test]
-    fn world_maintenance_diagnosis_distinguishes_unready_from_readable_database() {
+    fn world_and_personal_state_distinguish_disabled_unready_and_ready() {
         let state = fresh();
         let summary = state
             .sqlite_writer
             .read_serialized(crate::memory::personal_state::commands::summary)
             .unwrap();
-        let items = memory(&state);
         let expected = if summary["enabled"] == false {
-            DiagnosisStatus::Skipped
+            Outcome::Disabled
         } else if summary["ready"] == false {
-            DiagnosisStatus::Warn
+            Outcome::Degraded
         } else {
-            DiagnosisStatus::Ok
+            Outcome::Pass
         };
-        for id in ["memory.personal_state", "world.status"] {
-            assert_eq!(
-                items.iter().find(|item| item.id == id).unwrap().status,
-                expected
-            );
+        let items = collect(&state);
+        for source in ["memory.personal-state", "memory.world"] {
+            let item = items.iter().find(|item| item.source == source).unwrap();
+            assert_eq!(item.outcome, expected, "{source}");
         }
+    }
+
+    #[test]
+    fn every_memory_source_is_reported_once() {
+        let items = collect(&fresh());
+        let mut sources: Vec<_> = items.iter().map(|item| item.source.as_str()).collect();
+        sources.sort_unstable();
+        sources.dedup();
+        assert_eq!(sources.len(), 5);
         assert!(items
             .iter()
-            .find(|item| item.id == "world.status")
-            .unwrap()
-            .message
-            .contains("active=0"));
-    }
-
-    #[test]
-    fn dg_07_context_still_skipped_when_not_configured() {
-        let items = memory(&fresh());
-        for id in ["context_still.recall", "context_still.search"] {
-            let item = items.iter().find(|item| item.id == id).expect(id);
-            assert_eq!(item.status, DiagnosisStatus::Skipped);
-            assert_eq!(item.severity, DiagnosisSeverity::Info);
-            assert_eq!(item.message, "not configured");
-        }
-    }
-
-    #[test]
-    fn cw_54_capacity_warn_at_80_percent() {
-        let item = capacity_item(80, 100);
-        assert_eq!(item.status, DiagnosisStatus::Warn);
-        assert_eq!(item.id, "records.capacity");
-    }
-
-    #[test]
-    fn cw_54_context_metrics_present() {
-        let item = capacity_item(1, RECORDS_DB_SOFT_LIMIT_BYTES);
-        assert_eq!(item.status, DiagnosisStatus::Ok);
-    }
-
-    #[test]
-    fn cw_32_mcp_result_has_record_id() {
-        let connection = Connection::open_in_memory().unwrap();
-        crate::initialize_database(&connection).unwrap();
-        let exists: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tool_selection_mcp_results') WHERE name='record_id')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(exists);
+            .all(|item| item.capability == Capability::Memory));
     }
 }

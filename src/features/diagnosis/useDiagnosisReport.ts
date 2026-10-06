@@ -1,77 +1,103 @@
-import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
-import type { DiagnosisReport } from "../../lib/generated/diagnosis";
-import { getDiagnosisReport, parseDiagnosisReport, runDiagnosis, runFastDiagnosis } from "./api";
+import type { DiagnosisReport, DiagnosisScope } from "../../lib/generated/diagnosis";
+import { getDiagnosisReport, parseDiagnosisReport, runDiagnosis } from "./api";
 
-export function useDiagnosisReport() {
+const CLOCK_MS = 30_000;
+
+export type DiagnosisBackend = {
+  listen: (handler: (payload: unknown) => void) => Promise<() => void>;
+  get: typeof getDiagnosisReport;
+  run: typeof runDiagnosis;
+};
+
+export const tauriBackend: DiagnosisBackend = {
+  // Loaded on demand so tests that inject a backend never touch the Tauri event module.
+  listen: async (handler) => {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<unknown>("diagnosis-updated", (event) => handler(event.payload));
+  },
+  get: getDiagnosisReport,
+  run: runDiagnosis,
+};
+
+function message(cause: unknown) {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+export function useDiagnosisReport(backend: DiagnosisBackend = tauriBackend) {
   const [report, setReport] = useState<DiagnosisReport | null>(null);
-  const [running, setRunning] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const seen = useRef(-1);
-  const rerunning = useRef(false);
   const mounted = useRef(true);
-  const runningFromReport = useRef(false);
-  const accept = useRef<(next: DiagnosisReport) => boolean>(() => false);
-  accept.current = (next) => {
+  const requests = useRef(0);
+
+  const settled = useRef(false);
+  const accept = (next: DiagnosisReport) => {
     if (!mounted.current || next.revision < seen.current) return false;
+    // Snapshots of one revision are not ordered; a late partial one must not reopen a finished run.
+    if (next.revision === seen.current && settled.current && next.running) return false;
     seen.current = next.revision;
-    runningFromReport.current = next.running;
+    settled.current = !next.running;
     setReport(next);
-    if (!rerunning.current) setRunning(next.running);
     return true;
   };
+  const acceptRef = useRef(accept);
+  acceptRef.current = accept;
 
   useEffect(() => {
     mounted.current = true;
     let stop = false;
-    const unlisten = listen<unknown>("diagnosis-updated", (event) => {
-      if (stop) return;
-      try {
-        if (accept.current(parseDiagnosisReport(event.payload)) && mounted.current) setError(null);
-      } catch (cause) {
-        if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause));
-      }
-    });
-    void unlisten
-      .then(() => getDiagnosisReport())
-      .then((latest) => {
-        if (!stop && latest.revision > seen.current && latest.revision > 0) accept.current(latest);
+    const unlisten = backend
+      .listen((payload) => {
+        if (stop) return;
+        try {
+          if (acceptRef.current(parseDiagnosisReport(payload))) setError(null);
+        } catch (cause) {
+          if (mounted.current) setError(message(cause));
+        }
       })
       .catch((cause) => {
-        if (!stop) setError(cause instanceof Error ? cause.message : String(cause));
+        if (!stop) setError(message(cause));
+        return () => undefined;
       });
+    // Loading the stored report must not depend on the event subscription succeeding.
+    void backend
+      .get()
+      .then((latest) => {
+        if (!stop) acceptRef.current(latest);
+      })
+      .catch((cause) => {
+        if (!stop) setError(message(cause));
+      })
+      .finally(() => {
+        if (!stop) setLoaded(true);
+      });
+    const clock = setInterval(() => setNow(Date.now()), CLOCK_MS);
     return () => {
       stop = true;
       mounted.current = false;
+      clearInterval(clock);
       void unlisten.then((unsubscribe) => unsubscribe());
     };
-  }, []);
+  }, [backend]);
 
-  async function rerun(mode: "fast" | "operational" = "operational") {
-    if (rerunning.current) return;
-    rerunning.current = true;
-    setRunning(true);
+  async function run(scope: DiagnosisScope) {
+    requests.current += 1;
+    setRequesting(true);
     setError(null);
     try {
-      const next = await (mode === "fast" ? runFastDiagnosis() : runDiagnosis());
-      if (!mounted.current) return;
-      if (next.revision < seen.current) {
-        setRunning(runningFromReport.current);
-        return;
-      }
-      seen.current = next.revision;
-      runningFromReport.current = next.running;
-      setReport(next);
-      setRunning(next.running);
+      acceptRef.current(await backend.run(scope));
     } catch (cause) {
-      if (mounted.current) {
-        setRunning(false);
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
+      if (mounted.current) setError(message(cause));
     } finally {
-      rerunning.current = false;
+      requests.current -= 1;
+      if (mounted.current && requests.current === 0) setRequesting(false);
+      if (mounted.current) setNow(Date.now());
     }
   }
 
-  return { report, running, error, rerun };
+  return { report, loaded, running: requesting || report?.running === true, error, now, run };
 }

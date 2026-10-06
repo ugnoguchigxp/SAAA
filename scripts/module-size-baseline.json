@@ -553,61 +553,57 @@
       "total": 22,
       "production": 22
     },
-    "src-tauri/src/diagnosis/checks/harness.rs": {
-      "total": 426,
-      "production": 300
+    "src-tauri/src/diagnosis/aggregate.rs": {
+      "total": 620,
+      "production": 251
     },
-    "src-tauri/src/diagnosis/checks/harness/items.rs": {
-      "total": 387,
-      "production": 210
+    "src-tauri/src/diagnosis/checks/activity.rs": {
+      "total": 307,
+      "production": 142
+    },
+    "src-tauri/src/diagnosis/checks/harness.rs": {
+      "total": 380,
+      "production": 242
     },
     "src-tauri/src/diagnosis/checks/memory.rs": {
-      "total": 229,
-      "production": 160
+      "total": 192,
+      "production": 147
     },
     "src-tauri/src/diagnosis/checks/mod.rs": {
-      "total": 28,
-      "production": 28
+      "total": 287,
+      "production": 234
     },
     "src-tauri/src/diagnosis/checks/providers.rs": {
-      "total": 348,
-      "production": 192
+      "total": 331,
+      "production": 238
     },
-    "src-tauri/src/diagnosis/checks/settings.rs": {
-      "total": 86,
-      "production": 40
+    "src-tauri/src/diagnosis/checks/storage.rs": {
+      "total": 163,
+      "production": 123
     },
-    "src-tauri/src/diagnosis/checks/sqlite.rs": {
-      "total": 81,
-      "production": 44
+    "src-tauri/src/diagnosis/checks/voice.rs": {
+      "total": 208,
+      "production": 122
     },
     "src-tauri/src/diagnosis/commands.rs": {
-      "total": 44,
-      "production": 20
+      "total": 19,
+      "production": 19
     },
     "src-tauri/src/diagnosis/contract.rs": {
-      "total": 93,
-      "production": 76
+      "total": 270,
+      "production": 246
+    },
+    "src-tauri/src/diagnosis/engine.rs": {
+      "total": 338,
+      "production": 162
     },
     "src-tauri/src/diagnosis/mod.rs": {
-      "total": 6,
-      "production": 6
-    },
-    "src-tauri/src/diagnosis/runner.rs": {
-      "total": 315,
-      "production": 181
-    },
-    "src-tauri/src/diagnosis/runner/in_flight.rs": {
-      "total": 77,
-      "production": 77
-    },
-    "src-tauri/src/diagnosis/runner/report.rs": {
-      "total": 30,
-      "production": 30
+      "total": 7,
+      "production": 7
     },
     "src-tauri/src/diagnosis/store.rs": {
-      "total": 109,
-      "production": 83
+      "total": 234,
+      "production": 138
     },
     "src-tauri/src/diagnostics.rs": {
       "total": 187,
@@ -3842,8 +3838,8 @@
       "production": 143
     },
     "src-tauri/src/voice/audio_backend/echo_reference.rs": {
-      "total": 119,
-      "production": 66
+      "total": 188,
+      "production": 129
     },
     "src-tauri/src/voice/audio_backend/macos.rs": {
       "total": 512,
@@ -4545,21 +4541,29 @@
       "total": 28,
       "production": 28
     },
+    "src/features/diagnosis/CapabilityCard.tsx": {
+      "total": 149,
+      "production": 149
+    },
     "src/features/diagnosis/DiagnosisPage.css": {
-      "total": 293,
-      "production": 293
+      "total": 253,
+      "production": 253
     },
     "src/features/diagnosis/DiagnosisPage.tsx": {
-      "total": 270,
-      "production": 270
+      "total": 97,
+      "production": 97
     },
     "src/features/diagnosis/api.ts": {
-      "total": 40,
-      "production": 40
+      "total": 92,
+      "production": 92
+    },
+    "src/features/diagnosis/diagnosisModel.ts": {
+      "total": 74,
+      "production": 74
     },
     "src/features/diagnosis/useDiagnosisReport.ts": {
-      "total": 78,
-      "production": 78
+      "total": 104,
+      "production": 104
     },
     "src/features/media/MediaArtifacts.tsx": {
       "total": 52,
@@ -4862,12 +4866,8 @@
       "production": 295
     },
     "src/i18n/locales/enDiagnosis.ts": {
-      "total": 71,
-      "production": 71
-    },
-    "src/i18n/locales/enDiagnosisItems.ts": {
-      "total": 19,
-      "production": 19
+      "total": 135,
+      "production": 135
     },
     "src/i18n/locales/enErrors.ts": {
       "total": 76,
@@ -4902,12 +4902,8 @@
       "production": 292
     },
     "src/i18n/locales/jaDiagnosis.ts": {
-      "total": 71,
-      "production": 71
-    },
-    "src/i18n/locales/jaDiagnosisItems.ts": {
-      "total": 19,
-      "production": 19
+      "total": 135,
+      "production": 135
     },
     "src/i18n/locales/jaErrors.ts": {
       "total": 79,
@@ -5014,8 +5010,8 @@
       "production": 3
     },
     "src/lib/generated/diagnosis.ts": {
-      "total": 6,
-      "production": 6
+      "total": 33,
+      "production": 33
     },
     "src/lib/generated/generativeUi.ts": {
       "total": 11,
@@ -5382,20 +5378,28 @@
       "production": 137
     },
     "tests/diagnosis-api.test.ts": {
-      "total": 36,
-      "production": 36
+      "total": 27,
+      "production": 27
     },
     "tests/diagnosis-hook.test.tsx": {
-      "total": 158,
-      "production": 158
+      "total": 154,
+      "production": 154
     },
-    "tests/diagnosis-modal.test.tsx": {
-      "total": 204,
-      "production": 204
+    "tests/diagnosis-model.test.ts": {
+      "total": 57,
+      "production": 57
     },
     "tests/diagnosis-nav.test.tsx": {
-      "total": 43,
-      "production": 43
+      "total": 39,
+      "production": 39
+    },
+    "tests/diagnosis-page.test.tsx": {
+      "total": 213,
+      "production": 213
+    },
+    "tests/diagnosisFixtures.ts": {
+      "total": 97,
+      "production": 97
     },
     "tests/effective-route.test.ts": {
       "total": 130,

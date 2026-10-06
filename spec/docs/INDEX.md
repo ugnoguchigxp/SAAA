@@ -28,6 +28,7 @@
 | `adr/0001-mvp-runtime-boundaries.html` | 正本 | MVP Runtime 境界 ADR | 2026-09-13 |  |
 | `adr/0002-situation-signal-privacy.html` | 正本 | Situation 信号プライバシー ADR | 2026-08-28 |  |
 | `adr/0003-input-activity-signal-privacy.html` | 正本 | 入力活動信号プライバシー ADR | 2026-09-13 |  |
+| [saaa-self-diagnosis-v2-contract.md](saaa-self-diagnosis-v2-contract.md) | 正本 | 機能単位の自己診断（証拠の層・未検証は緑にしない）の実装契約 | 2026-10-06 | 実アプリでの確認と専用 check の追加が残る |
 
 ## 進行中
 

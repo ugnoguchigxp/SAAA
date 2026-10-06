@@ -191,7 +191,7 @@ function App() {
             ) : route === "audit" ? (
               <AuditLogPage />
             ) : route === "diagnosis" ? (
-              <DiagnosisPage />
+              <DiagnosisPage onOpenSettings={() => setRoute("settings")} />
             ) : route === "unitTest" ? (
               <ProviderUnitTestPage
                 inputDeviceId={
