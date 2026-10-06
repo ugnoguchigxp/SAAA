@@ -29,15 +29,27 @@ export function PurposeRouteDetails({ snapshot, binding, usage, busy, save }: Pr
       connection?.enabled &&
       resource.enabled &&
       !unsupportedReason &&
-      ["chat-completions", "anthropic-messages"].includes(connection.adapterKind) &&
+      connection.adapterKind !== "larm" &&
       resource.resourceId !== draft.primaryResourceId,
   );
-  const direct = snapshot.resources.find((r) => r.resourceId === binding.primaryResourceId);
+  const primaryResource = snapshot.resources.find(
+    (r) => r.resourceId === binding.primaryResourceId,
+  );
+  const primaryAdapter =
+    snapshot.connections.find((c) => c.connectionId === primaryResource?.connectionId)
+      ?.adapterKind ?? "";
+  // LARM is only used at home, so its fallback is what runs when LARM cannot be reached.
+  // A conversation on a direct model API may also fall back to another direct API.
   const canFallback =
-    binding.purpose === "conversation.respond" &&
-    ["chat-completions", "anthropic-messages"].includes(
-      snapshot.connections.find((c) => c.connectionId === direct?.connectionId)?.adapterKind ?? "",
+    primaryAdapter === "larm" ||
+    (binding.purpose === "conversation.respond" &&
+      ["chat-completions", "anthropic-messages"].includes(primaryAdapter));
+  const fallbackIsCloud = draft.fallbackResourceIds.some((id) => {
+    const r = snapshot.resources.find((item) => item.resourceId === id);
+    return (
+      snapshot.connections.find((c) => c.connectionId === r?.connectionId)?.location === "cloud"
     );
+  });
   const label = (id: string) => {
     const r = snapshot.resources.find((r) => r.resourceId === id);
     return `${snapshot.connections.find((c) => c.connectionId === r?.connectionId)?.label ?? id}${r?.model ? ` / ${r.model}` : ""}`;
@@ -84,8 +96,15 @@ export function PurposeRouteDetails({ snapshot, binding, usage, busy, save }: Pr
       {canFallback && (
         <>
           <p>
-            代替先は下の順で使います。最初の通信が接続失敗または混雑で拒否された場合に限ります。回答の表示やツール実行後は切り替えません。
+            {primaryAdapter === "larm"
+              ? "LARMに接続できない時（外出時）は、代替先を下の順で使います。自宅に戻ると、次の依頼からLARMに戻ります。実行中の依頼は切り替えません。"
+              : "代替先は下の順で使います。最初の通信が接続失敗または混雑で拒否された場合に限ります。回答の表示やツール実行後は切り替えません。"}
           </p>
+          {fallbackIsCloud && draft.cloudAllowed === false && (
+            <p role="alert">
+              代替先がクラウドですが、この用途のクラウド送信が許可されていません。上の「この用途のクラウド送信を許可する」をオンにしないと、外出時は使えません。
+            </p>
+          )}
           {draft.fallbackResourceIds.map((id) => (
             <div key={id}>
               {label(id)}{" "}
@@ -148,8 +167,9 @@ export function PurposeRouteDetails({ snapshot, binding, usage, busy, save }: Pr
       {usage ? (
         <p>
           直近の利用先: {usage.connectionLabel ?? usage.connectionId}
-          {usage.model ? ` / ${usage.model}` : ""} — {STATUS[usage.status]}（
-          {new Date(usage.occurredAt).toLocaleString()}）。
+          {usage.model ? ` / ${usage.model}` : ""}
+          {usage.selection === "local-unreachable" ? "（LARMに接続できないため代替先）" : ""} —{" "}
+          {STATUS[usage.status]}（{new Date(usage.occurredAt).toLocaleString()}）。
           {usage.matchesCurrentSettings
             ? "現在の設定による記録です。"
             : "変更前の設定による記録です。現在の設定は未実行です。"}

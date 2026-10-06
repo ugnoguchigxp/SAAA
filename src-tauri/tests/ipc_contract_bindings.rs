@@ -72,3 +72,13 @@ fn generated_artifact_preview_binding_is_current() {
         saaa_lib::ipc_contract::artifact_preview_typescript_bindings()
     );
 }
+
+#[test]
+fn generated_worker_agents_binding_is_current() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib/generated/workerAgents.ts");
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        saaa_lib::ipc_contract::worker_agents_typescript_bindings()
+    );
+}

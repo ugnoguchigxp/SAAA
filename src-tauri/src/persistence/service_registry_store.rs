@@ -68,8 +68,7 @@ fn overlay_legacy(stored: RegistrySnapshot, derived: RegistrySnapshot) -> Regist
             && !stored_bindings
                 .iter()
                 .find(|item| item.purpose == binding.purpose)
-                .and_then(|b| b.primary_resource_id.as_deref())
-                .is_some_and(|id| id.starts_with("res:svc-"))
+                .is_some_and(super::settings::registry_projection::registry_owned)
         {
             if let Some(saved) = stored_bindings
                 .iter()
@@ -153,7 +152,6 @@ pub(crate) fn save_registry(
     if settings_revision(&transaction)? != expected_revision {
         return Err("Settings changed since they were loaded; reload and review".to_string());
     }
-    reject_cloud_while_local_only(&transaction, snapshot)?;
     validate_owned_ids(&transaction, snapshot)?;
     super::settings::registry_projection::project_voice_bindings(&transaction, snapshot)?;
     transaction
@@ -201,49 +199,6 @@ fn validate_owned_ids(connection: &Connection, snapshot: &RegistrySnapshot) -> R
     Ok(())
 }
 
-/// Mirrors the legacy rule: while the local-only policy is on, a local primary
-/// must not fall back to a cloud service.
-fn reject_cloud_while_local_only(
-    connection: &Connection,
-    snapshot: &RegistrySnapshot,
-) -> Result<(), String> {
-    let document =
-        super::settings::read_settings_document(connection, "security.runtime", "default")?;
-    let local_only = document
-        .value_json
-        .get("localOnlyWhenSelected")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
-    if !local_only {
-        return Ok(());
-    }
-    let location = |resource_id: &str| {
-        snapshot
-            .resource(resource_id)
-            .and_then(|resource| snapshot.connection(&resource.connection_id))
-            .map(|connection| connection.location.as_str())
-    };
-    for binding in snapshot.bindings.iter().filter(|binding| {
-        binding.enabled
-            && binding.review == crate::providers::service_registry::BindingReview::Ready
-    }) {
-        let primary_is_local = binding
-            .primary_resource_id
-            .as_deref()
-            .is_some_and(|id| location(id) == Some("local"));
-        if let Some(id) = binding
-            .fallback_resource_ids
-            .iter()
-            .find(|id| primary_is_local && location(id) == Some("cloud"))
-        {
-            return Err(format!(
-                "Cloud fallback is blocked while the local-only policy is active: {id}"
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +209,100 @@ mod tests {
         let connection = Connection::open_in_memory().expect("database opens");
         initialize_database(&connection).expect("database initializes");
         connection
+    }
+
+    /// What the settings screen saves for "LARM at home, cloud away": every purpose keeps LARM as
+    /// its primary and gains a cloud fallback. This used to be rejected by the local-only policy.
+    #[test]
+    fn larm_primary_with_a_cloud_fallback_saves_for_every_purpose_and_fails_over() {
+        use crate::providers::reachability::Reachability;
+        use crate::providers::service_registry::{
+            resolve_route, AdapterKind, Capability, LocalAvailability, RouteSelection,
+            ServiceConnection, ServiceResource,
+        };
+        let mut connection = database();
+        let loaded = load_registry(&connection).unwrap();
+        let mut snapshot = loaded.snapshot.clone();
+        for purpose in [
+            Purpose::ConversationRespond,
+            Purpose::VoiceTranscribe,
+            Purpose::VoiceSpeak,
+            Purpose::MediaImageGenerate,
+            Purpose::MediaMusicGenerate,
+        ] {
+            let capability = purpose.required_capability();
+            let adapter_kind = match capability {
+                Capability::TextGeneration => AdapterKind::ChatCompletions,
+                Capability::Transcription => AdapterKind::HttpAsr,
+                Capability::Speech => AdapterKind::HttpTts,
+                _ => AdapterKind::ReplicateMedia,
+            };
+            let slug = purpose.id().replace('.', "-");
+            snapshot.connections.push(ServiceConnection {
+                connection_id: format!("conn:svc-{slug}"),
+                label: format!("away {slug}"),
+                adapter_kind,
+                endpoint: "https://api.example.test/v1".into(),
+                location: "cloud".into(),
+                authentication: "none".into(),
+                credential_ref: None,
+                enabled: true,
+            });
+            snapshot.resources.push(ServiceResource {
+                resource_id: format!("res:svc-{slug}"),
+                connection_id: format!("conn:svc-{slug}"),
+                capability,
+                model: "owner/model".into(),
+                detail: (capability == Capability::Speech).then(|| "voice".to_string()),
+                request_options: None,
+                enabled: true,
+            });
+            let harness = snapshot
+                .resources
+                .iter()
+                .find(|r| r.connection_id == "conn:harness" && r.capability == capability)
+                .unwrap()
+                .resource_id
+                .clone();
+            let binding = snapshot
+                .bindings
+                .iter_mut()
+                .find(|b| b.purpose == purpose)
+                .unwrap();
+            binding.enabled = true;
+            binding.review = BindingReview::Ready;
+            binding.cloud_allowed = true;
+            binding.primary_resource_id = Some(harness);
+            binding.fallback_resource_ids = vec![format!("res:svc-{slug}")];
+        }
+        let saved = save_registry(&mut connection, &snapshot, loaded.revision)
+            .expect("LARM primary with a cloud fallback must be savable");
+        let reloaded = load_registry(&connection).unwrap();
+        assert!(saved.persisted && reloaded.persisted);
+        for purpose in [
+            Purpose::ConversationRespond,
+            Purpose::VoiceTranscribe,
+            Purpose::VoiceSpeak,
+            Purpose::MediaImageGenerate,
+            Purpose::MediaMusicGenerate,
+        ] {
+            let slug = purpose.id().replace('.', "-");
+            let binding = reloaded.snapshot.binding(purpose).unwrap();
+            assert_eq!(
+                binding.fallback_resource_ids,
+                vec![format!("res:svc-{slug}")],
+                "{purpose:?} lost its fallback after reload"
+            );
+            let home = |larm| {
+                resolve_route(&reloaded.snapshot, purpose, LocalAvailability { larm }).unwrap()
+            };
+            let at_home = home(Reachability::Reachable);
+            assert_eq!(at_home.adapter_kind, AdapterKind::Larm, "{purpose:?}");
+            assert_eq!(at_home.selection, RouteSelection::Primary);
+            let away = home(Reachability::Unreachable);
+            assert_eq!(away.resource_id, format!("res:svc-{slug}"), "{purpose:?}");
+            assert_eq!(away.selection, RouteSelection::LocalUnreachable);
+        }
     }
 
     #[test]
@@ -290,46 +339,6 @@ mod tests {
                 .len(),
             legacy_before
         );
-    }
-
-    #[test]
-    fn local_only_policy_blocks_a_cloud_fallback_behind_a_local_primary() {
-        let mut connection = database();
-        let loaded = load_registry(&connection).unwrap();
-        let mut snapshot = loaded.snapshot.clone();
-        snapshot
-            .connections
-            .push(crate::providers::service_registry::ServiceConnection {
-                connection_id: "conn:c".into(),
-                label: "c".into(),
-                adapter_kind: crate::providers::service_registry::AdapterKind::HttpAsr,
-                endpoint: "https://api.example.test/v1".into(),
-                location: "cloud".into(),
-                authentication: "none".into(),
-                credential_ref: None,
-                enabled: true,
-            });
-        snapshot
-            .resources
-            .push(crate::providers::service_registry::ServiceResource {
-                resource_id: "res:c".into(),
-                connection_id: "conn:c".into(),
-                capability: crate::providers::service_registry::Capability::Transcription,
-                model: "m".into(),
-                detail: None,
-                request_options: None,
-                enabled: true,
-            });
-        let asr = snapshot
-            .bindings
-            .iter_mut()
-            .find(|b| b.purpose == Purpose::VoiceTranscribe)
-            .unwrap();
-        asr.primary_resource_id = Some("res:harness-asr".into());
-        asr.fallback_resource_ids = vec!["res:c".into()];
-        asr.enabled = true;
-        let error = save_registry(&mut connection, &snapshot, loaded.revision).unwrap_err();
-        assert!(error.contains("local-only"));
     }
 
     fn add_local_asr(connection: &Connection) {

@@ -66,7 +66,7 @@ CLIは別々のAdapterとして扱う。Claude CodeのHook仕様をCodexへ流�
 | src-tauri/src/coding/{contracts,settings,repository,service}.rs | coding_start／inspect／continue／cancel、job／run／event台帳がある。既存方式はPiとCodex SDK。CLI方式とイベント起点の判断契約を追加する |
 | src-tauri/src/coding/{commands,recovery}.rs | probe、停止、復旧がある。外部runnerの生存確認とセッション照合を追加し、既存SDKのprobeへCLIを流さない |
 | src-tauri/src/steward/ | wake、coding_eventsの消費、検証、報告outboxを再利用する。現在の終了中心のイベント処理に質問・保留・判断を加える |
-| src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs、queue_tools.rs | 現行会話のツール許可にcodingが含まれていない。backend追加だけで完了とせず、最新の会話キューから呼べるようにする |
+| src-tauri/src/runtime/conversation_check/queue_runtime/conversation_answer.rs、queue_tools.rs | 現行会話のツール許可にcodingが含まれていない。backend追加だけで完了とせず、最新の会話キューから呼べるようにする |
 | contexts/conversation/queue.context.toml、context_compiler.rs | 委任ツールと権限契約を反映し、既存の生成経路で出力を更新する。外部イベントを最新ユーザー発話として偽装しない |
 | src/features/coding/、src/features/settings/SettingsPage.tsx | 実装方法・job表示へ端末設定、質問、再開、準備状態を追加する |
 | src/lib/generated/coding.ts、IPC生成・検証 | Rust契約から生成する。frontendだけに独立した状態や型を作らない |

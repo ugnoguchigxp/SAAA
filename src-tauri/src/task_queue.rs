@@ -245,9 +245,9 @@ pub(crate) fn cancel_key(connection: &Connection, scope: &str, key: &str) -> Res
 pub(crate) fn snapshot(connection: &Connection, scope: &str) -> Result<Vec<JobStatus>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id,kind,job_key,state,error FROM task_queue_jobs WHERE scope=?1
+            "SELECT id,kind,job_key,state,error FROM task_queue_jobs WHERE scope=?1 AND lane<>'worker'
          AND (state IN ('queued','running') OR rowid IN
-              (SELECT rowid FROM task_queue_jobs WHERE scope=?1 ORDER BY rowid DESC LIMIT 100))
+              (SELECT rowid FROM task_queue_jobs WHERE scope=?1 AND lane<>'worker' ORDER BY rowid DESC LIMIT 100))
          ORDER BY rowid",
         )
         .map_err(database_error)?;
@@ -268,6 +268,40 @@ pub(crate) fn snapshot(connection: &Connection, scope: &str) -> Result<Vec<JobSt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_hides_worker_lane_jobs_from_the_conversation_view() {
+        let connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+        enqueue(
+            &connection,
+            "c",
+            "conversation",
+            "user_input",
+            "in1",
+            0,
+            "{}",
+            None,
+        )
+        .unwrap();
+        enqueue(
+            &connection,
+            "c",
+            "worker",
+            "worker_task",
+            "wtask_1",
+            0,
+            "{}",
+            None,
+        )
+        .unwrap();
+        let kinds: Vec<String> = snapshot(&connection, "c")
+            .unwrap()
+            .into_iter()
+            .map(|job| job.kind)
+            .collect();
+        assert_eq!(kinds, ["user_input"]);
+    }
 
     #[test]
     fn deduplicates_and_recovers_claims() {

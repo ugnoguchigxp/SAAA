@@ -11,6 +11,9 @@ const contexts = [
   { key: "conversation.queue", output: ".s11tnext/conversation-queue.txt" },
   { key: "codex.read-only", output: ".s11tnext/codex-read-only.txt" },
   { key: "conversation.respond", output: ".s11tnext/conversation-respond.txt" },
+  { key: "conversation.queue-worker", output: ".s11tnext/conversation-queue-worker.txt" },
+  { key: "worker.web-search", output: ".s11tnext/worker-web-search.txt" },
+  { key: "worker.injection-check", output: ".s11tnext/worker-injection-check.txt" },
 ] as const;
 
 for (const context of contexts) {

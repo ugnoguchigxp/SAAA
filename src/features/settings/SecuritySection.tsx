@@ -5,7 +5,6 @@ import { backupDatabase, exportDiagnostics } from "../../lib/runtime";
 import { localizeUiMessage } from "../../i18n/presentation";
 export function SecuritySection({
   security,
-  onChange,
 }: {
   security: SecuritySettings;
   onChange: (value: SecuritySettings) => void;
@@ -32,16 +31,6 @@ export function SecuritySection({
       </section>
       <section className="settings-card">
         <h3>{t("settings.security.runtimePolicy")}</h3>
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={security.localOnlyWhenSelected}
-            onChange={(event) =>
-              onChange({ ...security, localOnlyWhenSelected: event.target.checked })
-            }
-          />
-          {t("settings.security.noCloudFallback")}
-        </label>
         <label className="check-row">
           <input type="checkbox" checked={security.diagnosticsRedaction} disabled />
           {t("settings.security.diagnosticsRedaction")}

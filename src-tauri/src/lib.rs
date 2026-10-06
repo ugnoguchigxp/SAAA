@@ -61,6 +61,7 @@ mod voice_text;
 #[cfg(test)]
 mod wasm_host_poc;
 mod window_size;
+mod worker_agents;
 #[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) use ipc_contract::RuntimeEvent;
 #[cfg(any(test, feature = "offline-contracts"))]
@@ -391,7 +392,9 @@ pub fn run() {
                 .map_err(|error| format!("role-routing startup recovery: {error}"))?;
             app.state::<AppState>().sqlite_writer.write(|connection| {
                 runtime::conversation_check::queue_runtime::migrate_legacy_jobs(connection)?;
-                task_queue::recover(connection,&["conversation"],&["speech"])
+                // Worker jobs are interrupted, not replayed: `worker_agents` recovery decides
+                // per task (read-only tasks restart once; anything else fails as interrupted).
+                task_queue::recover(connection,&["conversation"],&["speech","worker"])
             })
                 .map_err(|error| format!("conversation queue recovery: {error}"))?;
             runtime::conversation_check::spawn_queue_workers(app.handle().clone());

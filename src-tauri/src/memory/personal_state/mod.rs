@@ -1,6 +1,8 @@
+pub mod admission;
 mod codec;
 pub mod commands;
 pub mod contract;
+pub mod episode_export;
 pub mod generation;
 #[cfg(test)]
 pub mod inference;
@@ -17,6 +19,7 @@ mod registration;
 pub(crate) mod retrospective;
 mod scheduler;
 pub mod schema;
+pub mod snapshots;
 pub mod sources;
 pub mod store;
 #[cfg(test)]

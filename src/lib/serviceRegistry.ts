@@ -72,13 +72,19 @@ export type RouteUsage = {
   occurredAt: string;
   status: "accepted" | "sending" | "inference-completed" | "failed";
   matchesCurrentSettings: boolean;
+  location?: "local" | "cloud";
+  /** "local-unreachable": a fallback was used because LARM could not be reached. */
+  selection?: "primary" | "local-unreachable";
 };
+
+export type LarmReachability = "reachable" | "unreachable" | "unknown";
 
 export type RegistryView = {
   snapshot: RegistrySnapshot;
   revision: number;
   persisted: boolean;
   latestUsage?: RouteUsage[];
+  larmReachability?: LarmReachability;
   probes?: Array<{
     resourceId: string;
     kind: "models" | "generation";

@@ -47,6 +47,9 @@ pub(crate) fn verify_against_catalog(
 }
 
 pub(crate) fn accepted_provider(name: &str) -> Option<&'static str> {
+    if matches!(name, "system-one" | "systemone") {
+        return Some("larm.system-one.v1");
+    }
     BASE_PROVIDERS
         .iter()
         .chain(std::iter::once(&BACKCHANNEL))
@@ -397,7 +400,7 @@ pub(crate) fn parse(
             None
         };
         let fields = &raw["configuration"]["fields"];
-        let url_field = if name == "embedding" {
+        let url_field = if matches!(protocol, "larm.embedding.v1" | "larm.system-one.v1") {
             "daemonURL"
         } else {
             "baseURL"

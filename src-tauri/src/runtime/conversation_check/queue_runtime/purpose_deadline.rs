@@ -1,12 +1,12 @@
 //! One deadline across model, tools, and result adoption.
 use super::*;
-pub(crate) async fn process_ornith<R: Runtime>(
+pub(crate) async fn process_conversation_answer<R: Runtime>(
     app: &tauri::AppHandle<R>,
     job: &Job,
     cancellation: Arc<RunCancellation>,
     audio_started: Arc<AtomicBool>,
     retry_blocked: Arc<AtomicBool>,
-) -> Result<OrnithAnswer, String> {
+) -> Result<ConversationAnswer, String> {
     let state = app.state::<AppState>();
     let (providers, legacy_timeout, transport, fallbacks) = direct_route::prepare_transport(&state)
         .inspect_err(|_| {

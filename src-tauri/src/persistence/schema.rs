@@ -26,7 +26,8 @@ use rusqlite::{params, Connection};
 /// 42 adds the durable task queue used by the Qwen/Ornith conversation path.
 /// 43 adds the cloud provider service registry.
 /// 44 adds dedicated terminal run, question, decision, and event receipts.
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 44;
+/// 45 adds worker agent registry, tasks, and source audit.
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 45;
 
 pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<()> {
     let previous_version: i64 =
@@ -242,6 +243,7 @@ pub(crate) fn initialize_database(connection: &Connection) -> rusqlite::Result<(
     )
     .map_err(|error| rusqlite::Error::InvalidParameterName(error.encode()))?;
     crate::tool_selection::schema::migrate(&transaction)?;
+    crate::worker_agents::schema::migrate(&transaction)?;
     crate::role_routing::schema::migrate(&transaction)?;
     crate::role_routing::schema::migrate_v33_to_v34_direct_qwen_reasoner(
         &transaction,

@@ -135,13 +135,13 @@ export async function submitConversationText(
   inputId: string,
   text: string,
   source: "configured" | "larm",
-  onStage: (stage: "ornith") => void,
+  onStage: (stage: "answer") => void,
 ): Promise<{
   content: string;
   model: string;
   providerLabel: string;
 }> {
-  const channel = new Channel<{ stage: "ornith" }>();
+  const channel = new Channel<{ stage: "answer" }>();
   channel.onmessage = ({ stage }) => onStage(stage);
   return invoke("submit_conversation_text", { input: { inputId, text, source }, onStage: channel });
 }

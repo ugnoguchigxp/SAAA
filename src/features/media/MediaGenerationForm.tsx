@@ -2,6 +2,7 @@ import type { FormEvent } from "react";
 import type { MediaKind } from "./mediaApi";
 export function MediaGenerationForm({
   kind,
+  lockKind = false,
   prompt,
   busy,
   canCancel,
@@ -12,6 +13,7 @@ export function MediaGenerationForm({
   cancel,
 }: {
   kind: MediaKind;
+  lockKind?: boolean;
   prompt: string;
   busy: boolean;
   canCancel: boolean;
@@ -23,18 +25,20 @@ export function MediaGenerationForm({
 }) {
   return (
     <form onSubmit={(event) => void submit(event)}>
-      <label>
-        作成するもの
-        <select
-          aria-label="作成するもの"
-          value={kind}
-          disabled={busy}
-          onChange={(event) => setKind(event.currentTarget.value as MediaKind)}
-        >
-          <option value="image">画像</option>
-          <option value="music">楽曲</option>
-        </select>
-      </label>
+      {!lockKind && (
+        <label>
+          作成するもの
+          <select
+            aria-label="作成するもの"
+            value={kind}
+            disabled={busy}
+            onChange={(event) => setKind(event.currentTarget.value as MediaKind)}
+          >
+            <option value="image">画像</option>
+            <option value="music">楽曲</option>
+          </select>
+        </label>
+      )}
       <textarea
         aria-label="生成する内容"
         value={prompt}

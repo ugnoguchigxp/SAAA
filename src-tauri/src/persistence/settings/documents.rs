@@ -354,25 +354,9 @@ pub(crate) fn validate_settings_batch(
         if !route_ids.insert(provider_id) {
             return Err(format!("Duplicate provider in route: {provider_id}"));
         }
-        let primary_is_local = conversation.source == "harness"
-            || primary_id.is_some_and(|primary_id| {
-                providers
-                    .providers
-                    .iter()
-                    .any(|provider| provider.id() == primary_id && provider.location() == "local")
-            });
-        let fallback_is_cloud = providers
-            .providers
-            .iter()
-            .any(|provider| provider.id() == *provider_id && provider.location() == "cloud");
-        if security.local_only_when_selected && primary_is_local && fallback_is_cloud {
-            return Err(format!(
-                "Cloud fallback is blocked while the local-only policy is active: {provider_id}"
-            ));
-        }
     }
 
-    voice_fallbacks::validate(&providers, &routing, &security)?;
+    voice_fallbacks::validate(&providers, &routing)?;
     validate_voice_route_provider(
         &routing.voice_transcribe.source,
         routing.voice_transcribe.provider_id.as_deref(),

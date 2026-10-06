@@ -16,6 +16,7 @@ fn model_route_revocation_or_deadline_blocks_automatic_terminal_answer_adoption(
                 crate::providers::service_registry::resolve_route(
                     &loaded.snapshot,
                     crate::providers::service_registry::Purpose::ConversationRespond,
+                    Default::default(),
                 )
                 .map_err(|e| format!("{e:?}"))
             })

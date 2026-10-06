@@ -38,6 +38,7 @@ mod cancellation;
 mod dictionary;
 #[path = "conversation_queue_e2e/dictionary_live.rs"]
 mod dictionary_live;
+pub mod worker;
 
 pub async fn run_live_tts_dictionary() -> Result<Value, String> {
     dictionary_live::run().await
@@ -149,6 +150,7 @@ struct Fixture {
     authentication_failure: AtomicBool,
     asr_no_speech: AtomicBool,
     live_dictionary: AtomicBool,
+    worker_mode: AtomicBool,
     cancellation: cancellation::Control,
 }
 

@@ -16,13 +16,21 @@ struct Fixture {
     scopes: Mutex<Vec<Option<Vec<String>>>>,
 }
 
-const NAMES: [&str; 5] = ["asr", "tts", "backchannel", "llm", "embedding"];
+const NAMES: [&str; 6] = [
+    "asr",
+    "tts",
+    "backchannel",
+    "llm",
+    "embedding",
+    "system-one",
+];
 
 fn protocol(name: &str) -> &'static str {
     match name {
         "asr" => "openai.audio-transcriptions.v1",
         "tts" => "openai.audio-speech.v1",
         "embedding" => "larm.embedding.v1",
+        "system-one" => "larm.system-one.v1",
         _ => "openai.chat-completions.v1",
     }
 }
@@ -32,6 +40,7 @@ fn endpoint(name: &str) -> &'static str {
         "asr" => "/v1/audio/transcriptions",
         "tts" => "/v1/audio/speech",
         "embedding" => "/v1/embed",
+        "system-one" => "/v1/systemone",
         _ => "/v1/chat/completions",
     }
 }
@@ -42,6 +51,7 @@ fn model(name: &str) -> &'static str {
         "tts" => "voicevox-core",
         "backchannel" => "qwen3.5-2b-fast-response",
         "llm" => "ornith-1.5-35b",
+        "system-one" => "laya-multilingual",
         _ => "multilingual-e5-small",
     }
 }
@@ -52,6 +62,7 @@ fn declaration(name: &str) -> Value {
         "tts" => "speech.tts",
         "backchannel" => "llm.backchannel.classifier",
         "llm" => "llm.general",
+        "system-one" => "system.one",
         _ => "embedding",
     };
     let mut value = json!({
@@ -104,6 +115,8 @@ fn claim_value(fixture: &Fixture) -> Value {
                 "model":model(name),
                 "configuration":{"fields":if name == "embedding" {
                     json!({"daemonURL":base,"model":model(name),"dimension":384})
+                } else if name == "system-one" {
+                    json!({"daemonURL":base,"model":model(name)})
                 } else {
                     json!({"baseURL":base,"model":model(name)})
                 }},
@@ -215,6 +228,29 @@ async fn handle(State(fixture): State<Arc<Fixture>>, request: Request) -> Respon
     }
     let bytes = to_bytes(request.into_body(), 1_000_000).await.unwrap();
     match (name, path.as_str()) {
+        ("system-one", "/system-one/v1/systemone") => {
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["model"], "laya-multilingual");
+            if body["questions"].get("voice").is_some() {
+                assert_eq!(
+                    body["state"],
+                    json!({"utterance":"合格おめでとうございます！"})
+                );
+                assert_eq!(body.as_object().unwrap().len(), 3);
+                assert_eq!(body["questions"]["motion"]["type"], "choice");
+                assert_eq!(body["questions"]["voice"]["type"], "choice");
+                return Json(json!({"model":"laya-multilingual","answers":{
+                    "motion":{"type":"choice","confidence":0.9,"choice":"joyful"},
+                    "voice":{"type":"choice","confidence":0.9,"choice":"excited"}
+                }}))
+                .into_response();
+            }
+            assert_eq!(body["state"], "右に移動してください。");
+            assert_eq!(body.as_object().unwrap().len(), 3);
+            assert_eq!(body["questions"]["action"]["type"], "choice");
+            Json(json!({"model":"laya-multilingual","answers":{"action":{"type":"choice","confidence":0.8,"choice":"right","answer_confidence":0.9}},"usage":{"input_tokens":50,"output_tokens":0}}))
+                .into_response()
+        }
         ("asr", "/asr/v1/audio/transcriptions") => {
             assert!(bytes.windows(4).any(|part| part == b"RIFF"));
             Json(json!({"text":"音声のテスト結果","language":"ja"})).into_response()
@@ -557,4 +593,78 @@ async fn four_provider_requests_complete_against_live_larm() {
             assert!(audio.starts_with(b"RIFF"));
         }
     }
+}
+
+#[tokio::test]
+async fn laya_claims_only_system_one_and_releases_after_typed_decision() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fixture = Arc::new(Fixture {
+        base: format!("http://{}", listener.local_addr().unwrap()),
+        calls: Mutex::new(vec![]),
+        scopes: Mutex::new(vec![]),
+    });
+    let router = Router::new().fallback(handle).with_state(fixture.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let result = saaa_lib::runtime::provider_unit_test::run_fixture_provider_unit_test(
+        &fixture.base,
+        "SAAA",
+        "",
+        "control-token",
+        "laya",
+        "右に移動してください。",
+        None,
+    )
+    .await
+    .unwrap();
+    let output: Value = serde_json::from_str(result["output"].as_str().unwrap()).unwrap();
+    assert_eq!(output["answers"]["action"]["choice"], "right");
+    assert_eq!(
+        *fixture.scopes.lock().unwrap(),
+        vec![Some(vec!["system-one".to_string()])]
+    );
+    let calls = fixture.calls.lock().unwrap();
+    assert!(calls.iter().any(|c| c == "POST /system-one/v1/systemone"));
+    assert_eq!(
+        calls.last().unwrap(),
+        "DELETE /v1/agent-connections/session-1"
+    );
+    assert!(!calls
+        .iter()
+        .any(|c| c.contains("chat/completions") || c.contains("audio/")));
+    server.abort();
+}
+
+#[tokio::test]
+async fn laya_speech_uses_only_the_current_utterance_and_returns_both_choices() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fixture = Arc::new(Fixture {
+        base: format!("http://{}", listener.local_addr().unwrap()),
+        calls: Mutex::new(vec![]),
+        scopes: Mutex::new(vec![]),
+    });
+    let router = Router::new().fallback(handle).with_state(fixture.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let result = saaa_lib::runtime::provider_unit_test::run_fixture_provider_unit_test(
+        &fixture.base,
+        "SAAA",
+        "",
+        "control-token",
+        "laya-speech",
+        "合格おめでとうございます！",
+        None,
+    )
+    .await
+    .unwrap();
+    let output: Value = serde_json::from_str(result["output"].as_str().unwrap()).unwrap();
+    assert_eq!(output["answers"]["motion"]["choice"], "joyful");
+    assert_eq!(output["answers"]["voice"]["choice"], "excited");
+    assert_eq!(
+        *fixture.scopes.lock().unwrap(),
+        vec![Some(vec!["system-one".to_string()])]
+    );
+    assert_eq!(
+        fixture.calls.lock().unwrap().last().unwrap(),
+        "DELETE /v1/agent-connections/session-1"
+    );
+    server.abort();
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::providers::reachability::Reachability;
 use crate::{
     CloudAsrProviderSettings, CloudTtsProviderSettings, ConversationRouteSettings, HarnessSettings,
     ModelProviderSettings, ModelProvidersSettings, OpenAiCompatibleProviderSettings,
@@ -134,7 +135,7 @@ fn stored_cloud_conversation_needs_review_and_is_not_resolved() {
         Some("res:harness-llm")
     );
     assert_eq!(
-        resolve_route(&snapshot, Purpose::ConversationRespond),
+        resolve_route(&snapshot, Purpose::ConversationRespond, Default::default()),
         Err(ResolveError::NeedsReview(Purpose::ConversationRespond))
     );
 }
@@ -142,30 +143,30 @@ fn stored_cloud_conversation_needs_review_and_is_not_resolved() {
 #[test]
 fn voice_routes_resolve_to_their_own_resources() {
     let snapshot = migrate_legacy(&providers(), &routing("harness")).unwrap();
-    let asr = resolve_route(&snapshot, Purpose::VoiceTranscribe).unwrap();
+    let asr = resolve_route(&snapshot, Purpose::VoiceTranscribe, Default::default()).unwrap();
     assert_eq!(asr.adapter_kind, AdapterKind::HttpAsr);
     assert_eq!(asr.resource_id, "res:cloud-asr");
-    let tts = resolve_route(&snapshot, Purpose::VoiceSpeak).unwrap();
+    let tts = resolve_route(&snapshot, Purpose::VoiceSpeak, Default::default()).unwrap();
     assert_eq!(tts.adapter_kind, AdapterKind::Larm);
-    let chat = resolve_route(&snapshot, Purpose::ConversationRespond).unwrap();
+    let chat = resolve_route(&snapshot, Purpose::ConversationRespond, Default::default()).unwrap();
     assert_eq!(chat.adapter_kind, AdapterKind::Larm);
 }
 
 #[test]
 fn fingerprint_changes_with_the_resource_but_not_unrelated_resources() {
     let mut snapshot = migrate_legacy(&providers(), &routing("harness")).unwrap();
-    let before = resolve_route(&snapshot, Purpose::VoiceTranscribe).unwrap();
+    let before = resolve_route(&snapshot, Purpose::VoiceTranscribe, Default::default()).unwrap();
     snapshot.resource_mut_for_test("res:cloud-tts").model = "other".into();
     assert_eq!(
         before.fingerprint,
-        resolve_route(&snapshot, Purpose::VoiceTranscribe)
+        resolve_route(&snapshot, Purpose::VoiceTranscribe, Default::default())
             .unwrap()
             .fingerprint
     );
     snapshot.resource_mut_for_test("res:cloud-asr").model = "other".into();
     assert_ne!(
         before.fingerprint,
-        resolve_route(&snapshot, Purpose::VoiceTranscribe)
+        resolve_route(&snapshot, Purpose::VoiceTranscribe, Default::default())
             .unwrap()
             .fingerprint
     );
@@ -176,7 +177,7 @@ fn disabled_resource_is_rejected_without_falling_back() {
     let mut snapshot = migrate_legacy(&providers(), &routing("harness")).unwrap();
     snapshot.resource_mut_for_test("res:cloud-asr").enabled = false;
     assert_eq!(
-        resolve_route(&snapshot, Purpose::VoiceTranscribe),
+        resolve_route(&snapshot, Purpose::VoiceTranscribe, Default::default()),
         Err(ResolveError::ResourceDisabled("res:cloud-asr".into()))
     );
 }
@@ -226,7 +227,7 @@ fn migration_pins_explicit_model_options_and_rejects_unsupported_adapters() {
     let binding = &mut snapshot.bindings[0];
     binding.primary_resource_id = Some("res:cloud-llm".into());
     binding.review = BindingReview::Ready;
-    let route = resolve_route(&snapshot, Purpose::ConversationRespond).unwrap();
+    let route = resolve_route(&snapshot, Purpose::ConversationRespond, Default::default()).unwrap();
     let options: LlmOptions = serde_json::from_value(route.request_options.unwrap()).unwrap();
     let mut request = serde_json::json!({});
     options.apply(&mut request, "custom-model", 4096, "provider-default");
@@ -235,7 +236,197 @@ fn migration_pins_explicit_model_options_and_rejects_unsupported_adapters() {
     assert_eq!(request["temperature"], serde_json::json!(0.4f32));
     snapshot.connections[1].adapter_kind = AdapterKind::AgentSession;
     assert!(validate_snapshot(&snapshot).is_err());
-    assert!(resolve_route(&snapshot, Purpose::ConversationRespond).is_err());
+    assert!(resolve_route(&snapshot, Purpose::ConversationRespond, Default::default()).is_err());
     snapshot.connections[1].adapter_kind = AdapterKind::Larm;
     assert!(validate_snapshot(&snapshot).is_err());
+}
+
+fn harness_id(capability: Capability) -> String {
+    migrate_legacy(&providers(), &routing("harness"))
+        .unwrap()
+        .resources
+        .into_iter()
+        .find(|r| r.connection_id == "conn:harness" && r.capability == capability)
+        .unwrap()
+        .resource_id
+}
+
+fn failover_snapshot(purpose: Purpose) -> RegistrySnapshot {
+    let mut snapshot = migrate_legacy(&providers(), &routing("harness")).unwrap();
+    let capability = purpose.required_capability();
+    let adapter_kind = match capability {
+        Capability::TextGeneration => AdapterKind::ChatCompletions,
+        Capability::Transcription => AdapterKind::HttpAsr,
+        Capability::Speech => AdapterKind::HttpTts,
+        _ => AdapterKind::ReplicateMedia,
+    };
+    snapshot.connections.push(ServiceConnection {
+        connection_id: "conn:away".into(),
+        label: "away".into(),
+        adapter_kind,
+        endpoint: "https://api.example.test/v1".into(),
+        location: "cloud".into(),
+        authentication: "none".into(),
+        credential_ref: None,
+        enabled: true,
+    });
+    snapshot.resources.push(ServiceResource {
+        resource_id: "res:away".into(),
+        connection_id: "conn:away".into(),
+        capability,
+        model: "owner/model".into(),
+        detail: None,
+        request_options: None,
+        enabled: true,
+    });
+    let binding = snapshot
+        .bindings
+        .iter_mut()
+        .find(|b| b.purpose == purpose)
+        .unwrap();
+    binding.enabled = true;
+    binding.review = BindingReview::Ready;
+    binding.cloud_allowed = true;
+    binding.primary_resource_id = Some(harness_id(capability));
+    binding.fallback_resource_ids = vec!["res:away".into()];
+    snapshot
+}
+
+const FAILOVER_PURPOSES: [Purpose; 5] = [
+    Purpose::ConversationRespond,
+    Purpose::VoiceTranscribe,
+    Purpose::VoiceSpeak,
+    Purpose::MediaImageGenerate,
+    Purpose::MediaMusicGenerate,
+];
+
+fn larm(reachability: Reachability) -> LocalAvailability {
+    LocalAvailability { larm: reachability }
+}
+
+#[test]
+fn every_purpose_uses_larm_at_home_and_the_fallback_when_larm_is_unreachable() {
+    for purpose in FAILOVER_PURPOSES {
+        let snapshot = failover_snapshot(purpose);
+        validate_snapshot(&snapshot).unwrap_or_else(|e| panic!("{purpose:?}: {e}"));
+        for home in [Reachability::Reachable, Reachability::Unknown] {
+            let route = resolve_route(&snapshot, purpose, larm(home)).unwrap();
+            assert_eq!(route.adapter_kind, AdapterKind::Larm, "{purpose:?}");
+            assert_eq!(route.selection, RouteSelection::Primary);
+        }
+        let away = resolve_route(&snapshot, purpose, larm(Reachability::Unreachable)).unwrap();
+        assert_eq!(away.resource_id, "res:away", "{purpose:?}");
+        assert_eq!(away.location, "cloud");
+        assert_eq!(away.selection, RouteSelection::LocalUnreachable);
+    }
+}
+
+#[test]
+fn unreachable_larm_without_an_allowed_fallback_is_an_explicit_error() {
+    for purpose in FAILOVER_PURPOSES {
+        let mut none = failover_snapshot(purpose);
+        none.bindings
+            .iter_mut()
+            .find(|b| b.purpose == purpose)
+            .unwrap()
+            .fallback_resource_ids
+            .clear();
+        assert_eq!(
+            resolve_route(&none, purpose, larm(Reachability::Unreachable)),
+            Err(ResolveError::LocalUnreachable {
+                purpose,
+                cloud_blocked: false
+            })
+        );
+        let mut blocked = failover_snapshot(purpose);
+        blocked
+            .bindings
+            .iter_mut()
+            .find(|b| b.purpose == purpose)
+            .unwrap()
+            .cloud_allowed = false;
+        assert_eq!(
+            resolve_route(&blocked, purpose, larm(Reachability::Unreachable)),
+            Err(ResolveError::LocalUnreachable {
+                purpose,
+                cloud_blocked: true
+            })
+        );
+        // At home the cloud fallback is simply unused, so the same setting keeps working.
+        assert!(resolve_route(&blocked, purpose, larm(Reachability::Reachable)).is_ok());
+    }
+}
+
+#[test]
+fn a_cloud_primary_ignores_larm_reachability_and_a_broken_primary_never_falls_back() {
+    let mut snapshot = failover_snapshot(Purpose::VoiceTranscribe);
+    snapshot
+        .bindings
+        .iter_mut()
+        .find(|b| b.purpose == Purpose::VoiceTranscribe)
+        .unwrap()
+        .primary_resource_id = Some("res:away".into());
+    snapshot
+        .bindings
+        .iter_mut()
+        .find(|b| b.purpose == Purpose::VoiceTranscribe)
+        .unwrap()
+        .fallback_resource_ids
+        .clear();
+    let route = resolve_route(
+        &snapshot,
+        Purpose::VoiceTranscribe,
+        larm(Reachability::Unreachable),
+    )
+    .unwrap();
+    assert_eq!(route.selection, RouteSelection::Primary);
+
+    let mut disabled = failover_snapshot(Purpose::VoiceTranscribe);
+    disabled.resource_mut_for_test("res:harness-asr").enabled = false;
+    assert_eq!(
+        resolve_route(
+            &disabled,
+            Purpose::VoiceTranscribe,
+            larm(Reachability::Unreachable)
+        ),
+        Err(ResolveError::ResourceDisabled("res:harness-asr".into()))
+    );
+}
+
+#[test]
+fn larm_can_only_be_a_primary_and_a_stored_route_without_selection_reads_as_primary() {
+    let mut snapshot = failover_snapshot(Purpose::VoiceSpeak);
+    let binding = snapshot
+        .bindings
+        .iter_mut()
+        .find(|b| b.purpose == Purpose::VoiceSpeak)
+        .unwrap();
+    binding.primary_resource_id = Some("res:away".into());
+    binding.fallback_resource_ids = vec![harness_id(Capability::Speech)];
+    assert!(validate_snapshot(&snapshot).is_err());
+
+    let route = resolve_route(
+        &failover_snapshot(Purpose::MediaImageGenerate),
+        Purpose::MediaImageGenerate,
+        Default::default(),
+    )
+    .unwrap();
+    let mut stored = serde_json::to_value(&route).unwrap();
+    stored.as_object_mut().unwrap().remove("selection");
+    let restored: ResolvedRoute = serde_json::from_value(stored).unwrap();
+    assert_eq!(restored.selection, RouteSelection::Primary);
+}
+
+#[test]
+fn a_binding_awaiting_review_may_keep_legacy_larm_fallbacks_without_breaking_load() {
+    let mut snapshot = failover_snapshot(Purpose::ConversationRespond);
+    let binding = snapshot
+        .bindings
+        .iter_mut()
+        .find(|b| b.purpose == Purpose::ConversationRespond)
+        .unwrap();
+    binding.primary_resource_id = Some("res:away".into());
+    binding.fallback_resource_ids = vec![harness_id(Capability::TextGeneration)];
+    binding.review = BindingReview::NeedsReview;
+    assert!(validate_snapshot(&snapshot).is_ok());
 }

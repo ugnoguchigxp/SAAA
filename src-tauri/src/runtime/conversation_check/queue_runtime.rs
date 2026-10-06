@@ -1,4 +1,4 @@
-//! Ornith and speech adapters for the durable task queue.
+//! Conversation-agent and speech adapters for the durable task queue.
 use super::*;
 use crate::task_queue::{self, Job, JobStatus};
 use serde_json::json;
@@ -40,6 +40,18 @@ fn register_job_cancel(
         .map_err(|_| "会話処理の取消し状態を取得できません。")?
         .insert(job.id.clone(), (job.key.clone(), cancellation));
     Ok(JobCancelGuard(job.id.clone()))
+}
+
+/// Cancels an input's queue state and the worker tasks it started (they never reach the outbox).
+fn cancel_input_state(
+    connection: &rusqlite::Connection,
+    scope: &str,
+    key: &str,
+    at: &str,
+) -> Result<(), String> {
+    queue_input_state::cancel(connection, scope, key, at)?;
+    crate::worker_agents::executor::cancel_for_input(connection, scope, &format!("check_{key}"))
+        .map(|_| ())
 }
 
 fn cancel_generation(input_id: &str) {
@@ -164,7 +176,7 @@ pub(crate) fn cancel_input(state: &AppState, input_id: &str) -> Result<(), Strin
     validate_identifier(input_id, "input id")?;
     state.sqlite_writer.write(|connection| {
         let tx = connection.transaction().map_err(database_error)?;
-        queue_input_state::cancel(&tx, PRIMARY_CONVERSATION_ID, input_id, &now_iso())?;
+        cancel_input_state(&tx, PRIMARY_CONVERSATION_ID, input_id, &now_iso())?;
         tx.commit().map_err(database_error)
     })?;
     state
@@ -226,6 +238,15 @@ pub(crate) async fn replay_conversation_speech(
     result
 }
 
+/// Queues the short spoken acknowledgement (「調べています」) for a delegated task. One per input.
+pub(in crate::runtime::conversation_check) fn enqueue_progress_speech(
+    connection: &rusqlite::Connection,
+    scope: &str,
+    key: &str,
+) -> Result<(), String> {
+    queue_progress::enqueue_search(connection, scope, key)
+}
+
 pub(crate) fn spawn<R: Runtime>(app: tauri::AppHandle<R>) {
     if let Err(error) = app.state::<AppState>().sqlite_writer.write(|connection| {
         let tx = connection.transaction().map_err(database_error)?;
@@ -249,6 +270,7 @@ pub(crate) fn spawn<R: Runtime>(app: tauri::AppHandle<R>) {
     }) {
         eprintln!("conversation queue context recovery: {error}");
     }
+    super::worker_lane::startup(&app);
     // Multiple conversation workers let a cancellation or replacement overtake a slow model call.
     for lane in [
         "conversation",
@@ -256,6 +278,10 @@ pub(crate) fn spawn<R: Runtime>(app: tauri::AppHandle<R>) {
         "conversation",
         "conversation",
         "speech",
+        // Worker agents run beside the conversation lanes so a waiting conversation job never
+        // starves the task it delegated.
+        "worker",
+        "worker",
     ] {
         let app = app.clone();
         tauri::async_runtime::spawn(async move { run_lane(app, lane).await });
@@ -322,6 +348,10 @@ async fn run_lane<R: Runtime>(app: tauri::AppHandle<R>, lane: &'static str) {
                     task_queue::fail(&tx, &job, &error)?;
                     let state: String = tx.query_row("SELECT state FROM task_queue_jobs WHERE id=?1",[&job.id],|row| row.get(0)).map_err(database_error)?;
                     let terminal_result = state == "failed";
+                    if terminal_result && job.lane == "worker" {
+                        // The queue gave up: settle the task so it is neither stuck active nor re-run later.
+                        crate::worker_agents::executor::abandon_job(&tx, &job.payload)?;
+                    }
                     if terminal_result { queue_progress::cancel(&tx, &job.scope, &job.key)?; }
                     if state == "failed" {
                         tx.execute("UPDATE runtime_runs SET status='failed',error_message=?2,completed_at=?3 WHERE id=?1 AND status='running'",
@@ -388,6 +418,7 @@ async fn process_job<R: Runtime>(app: &tauri::AppHandle<R>, job: &Job) -> Result
         result = async {
             match job.lane.as_str() {
                 "conversation" => process_conversation(app, job, cancellation.clone()).await,
+                "worker" => super::worker_lane::process(app, job, &cancellation).await,
                 _ => Err("未対応の処理キューです。".into()),
             }
         } => result,
@@ -433,7 +464,7 @@ async fn process_conversation<R: Runtime>(
                 state.sqlite_writer.write(|connection| {
                     let tx = connection.transaction().map_err(database_error)?;
                     if let Some((key, _)) = previous.as_ref() {
-                        queue_input_state::cancel(&tx, &job.scope, key, &now_iso())?;
+                        cancel_input_state(&tx, &job.scope, key, &now_iso())?;
                     }
                     tx.commit().map_err(database_error)
                 })?;
@@ -444,7 +475,7 @@ async fn process_conversation<R: Runtime>(
             }
             let audio_started = Arc::new(AtomicBool::new(false));
             let retry_blocked = Arc::new(AtomicBool::new(false));
-            let answer = match process_ornith(
+            let answer = match process_conversation_answer(
                 app,
                 job,
                 cancellation,
@@ -650,12 +681,13 @@ fn commit_answer(
         if input["text"].as_str() != Some(current.as_str()) { return Err("入力が変更されたため回答を公開できません。".into()); }
         queue_progress::cancel(&tx, &job.scope, &job.key)?;
         if let Some(key) = cancel_key {
-            queue_input_state::cancel(&tx, &job.scope, key, &now_iso())?;
+            cancel_input_state(&tx, &job.scope, key, &now_iso())?;
         }
         tx.execute(
             "INSERT OR IGNORE INTO conversation_messages(id,conversation_id,role,content,created_at) VALUES(?1,?2,'assistant',?3,?4)",
             params![answer_id, PRIMARY_CONVERSATION_ID, answer, now_iso()],
         ).map_err(database_error)?;
+        tx.execute("INSERT OR IGNORE INTO memory_episode_artifacts(run_id,message_id) VALUES(?1,?2)",params![format!("run_{}",job.key),answer_id]).map_err(database_error)?;
         let saved: String = tx.query_row("SELECT content FROM conversation_messages WHERE id=?1",[&answer_id],|row| row.get(0)).map_err(database_error)?;
         if saved != answer { return Err("同じ発話IDの回答本文が一致しません。".into()); }
         let speech_id = task_queue::enqueue(&tx,&job.scope,"speech","speech",&job.key,job.generation,
@@ -742,9 +774,9 @@ fn finish_stream_speech_job(
 }
 
 mod action;
-#[path = "queue_runtime/ornith.rs"]
-mod ornith;
-use ornith::process_ornith;
+#[path = "queue_runtime/conversation_answer.rs"]
+mod conversation_answer;
+use conversation_answer::process_conversation_answer;
 
 #[path = "queue_runtime/speech.rs"]
 mod speech;

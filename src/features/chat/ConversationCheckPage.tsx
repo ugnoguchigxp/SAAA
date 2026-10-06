@@ -6,10 +6,10 @@ import {
   useSyncExternalStore,
   type FormEvent,
 } from "react";
-import { MediaGenerationPanel } from "../media/MediaGenerationPanel";
 import { AppIcon } from "../../components/AppIcon";
 import { useArtifactWorkspace } from "./artifacts/ArtifactDrawer";
 import { normalizeAnswerUrl } from "./artifacts/answerUrls";
+import { RouteLocationBadge } from "./RouteLocationBadge";
 import { MarkdownView } from "./ui/MarkdownView";
 import { useLatestMessageScroll } from "./useLatestMessageScroll";
 import { listen } from "@tauri-apps/api/event";
@@ -35,16 +35,16 @@ import {
   type ConversationQueueJob,
 } from "../../lib/runtime";
 import "./conversationCheckPage.css";
+import { ConversationAvatar } from "./avatar/ConversationAvatar";
 
-type RouteStage = "dispatch" | "ornith" | "tts" | null;
+type RouteStage = "dispatch" | "answer" | "tts" | null;
 const routeNodes = [
   { id: "asr", label: "ASR" },
-  { id: "ornith", label: "会話LLM" },
+  { id: "answer", label: "会話LLM" },
   { id: "tts", label: "TTS" },
 ] as const;
 
 const SOURCE_LINKS_MARKER = "\n\n<!-- saaa:source-links -->\n";
-
 function displayAnswer(content: string) {
   const [answer, appendix] = content.split(SOURCE_LINKS_MARKER, 2);
   const sources =
@@ -58,6 +58,7 @@ function displayAnswer(content: string) {
 
 export function ConversationCheckPage({
   conversationId,
+  active = true,
   agentName,
   inputDeviceId,
   echoCancellation,
@@ -67,6 +68,7 @@ export function ConversationCheckPage({
   onToggleListening,
 }: {
   conversationId: string;
+  active?: boolean;
   agentName: string;
   providerLabel: string;
   inputDeviceId: string;
@@ -131,7 +133,7 @@ export function ConversationCheckPage({
   const status =
     stage === "dispatch"
       ? "会話LLMに接続中"
-      : stage === "ornith"
+      : stage === "answer"
         ? "会話LLMが回答を作成中"
         : stage === "tts"
           ? "TTS で回答を再生中"
@@ -251,7 +253,7 @@ export function ConversationCheckPage({
       jobs.find((job) => job.state === "running" && job.kind === "speech");
     setStage(
       active?.kind === "user_input"
-        ? "ornith"
+        ? "answer"
         : active?.kind === "speech"
           ? "tts"
           : active
@@ -288,7 +290,7 @@ export function ConversationCheckPage({
         const message = String(cause);
         setError(
           message.includes("larm_authentication_failed")
-            ? "LARM の認証に失敗しました。保存済みの接続設定と Ornith の Provider 認証を確認してください。"
+            ? "LARM の認証に失敗しました。保存済みの接続設定と 会話 LLM の Provider 認証を確認してください。"
             : message,
         );
         return false;
@@ -350,8 +352,10 @@ export function ConversationCheckPage({
 
   return (
     <section className="conversation-check" aria-label="会話">
+      <ConversationAvatar conversationId={conversationId} active={active} />
       <header className="conversation-check-header">
         <h1>会話</h1>
+        <RouteLocationBadge />
       </header>
       <div
         ref={historyRef}
@@ -410,7 +414,7 @@ export function ConversationCheckPage({
               <MarkdownView text={content} displayMode="inline" />
             </article>
           ))}
-          {(stage === "dispatch" || stage === "ornith") && (
+          {(stage === "dispatch" || stage === "answer") && (
             <div className="conversation-thinking" role="status" aria-label="思考中">
               <div className="llm-thinking-indicator" aria-hidden="true">
                 <span />
@@ -484,7 +488,6 @@ export function ConversationCheckPage({
           </button>
         )}
       </div>
-      <MediaGenerationPanel />
       <form
         className="composer conversation-check-composer"
         onSubmit={(event) => void submit(event)}

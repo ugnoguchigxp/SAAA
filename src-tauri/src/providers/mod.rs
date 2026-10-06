@@ -8,12 +8,14 @@ pub(crate) mod dynamic_lan;
 pub(crate) mod http;
 pub(crate) mod http_metrics;
 pub(crate) mod larm_resources;
+pub(crate) mod laya;
 pub(crate) mod openai_compatible;
 pub(crate) mod probe;
 mod probe_state;
 pub(crate) mod reachability;
 pub(crate) mod reachability_watcher;
 pub(crate) mod reasoning_mcp;
+pub(crate) mod route_policy;
 pub(crate) mod routing;
 pub(crate) mod service_harness;
 pub(crate) mod service_registry;
@@ -23,5 +25,3 @@ pub(crate) use completion::{
     default_conversation_reasoning_effort, valid_conversation_reasoning_effort,
     DEFAULT_CONVERSATION_REASONING_EFFORT,
 };
-
-pub(crate) mod route_policy;

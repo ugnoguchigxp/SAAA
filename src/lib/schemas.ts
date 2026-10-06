@@ -385,7 +385,7 @@ export function validateSettingsDocuments(documents: unknown[]): void {
   codexAgentSettingsSchema.parse(values.get("providers.agent"));
   const routing = routingSettingsSchema.parse(values.get("routing.tasks"));
   voiceSettingsSchema.parse(values.get("voice.runtime"));
-  const security = securitySettingsSchema.parse(values.get("security.runtime"));
+  securitySettingsSchema.parse(values.get("security.runtime"));
   regionalPreferencesSchema.parse(values.get("ui.preferences"));
   situationSettingsSchema.parse(values.get("situation.runtime"));
   const roleRouting = values.get("routing.roles");
@@ -424,21 +424,11 @@ export function validateSettingsDocuments(documents: unknown[]): void {
     }
     if (routeIds.has(fallbackId)) throw new Error(`Duplicate provider in route: ${fallbackId}`);
     routeIds.add(fallbackId);
-    if (
-      security.localOnlyWhenSelected &&
-      (routing.conversationRespond.source === "harness" || primary?.location === "local") &&
-      fallback.location === "cloud"
-    ) {
-      throw new Error(
-        `Cloud fallback is blocked while the local-only policy is active: ${fallbackId}`,
-      );
-    }
   }
   for (const [route, kinds] of [
     [routing.voiceTranscribe, ["cloud-asr"]],
     [routing.voiceSpeak, ["cloud-tts", "system-tts"]],
   ] as const) {
-    const primary = route.providerId ? enabled.get(route.providerId) : undefined;
     const seen = new Set(route.providerId ? [route.providerId] : []);
     for (const id of route.fallbackProviderIds ?? []) {
       const provider = enabled.get(id);
@@ -446,12 +436,6 @@ export function validateSettingsDocuments(documents: unknown[]): void {
         throw new Error(`Invalid voice fallback: ${id}`);
       if (seen.has(id)) throw new Error(`Duplicate provider in route: ${id}`);
       seen.add(id);
-      if (
-        security.localOnlyWhenSelected &&
-        (route.source === "harness" || primary?.location === "local") &&
-        provider.location === "cloud"
-      )
-        throw new Error(`Cloud fallback is blocked while the local-only policy is active: ${id}`);
     }
   }
   for (const route of [routing.conversationRespond, routing.voiceTranscribe, routing.voiceSpeak]) {

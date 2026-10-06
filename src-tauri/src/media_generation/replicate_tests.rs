@@ -44,6 +44,7 @@ fn state(endpoint: &str) -> (AppState, ResolvedRoute) {
     let route = crate::providers::service_registry::resolve_route(
         &saved.snapshot,
         Purpose::MediaImageGenerate,
+        Default::default(),
     )
     .unwrap();
     (crate::test_support::app_state(db), route)

@@ -118,7 +118,18 @@ export function PurposeRoutesSection({ onOpenCoding }: { onOpenCoding?: () => vo
     <section className="settings-section" aria-label="用途別の接続先">
       <p>
         用途ごとに使うサービスを選びます。選んだ内容は保存後の新しい依頼から使われ、
-        代替先を設定した場合だけ、最初の通信が失敗した際に切り替えます。
+        LARMを使う用途に代替先（クラウドなど）を設定すると、外出先などでLARMに接続できない間は
+        自動で代替先を使い、LARMに接続できるようになると次の依頼からLARMに戻ります。
+      </p>
+      <p data-testid="larm-reachability">
+        LARMの接続状態:{" "}
+        {
+          {
+            reachable: "接続できています（自宅）",
+            unreachable: "接続できません（代替先を使用中）",
+            unknown: "確認中",
+          }[view.larmReachability ?? "unknown"]
+        }
       </p>
       <RegisteredServices
         probes={view.probes}

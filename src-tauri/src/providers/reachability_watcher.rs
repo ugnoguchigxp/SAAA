@@ -1,7 +1,7 @@
 //! Background observation of the LAN Provider Harness. Selection reads only the snapshot.
 use super::reachability::{PROBE_INTERVAL_SECS, PROBE_TIMEOUT_MS};
 use crate::persistence::load_model_providers;
-use crate::{AppState, ModelProviderSettings, DYNAMIC_LAN_PROVIDER_ID};
+use crate::AppState;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -38,44 +38,51 @@ pub(crate) fn spawn(state: &AppState) -> tauri::async_runtime::JoinHandle<()> {
     })
 }
 
+/// Called when a live request fails to connect to LARM: record the failure and probe now,
+/// so the next request already sees the new state instead of waiting for the interval.
+pub(crate) fn report_larm_connect_failure(state: &AppState) {
+    state.reachability.record(false, Instant::now());
+    state.reachability_kick.notify_one();
+}
+
 async fn probe_once(
     reachability: &super::reachability::ReachabilityState,
     readers: &crate::persistence::SqliteReaders,
 ) {
-    let host = readers.read(|connection| {
-        let providers = load_model_providers(connection)?;
-        Ok(enabled_harness_host(&providers.providers))
-    });
-    let Ok(host) = host else {
+    let address = readers.read(|connection| Ok(load_model_providers(connection)?.harness.address));
+    let Ok(address) = address else {
         reachability.invalidate();
         return;
     };
-    let Some(host) = host else {
+    let Some(base) = harness_base_url(&address) else {
         reachability.invalidate();
-        eprintln!("dynamic_lan reachability probe skipped: no enabled provider");
+        eprintln!("larm reachability probe skipped: no valid harness address");
         return;
     };
-    let ok =
-        super::dynamic_lan::probe::reachable(&host, Duration::from_millis(PROBE_TIMEOUT_MS)).await;
+    let timeout = Duration::from_millis(PROBE_TIMEOUT_MS);
+    // One retry: a single dropped packet (Wi-Fi roaming, VPN switch) must not send a request to the cloud.
+    let ok = reachable(base.clone(), timeout).await || reachable(base, timeout).await;
     reachability.record(ok, Instant::now());
-    eprintln!("dynamic_lan reachability probe ok={ok}");
+    eprintln!("larm reachability probe ok={ok}");
 }
 
-fn enabled_harness_host(providers: &[ModelProviderSettings]) -> Option<String> {
-    let dynamic = providers.iter().filter_map(|provider| match provider {
-        ModelProviderSettings::DynamicLan(settings) if settings.enabled => Some(settings),
-        _ => None,
-    });
-    let mut fallback = None;
-    for settings in dynamic {
-        if settings.id == DYNAMIC_LAN_PROVIDER_ID {
-            return Some(settings.host.clone());
-        }
-        if fallback.is_none() {
-            fallback = Some(settings.host.clone());
-        }
-    }
-    fallback
+fn harness_base_url(address: &str) -> Option<url::Url> {
+    let url = url::Url::parse(address.trim()).ok()?;
+    (matches!(url.scheme(), "http" | "https") && url.host_str().is_some()).then_some(url)
+}
+
+/// Any HTTP response (even an error status) proves the harness host is on the network.
+async fn reachable(base: url::Url, timeout: Duration) -> bool {
+    let Ok(client) = reqwest::Client::builder()
+        .connect_timeout(timeout)
+        .timeout(timeout)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    else {
+        return false;
+    };
+    client.get(base).send().await.is_ok()
 }
 
 fn interface_fingerprint() -> u64 {
@@ -88,4 +95,52 @@ fn interface_fingerprint() -> u64 {
     let mut hasher = DefaultHasher::new();
     pairs.hash(&mut hasher);
     hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn serve(status: &'static str) -> (url::Url, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let response =
+                format!("HTTP/1.1 {status}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}");
+            let _ = stream.write_all(response.as_bytes());
+        });
+        (
+            url::Url::parse(&format!("http://{address}/")).expect("url"),
+            server,
+        )
+    }
+
+    #[tokio::test]
+    async fn any_http_response_is_reachable_and_a_refused_connection_is_not() {
+        for status in ["200 OK", "401 Unauthorized"] {
+            let (url, server) = serve(status);
+            assert!(reachable(url, Duration::from_secs(2)).await, "{status}");
+            server.join().expect("server");
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let address = listener.local_addr().expect("address");
+        drop(listener);
+        let refused = url::Url::parse(&format!("http://{address}/")).expect("url");
+        assert!(!reachable(refused, Duration::from_millis(200)).await);
+    }
+
+    #[test]
+    fn only_http_urls_with_a_host_are_probed() {
+        assert!(harness_base_url("http://192.0.2.1:7001").is_some());
+        assert!(harness_base_url("https://larm.example.test/").is_some());
+        assert!(harness_base_url("").is_none());
+        assert!(harness_base_url("ftp://192.0.2.1").is_none());
+    }
 }

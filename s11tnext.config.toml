@@ -13,6 +13,9 @@ owner = "saaa-runtime"
 [keyspaces.conversation]
 owner = "saaa-runtime"
 
+[keyspaces.worker]
+owner = "saaa-runtime"
+
 [release_profiles.development]
 required_locales = ["$source"]
 

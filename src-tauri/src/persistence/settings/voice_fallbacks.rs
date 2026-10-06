@@ -1,10 +1,7 @@
-use crate::{
-    ModelProviderSettings, ModelProvidersSettings, RoutingSettings, SecurityRuntimeSettings,
-};
+use crate::{ModelProviderSettings, ModelProvidersSettings, RoutingSettings};
 pub(super) fn validate(
     providers: &ModelProvidersSettings,
     routing: &RoutingSettings,
-    security: &SecurityRuntimeSettings,
 ) -> Result<(), String> {
     let enabled_provider = |id: &str| {
         providers
@@ -16,12 +13,6 @@ pub(super) fn validate(
         (&routing.voice_transcribe, "ASR"),
         (&routing.voice_speak, "TTS"),
     ] {
-        let primary_local = route.source == "harness"
-            || route
-                .provider_id
-                .as_deref()
-                .and_then(enabled_provider)
-                .is_some_and(|p| p.location() == "local");
         let mut seen = std::collections::HashSet::new();
         if let Some(id) = &route.provider_id {
             seen.insert(id);
@@ -39,11 +30,12 @@ pub(super) fn validate(
             if !valid || !seen.insert(id) {
                 return Err("Invalid or duplicate voice fallback".into());
             }
-            if security.local_only_when_selected && primary_local && provider.location() == "cloud"
+            // A live qwen-realtime session is chosen once when the microphone starts, so it
+            // cannot take over for LARM in the middle of a session.
+            if route.source == "harness"
+                && matches!(provider, ModelProviderSettings::CloudAsr(asr) if asr.transport == "qwen-realtime")
             {
-                return Err(
-                    "Cloud fallback is blocked while the local-only policy is active".into(),
-                );
+                return Err("LARMの代替ASRにはライブ入力(qwen-realtime)を指定できません".into());
             }
         }
     }

@@ -16,6 +16,7 @@ impl MediaClient {
         accepted: &[u16],
     ) -> Result<(Value, Option<String>), MediaError> {
         self.check_request()?;
+        self.clear_http_response();
         let is_submission = call
             .try_clone()
             .and_then(|call| call.build().ok())
@@ -39,6 +40,7 @@ impl MediaClient {
                 }
             })?;
         let status = response.status().as_u16();
+        self.record_http_response(status, b"[response body not received]");
         let location = response
             .headers()
             .get("location")
@@ -49,14 +51,9 @@ impl MediaClient {
             error.may_have_generated = is_submission;
             error
         })?;
-        let value: Value = serde_json::from_slice(&bytes).map_err(|_| {
-            if is_submission {
-                MediaError::uncertain(FailureKind::Protocol, "invalid_media_json")
-            } else {
-                MediaError::new(FailureKind::Protocol, "invalid_media_json")
-            }
-        })?;
+        self.record_http_response(status, &bytes);
         if !accepted.contains(&status) {
+            let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
             let code = safe_code(
                 value["error"]["code"]
                     .as_str()
@@ -64,10 +61,18 @@ impl MediaClient {
             );
             return Err(MediaError::new(failure_kind(status, &code), &code));
         }
+        let value: Value = serde_json::from_slice(&bytes).map_err(|_| {
+            if is_submission {
+                MediaError::uncertain(FailureKind::Protocol, "invalid_media_json")
+            } else {
+                MediaError::new(FailureKind::Protocol, "invalid_media_json")
+            }
+        })?;
         Ok((value, location))
     }
     pub(super) async fn download(&self, artifact: &MediaArtifact) -> Result<Vec<u8>, MediaError> {
         self.check_request()?;
+        self.clear_http_response();
         let response = crate::authorize(
             self.client
                 .get(self.url(&artifact.content_url)?)
@@ -78,7 +83,11 @@ impl MediaClient {
         .send()
         .await
         .map_err(|_| MediaError::new(FailureKind::ArtifactFailed, "artifact_transport_failed"))?;
+        let status = response.status().as_u16();
+        self.record_http_response(status, b"[binary response body omitted]");
         if response.status() != reqwest::StatusCode::OK {
+            let body = bounded(response, 1024 * 1024).await?;
+            self.record_http_response(status, &body);
             return Err(MediaError::new(
                 FailureKind::ArtifactFailed,
                 "artifact_unavailable",

@@ -5,6 +5,8 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch("DROP TRIGGER IF EXISTS personal_source_insert; DROP TRIGGER IF EXISTS personal_source_edit;")?;
     c.execute_batch(include_str!("schema.sql"))?;
     columns::initialize(c)?;
+    c.execute_batch(include_str!("snapshots.sql"))?;
+    c.execute_batch(include_str!("episode_export.sql"))?;
     let created = c.execute(
         "INSERT OR IGNORE INTO personal_scope(id,principal) VALUES('primary',?1)",
         [crate::new_id("principal")],

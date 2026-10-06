@@ -1,4 +1,4 @@
-//! Source-backed context for the single Ornith conversation agent.
+//! Source-backed context for the single conversation agent.
 use super::context_compiler::{ContextEntry, PrefixMode};
 use super::*;
 use crate::memory;
@@ -14,6 +14,8 @@ pub(super) struct QueueContext {
     run_id: String,
     message_id: String,
     source_messages: Vec<memory::context_window::ProjectedContextMessage>,
+    personal_memory: Vec<String>,
+    personal_stamp: String,
     scope: ScopeSnapshot,
     world: Option<(Arc<WorldFrameService>, PreparedWorldFrame)>,
 }
@@ -27,14 +29,28 @@ impl QueueContext {
             .map(|m| (&m.role, &m.content))
             .collect::<Vec<_>>();
         let world = self.world.as_ref().map(|(_, frame)| frame.stamp());
-        let body = serde_json::to_vec(&(messages, scope_data(&self.scope), world))
-            .map_err(|error| error.to_string())?;
+        let body = serde_json::to_vec(&(
+            messages,
+            scope_data(&self.scope),
+            world,
+            &self.personal_memory,
+            &self.personal_stamp,
+        ))
+        .map_err(|error| error.to_string())?;
         Ok(format!("{:x}", Sha256::digest(body)))
     }
 
     pub(super) fn validate_result(&self, state: &AppState) -> Result<(), String> {
         let (current, scope) = project_window(state, &self.run_id, &self.message_id)?;
-        if current.messages != self.source_messages || scope != self.scope {
+        let personal = state.sqlite_readers.read(|c| {
+            memory::personal_state::episode_export::validate_run(c, &self.run_id)?;
+            personal_state(c, &scope, &self.message_id)
+        })?;
+        if current.messages != self.source_messages
+            || scope != self.scope
+            || personal.0 != self.personal_memory
+            || personal.1 != self.personal_stamp
+        {
             return Err(
                 "メモリーまたは会話の根拠が応答中に変化しました。再実行してください。".into(),
             );
@@ -55,7 +71,13 @@ impl QueueContext {
     pub(super) fn validate_commit(&self, connection: &rusqlite::Connection) -> Result<(), String> {
         let (current, scope) =
             project_window_connection(connection, &self.run_id, &self.message_id)?;
-        if current.messages != self.source_messages || scope != self.scope {
+        memory::personal_state::episode_export::validate_run(connection, &self.run_id)?;
+        let personal = personal_state(connection, &scope, &self.message_id)?;
+        if current.messages != self.source_messages
+            || scope != self.scope
+            || personal.0 != self.personal_memory
+            || personal.1 != self.personal_stamp
+        {
             return Err("メモリーまたは会話の根拠が保存前に変化しました。".into());
         }
         if let Some((service, frame)) = &self.world {
@@ -68,18 +90,24 @@ impl QueueContext {
 }
 
 pub(super) fn compose(state: &AppState, input_id: &str) -> Result<QueueContext, String> {
-    compose_for_mode(state, input_id, PrefixMode::Legacy)
+    compose_for_mode(state, input_id, PrefixMode::Legacy, false)
 }
 
+/// `worker_delegation` swaps the web tools for the `delegate` action: the agent then never sees
+/// raw search or page text, only a worker's composed result.
 pub(super) fn compose_for_mode(
     state: &AppState,
     input_id: &str,
     mode: PrefixMode,
+    worker_delegation: bool,
 ) -> Result<QueueContext, String> {
     let run_id = format!("run_{input_id}");
     let message_id = format!("check_{input_id}");
     let (original, scope) = project_window(state, &run_id, &message_id)?;
     let source_messages = original.messages.clone();
+    let (personal_memory, personal_stamp) = state
+        .sqlite_readers
+        .read(|c| personal_state(c, &scope, &message_id))?;
     let window = if mode == PrefixMode::Legacy {
         crate::runtime::context::broker::ProviderInputBudget::openai_compatible()
             .with_tool_schema_reserve_bytes(0)
@@ -87,7 +115,12 @@ pub(super) fn compose_for_mode(
     } else {
         original
     };
-    let mut instruction = include_str!("../../../../.s11tnext/conversation-queue.txt").to_string();
+    let mut instruction = if worker_delegation {
+        include_str!("../../../../.s11tnext/conversation-queue-worker.txt")
+    } else {
+        include_str!("../../../../.s11tnext/conversation-queue.txt")
+    }
+    .to_string();
     // Current time is supplied by the runtime, never inferred from model knowledge.
     if mode == PrefixMode::Legacy {
         instruction.push_str(&format!("\n[実行時の日時] {}。『今日』『最新』はこの日時を基準にし、資料の対象日・更新日を確認してください。",
@@ -95,6 +128,10 @@ pub(super) fn compose_for_mode(
     }
     let mut dynamic_references = Vec::new();
     let mut history = Vec::new();
+    for text in &personal_memory {
+        history.push(ContextEntry::reference(text.clone(), true));
+    }
+
     for message in window.messages {
         match message.role.as_str() {
             "system" => {
@@ -156,52 +193,13 @@ pub(super) fn compose_for_mode(
         run_id,
         message_id,
         source_messages,
+        personal_memory,
+        personal_stamp,
         scope,
         world,
     })
 }
 
-fn project_window(
-    state: &AppState,
-    run_id: &str,
-    message_id: &str,
-) -> Result<(memory::context_window::ContextWindow, ScopeSnapshot), String> {
-    state
-        .sqlite_readers
-        .read(|connection| project_window_connection(connection, run_id, message_id))
-}
-
-fn project_window_connection(
-    connection: &rusqlite::Connection,
-    run_id: &str,
-    message_id: &str,
-) -> Result<(memory::context_window::ContextWindow, ScopeSnapshot), String> {
-    let (window, scope) = {
-        let scope = scope::load(connection, run_id)?;
-        if scope.status != "resolved" {
-            return Err("会話のスコープが無効です。".into());
-        }
-        for selected in &scope.scopes {
-            let current: bool = connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM context_scopes s JOIN context_scope_epochs e ON e.scope_key=s.scope_key WHERE s.scope_key=?1 AND s.state='active' AND e.epoch=?2)",
-                rusqlite::params![selected.key, selected.epoch], |row| row.get(0),
-            ).map_err(database_error)?;
-            if !current {
-                return Err("会話のScopeまたは根拠の世代が失効しました。".into());
-            }
-        }
-        let window = memory::context_window::compose(memory::context_window::load(
-            connection,
-            PRIMARY_CONVERSATION_ID,
-            message_id,
-            &scope,
-        )?)?;
-        (window, scope)
-    };
-    Ok((window, scope))
-}
-
-fn scope_data(scope: &ScopeSnapshot) -> Value {
-    json!({"status":scope.status,"focus_scope_key":scope.focus_scope_key,"digest":scope.digest,"reason_code":scope.reason_code,
-        "scopes":scope.scopes.iter().map(|s| json!({"key":s.key,"kind":s.kind,"relation":s.relation,"epoch":s.epoch})).collect::<Vec<_>>()})
-}
+#[path = "queue_context/projection.rs"]
+mod projection;
+use projection::{personal_state, project_window, project_window_connection, scope_data};

@@ -15,21 +15,52 @@ import "./mediaGeneration.css";
 type MediaApi = Pick<typeof mediaApi, "generateMedia" | "cancelMedia" | "readMediaArtifact"> &
   Partial<Pick<typeof mediaApi, "listMediaGenerations" | "reconcileMedia">>;
 
-export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}) {
+export function MediaGenerationPanel({
+  api = mediaApi,
+  fixedKind,
+  embedded = false,
+  onBusyChange,
+}: {
+  api?: MediaApi;
+  fixedKind?: MediaKind;
+  embedded?: boolean;
+  onBusyChange?: (busy: boolean) => void;
+} = {}) {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [history, setHistory] = useState<mediaApi.MediaHistory>([]);
-  const [kind, setKind] = useState<MediaKind>("image");
-  const [prompt, setPrompt] = useState("");
+  const [kind, setKind] = useState<MediaKind>(fixedKind ?? "image");
+  const [prompt, setPrompt] = useState(
+    fixedKind === "image"
+      ? "白い背景に青い円を描いた、シンプルなイラスト"
+      : fixedKind === "music"
+        ? "穏やかなピアノを中心にした、落ち着いた楽曲"
+        : "",
+  );
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<MediaProgress | null>(null);
   const [output, setOutput] = useState<MediaOutput | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<number, string>>({});
   const [fetching, setFetching] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const active = useRef<string | null>(null);
   const urls = useRef<string[]>([]);
   const downloaded = useRef(new Set<number>());
   const alive = useRef(true);
+  useEffect(() => {
+    onBusyChange?.(busy || fetching);
+    return () => onBusyChange?.(false);
+  }, [busy, fetching, onBusyChange]);
+  useEffect(() => {
+    if (!busy) return;
+    const started = Date.now();
+    setElapsedSeconds(0);
+    const timer = window.setInterval(
+      () => setElapsedSeconds(Math.floor((Date.now() - started) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [busy]);
   useEffect(() => {
     alive.current = true;
     void api
@@ -69,7 +100,7 @@ export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}
   }
   async function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (busy || fetching || !prompt.trim()) return;
+    if (active.current || busy || fetching || !prompt.trim()) return;
     for (const url of urls.current) URL.revokeObjectURL(url);
     urls.current = [];
     downloaded.current.clear();
@@ -146,11 +177,18 @@ export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}
       setError(String(cause));
     }
   }
+  const Wrapper = embedded ? "div" : "details";
   return (
-    <details className="media-generation">
-      <summary>画像・楽曲を作成</summary>
+    <Wrapper className="media-generation">
+      {!embedded && <summary>画像・楽曲を作成</summary>}
+      {embedded && (
+        <p>
+          依頼後にモデルを起動します。完了まで数分以上かかる場合があります。自動再送はしません。
+        </p>
+      )}
       <MediaGenerationForm
         kind={kind}
+        lockKind={fixedKind !== undefined}
         prompt={prompt}
         busy={busy || fetching}
         canCancel={busy && !fetching && !!active.current}
@@ -164,6 +202,8 @@ export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}
         <p role="status">
           {mediaProgressMessage(progress?.phase ?? "discovering")}
           {progress?.progress != null ? ` ${Math.round(progress.progress * 100)}%` : ""}
+          {`（経過 ${elapsedSeconds} 秒）`}
+          {progress?.jobId && ` ジョブ: ${progress.jobId}`}
         </p>
       )}
       <MediaHistoryList
@@ -173,7 +213,12 @@ export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}
         canReconcile={!!api.reconcileMedia}
         recover={recover}
       />
-      {output?.error && <p role="alert">{mediaFailureMessage(output.error)}</p>}
+      {output?.error && (
+        <p role="alert">
+          {mediaFailureMessage(output.error)}
+          {` (コード: ${output.error.code})`}
+        </p>
+      )}
       {output?.error?.retryable && !busy && (
         <button type="button" onClick={() => void submit()}>
           生成を再試行
@@ -190,6 +235,6 @@ export function MediaGenerationPanel({ api = mediaApi }: { api?: MediaApi } = {}
           retry={() => fetchArtifacts(output)}
         />
       )}
-    </details>
+    </Wrapper>
   );
 }

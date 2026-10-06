@@ -21,7 +21,9 @@ pub(crate) use compatibility::unsupported_reason;
 pub(crate) use migration::migrate_legacy;
 pub(crate) const SERVICE_CREDENTIAL_SERVICE: &str =
     crate::credentials::SERVICE_CONNECTION_CREDENTIAL_SERVICE;
-pub(crate) use resolve::{resolve_resource, resolve_route, ResolveError, ResolvedRoute};
+pub(crate) use resolve::{
+    resolve_resource, resolve_route, LocalAvailability, ResolveError, ResolvedRoute, RouteSelection,
+};
 pub(crate) use types::*;
 pub(crate) use validate::validate_snapshot;
 

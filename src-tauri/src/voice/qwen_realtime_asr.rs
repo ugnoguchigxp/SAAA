@@ -121,11 +121,13 @@ pub(crate) async fn start_qwen_asr_session(
     if sessions().lock().await.contains_key(&input.session_id) {
         return Err("ASRセッションはすでに開始されています。".into());
     }
+    let availability = crate::providers::service_registry::LocalAvailability::of(&state);
     let pinned = state.sqlite_readers.read(|db| {
         let loaded = persistence::service_registry_store::load_registry(db)?;
         crate::providers::service_registry::resolve_route(
             &loaded.snapshot,
             crate::providers::service_registry::Purpose::VoiceTranscribe,
+            availability,
         )
         .map_err(|_| "音声入力の用途設定が無効です".to_string())
     })?;
@@ -542,6 +544,7 @@ mod tests {
                 crate::providers::service_registry::resolve_route(
                     &snapshot,
                     crate::providers::service_registry::Purpose::VoiceTranscribe,
+                    Default::default(),
                 )
                 .map_err(|e| format!("{e:?}"))
             })

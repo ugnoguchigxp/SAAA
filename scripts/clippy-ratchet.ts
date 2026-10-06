@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { renderedDiagnostics } from "./clippy-diagnostics";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const BASELINE = fileURLToPath(new URL("./clippy-warning-baseline.json", import.meta.url));
@@ -57,6 +58,7 @@ if (import.meta.main) {
       "clippy",
       "--manifest-path",
       "src-tauri/Cargo.toml",
+      "--locked",
       "--all-targets",
       "--message-format=json",
     ],
@@ -64,6 +66,8 @@ if (import.meta.main) {
   );
   const output = await new Response(child.stdout).text();
   const status = await child.exited;
+  const diagnostics = renderedDiagnostics(output);
+  if (diagnostics) console.error(diagnostics);
   if (status !== 0) throw new Error(`Clippy failed with exit status ${status}`);
   const baseline = JSON.parse(readFileSync(BASELINE, "utf8")) as {
     warnings: WarningCounts;

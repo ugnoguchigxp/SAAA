@@ -37,5 +37,10 @@ fn main() {
         saaa_lib::ipc_contract::diagnosis_typescript_bindings(),
     )
     .expect("diagnosis bindings are written");
+    fs::write(
+        output_path.with_file_name("workerAgents.ts"),
+        saaa_lib::ipc_contract::worker_agents_typescript_bindings(),
+    )
+    .expect("worker agents bindings are written");
     println!("generated {}", output_path.display());
 }

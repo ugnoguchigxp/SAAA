@@ -1,4 +1,7 @@
 .conversation-check {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -112,7 +115,7 @@
   border: 1px solid #283340;
   border-radius: 12px;
   padding: 18px;
-  background: #111820;
+  background: transparent;
 }
 .conversation-check-history-content {
   min-height: 100%;
@@ -133,10 +136,10 @@
 }
 .conversation-check-message.user {
   margin-left: auto;
-  background: #20313d;
+  background: rgb(32 49 61 / 55%);
 }
 .conversation-check-message.assistant {
-  background: #19232e;
+  background: rgb(25 35 46 / 55%);
 }
 .conversation-check-message strong {
   font-size: 0.72rem;
@@ -189,4 +192,21 @@
   .conversation-route-node { padding: 3px 5px; min-height: 24px; font-size: 0.63rem; }
   .conversation-route-link { font-size: 0.7rem; }
   .conversation-check-history { padding: 10px; }
+}
+.light-avatar-background, .conversation-background-tint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.light-avatar-background { z-index: -2; }
+.light-avatar-background canvas { display: block; width: 100%; height: 100%; }
+.conversation-background-tint { z-index: -1; background: rgb(13 17 24 / 40%); }
+.avatar-status { position: absolute; top: 56px; right: 18px; color: #9fb3c2; font-size: 0.7rem; font-weight: normal; }
+.route-location-badge {
+  border: 1px solid #8a6d1f;
+  border-radius: 999px;
+  background: #2b2411;
+  color: #f1d98a;
+  padding: 3px 10px;
+  font-size: 0.8rem;
 }

@@ -108,6 +108,10 @@ pub enum Kind {
     OpenLoop,
     ActiveReferent,
     ProgressRef,
+    Preference,
+    Habit,
+    PersonalFact,
+    Observation,
     WorldEntity,
     WorldRelation,
     WorldFocus,
@@ -125,6 +129,13 @@ impl Kind {
 
     /// The original seven continuity kinds. Kept explicit so adding World does
     /// not silently change existing behavior.
+    pub fn is_profile(&self) -> bool {
+        matches!(
+            self,
+            Self::Preference | Self::Habit | Self::PersonalFact | Self::Observation
+        )
+    }
+
     pub fn is_continuity(&self) -> bool {
         !self.is_world()
     }

@@ -18,6 +18,7 @@ import { toMessage } from "./lib/appHelpers";
 import { findSettingsDocument, type AppSnapshot } from "./lib/contracts";
 import { SettingsPage } from "./appPages";
 import { DiagnosisPage } from "./features/diagnosis/DiagnosisPage";
+import { WorkerAgentsPage } from "./features/workerAgents/WorkerAgentsPage";
 import { MemoryPage } from "./features/memory/MemoryPage";
 import { WorkPage } from "./features/work/WorkPage";
 import { RecordsPage } from "./features/records/RecordsPage";
@@ -123,6 +124,7 @@ function App() {
           <AppShell route={route} onRouteChange={setRoute}>
             <div className="conversation-page-host" hidden={route !== "conversation"}>
               <ConversationCheckPage
+                active={route === "conversation"}
                 conversationId={primaryConversationId ?? ""}
                 agentName={agentName}
                 providerLabel={snapshot.effectiveRoute.label}
@@ -192,6 +194,8 @@ function App() {
               <AuditLogPage />
             ) : route === "diagnosis" ? (
               <DiagnosisPage onOpenSettings={() => setRoute("settings")} />
+            ) : route === "workers" ? (
+              <WorkerAgentsPage />
             ) : route === "unitTest" ? (
               <ProviderUnitTestPage
                 inputDeviceId={

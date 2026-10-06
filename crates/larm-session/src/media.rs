@@ -6,9 +6,11 @@ use std::time::Duration;
 use tokio::sync::watch;
 use url::Url;
 use zeroize::Zeroizing;
+mod diagnostics;
 #[cfg(test)]
 mod tests;
 mod transport;
+pub use diagnostics::MediaHttpResponse;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -113,6 +115,7 @@ pub struct MediaClient {
     service: catalog::CatalogService,
     kind: MediaKind,
     pub limits: MediaLimits,
+    last_http_response: std::sync::Mutex<Option<MediaHttpResponse>>,
     request_guard: Option<std::sync::Arc<dyn Fn() -> Result<(), MediaError> + Send + Sync>>,
 }
 #[derive(Clone, Copy)]
@@ -144,6 +147,7 @@ impl MediaClient {
         }
         let client = reqwest::Client::builder()
             .no_proxy()
+            .retry(reqwest::retry::never())
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .build()
@@ -177,6 +181,7 @@ impl MediaClient {
             service,
             kind,
             limits: MediaLimits::default(),
+            last_http_response: std::sync::Mutex::new(None),
             request_guard: None,
         })
     }
@@ -318,15 +323,13 @@ impl MediaClient {
         // LARM's image protocol must return persisted artifacts, never a provider readiness flag.
         let entries = value["artifacts"]
             .as_array()
-            .or_else(|| value["data"].as_array())
             .filter(|entries| !entries.is_empty() && entries.len() <= 8)
             .ok_or_else(|| {
                 MediaError::uncertain(FailureKind::Protocol, "missing_image_artifacts")
             })?;
         entries
             .iter()
-            .map(|entry| {
-                let artifact = entry.get("artifact").unwrap_or(entry);
+            .map(|artifact| {
                 let id = identifier(&artifact["id"])?;
                 let content_url = text(&artifact["contentUrl"])?;
                 self.url(content_url)?;
@@ -421,6 +424,8 @@ impl MediaClient {
                         &transport::safe_code(code),
                     );
                     error.job_id = Some(id);
+                    // A failed job (including worker shutdown failure) is terminal.
+                    error.retryable = false;
                     return Err(error);
                 }
                 "cancelled" => {

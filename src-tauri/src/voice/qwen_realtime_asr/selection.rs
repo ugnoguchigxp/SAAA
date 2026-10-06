@@ -2,11 +2,13 @@ use super::*;
 pub(super) fn selected_provider(
     state: &AppState,
 ) -> Result<Option<crate::CloudAsrProviderSettings>, String> {
+    let availability = crate::providers::service_registry::LocalAvailability::of(state);
     state.sqlite_readers.read(|connection| {
         let loaded = persistence::service_registry_store::load_registry(connection)?;
         let route = crate::providers::service_registry::resolve_route(
             &loaded.snapshot,
             crate::providers::service_registry::Purpose::VoiceTranscribe,
+            availability,
         )
         .map_err(|_| "音声入力の用途設定が無効です")?;
         if route.resource_id.starts_with("res:svc-") || route.connection_id == "conn:harness" {

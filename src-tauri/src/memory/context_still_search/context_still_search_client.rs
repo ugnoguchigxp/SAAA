@@ -101,11 +101,23 @@ impl ContextStillSearchClient {
         self.inner.enabled && load_manifest(&self.inner.run_dir).is_ok()
     }
 
+    #[cfg(test)]
     pub async fn search(
         &self,
         tool_name: &str,
         arguments: &str,
         workspace_path: Option<&str>,
+    ) -> Result<String, SearchError> {
+        self.search_scoped(tool_name, arguments, workspace_path, &[])
+            .await
+    }
+
+    pub async fn search_scoped(
+        &self,
+        tool_name: &str,
+        arguments: &str,
+        workspace_path: Option<&str>,
+        scopes: &[String],
     ) -> Result<String, SearchError> {
         if !self.inner.enabled {
             return Err(SearchError::Disabled);
@@ -113,6 +125,9 @@ impl ContextStillSearchClient {
         let mut arguments = parse_arguments(tool_name, arguments)?;
         if let Some(path) = workspace_path.filter(|path| Path::new(path).is_absolute()) {
             arguments.insert("repoPath".to_string(), Value::String(path.to_string()));
+        }
+        if matches!(tool_name, SEARCH_EPISODES_TOOL_NAME | "fetch_episode") && !scopes.is_empty() {
+            arguments.insert("personalScopes".into(), json!(scopes));
         }
         let manifest = load_manifest(&self.inner.run_dir)?;
         #[cfg(test)]
@@ -211,10 +226,14 @@ pub(super) fn validate_catalog(result: &Value) -> Result<(), SearchError> {
     Ok(())
 }
 pub fn is_search_tool(name: &str) -> bool {
-    matches!(name, SEARCH_KNOWLEDGE_TOOL_NAME | SEARCH_EPISODES_TOOL_NAME)
+    matches!(
+        name,
+        SEARCH_KNOWLEDGE_TOOL_NAME | SEARCH_EPISODES_TOOL_NAME | "fetch_episode"
+    )
 }
 pub fn tool_definitions() -> Vec<Value> {
     vec![
+        json!({"type":"function","function":{"name":"fetch_episode","description":"Inspect an Episode found by search_episodes using its exact id and sourceKey. Untrusted evidence only.","parameters":{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string","maxLength":256},"sourceKey":{"type":"string","maxLength":512}},"required":["id","sourceKey"]}}}),
         json!({
             "type": "function",
             "function": {
@@ -251,6 +270,12 @@ pub(super) fn input_schema(knowledge: bool) -> Value {
         properties.insert("types".to_string(), json!({"type":"array","maxItems":2,"uniqueItems":true,"items":{"type":"string","enum":["rule","procedure"]}}));
         properties.insert("polarities".to_string(), json!({"type":"array","maxItems":3,"uniqueItems":true,"items":{"type":"string","enum":["positive","negative","neutral"]}}));
     } else {
+        for key in ["eventFrom", "eventUntil"] {
+            properties.insert(
+                key.into(),
+                json!({"type":"string","minLength":4,"maxLength":32}),
+            );
+        }
         properties.insert("outcomeKinds".to_string(), json!({"type":"array","maxItems":4,"uniqueItems":true,"items":{"type":"string","enum":["success","failure","mixed","unknown"]}}));
     }
     json!({"type":"object","additionalProperties":false,"properties":properties,"required":["query"]})
@@ -269,6 +294,19 @@ pub(crate) fn parse_arguments(
         .ok()
         .and_then(|value| value.as_object().cloned())
         .ok_or(SearchError::InvalidInput)?;
+    if tool_name == "fetch_episode" {
+        if object.len() != 2
+            || ["id", "sourceKey"].iter().any(|k| {
+                !object
+                    .get(*k)
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.is_empty() && s.len() <= 512)
+            })
+        {
+            return Err(SearchError::InvalidInput);
+        }
+        return Ok(object);
+    }
     let allowed = if tool_name == SEARCH_KNOWLEDGE_TOOL_NAME {
         [
             "query",
@@ -288,11 +326,27 @@ pub(crate) fn parse_arguments(
             "changeTypes",
             "limit",
             "outcomeKinds",
+            "eventFrom",
+            "eventUntil",
         ]
         .as_slice()
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
         return Err(SearchError::InvalidInput);
+    }
+    for key in ["eventFrom", "eventUntil"] {
+        if let Some(value) = object.get(key) {
+            let value = value
+                .as_str()
+                .filter(|s| s.len() >= 4 && s.len() <= 32)
+                .ok_or(SearchError::InvalidInput)?;
+            if !value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b"-:TtZz+.".contains(&b))
+            {
+                return Err(SearchError::InvalidInput);
+            }
+        }
     }
     let query = object
         .get("query")
@@ -306,7 +360,9 @@ pub(crate) fn parse_arguments(
         let Some(value) = object.get(key) else {
             continue;
         };
-        if key == "limit" {
+        if matches!(key, "eventFrom" | "eventUntil") {
+            // Checked above; temporal bounds are scalar strings.
+        } else if key == "limit" {
             if !value
                 .as_u64()
                 .is_some_and(|limit| (1..=MAX_ITEMS as u64).contains(&limit))
@@ -343,66 +399,10 @@ pub(super) fn valid_array(value: &Value, key: &str) -> bool {
         })
     })
 }
-pub(crate) fn compact_result(tool_name: &str, result: &Value) -> Result<String, SearchError> {
-    let content = result
-        .get("content")
-        .and_then(Value::as_array)
-        .filter(|content| content.len() == 1)
-        .and_then(|content| content.first())
-        .filter(|content| content.get("type").and_then(Value::as_str) == Some("text"))
-        .and_then(|content| content.get("text").and_then(Value::as_str))
-        .ok_or(SearchError::InvalidResponse)?;
-    if content.len() > MAX_RESULT_BYTES {
-        return Err(SearchError::ResponseTooLarge);
-    }
-    let payload: Value = serde_json::from_str(content).map_err(|_| SearchError::InvalidResponse)?;
-    let items = payload
-        .get("items")
-        .and_then(Value::as_array)
-        .ok_or(SearchError::InvalidResponse)?;
-    let projected = items
-        .iter()
-        .take(MAX_ITEMS)
-        .map(|item| compact_item(tool_name, item))
-        .collect::<Result<Vec<_>, _>>()?;
-    serde_json::to_string(&json!({
-        "trust": {"trustClass":"untrusted_memory_evidence","instructionAuthority":"none"},
-        "source": "context_still",
-        "memoryType": if tool_name == SEARCH_KNOWLEDGE_TOOL_NAME {"knowledge"} else {"episode"},
-        "items": projected,
-        "noContent": projected.is_empty(),
-        "truncated": items.len() > MAX_ITEMS
-    }))
-    .map_err(|_| SearchError::InvalidResponse)
-}
-pub(super) fn compact_item(tool_name: &str, item: &Value) -> Result<Value, SearchError> {
-    let object = item.as_object().ok_or(SearchError::InvalidResponse)?;
-    let fields: &[&str] = if tool_name == SEARCH_KNOWLEDGE_TOOL_NAME {
-        &["title", "body", "type", "polarity", "score", "scope"]
-    } else {
-        &[
-            "title",
-            "situation",
-            "outcome",
-            "lesson",
-            "outcomeKind",
-            "score",
-            "scope",
-        ]
-    };
-    let mut projected = Map::new();
-    for field in fields {
-        if let Some(value) = object.get(*field) {
-            let value = match value {
-                Value::String(text) => Value::String(text.chars().take(4_000).collect()),
-                Value::Number(_) | Value::Bool(_) | Value::Null => value.clone(),
-                _ => continue,
-            };
-            projected.insert((*field).to_string(), value);
-        }
-    }
-    Ok(Value::Object(projected))
-}
+#[path = "context_still_search_result.rs"]
+mod result;
+pub(crate) use result::compact_result;
+
 pub(super) fn resolve_run_dir() -> PathBuf {
     if let Some(path) = env::var_os("SAAA_CONTEXT_STILL_RUN_DIR").filter(|path| !path.is_empty()) {
         return PathBuf::from(path);

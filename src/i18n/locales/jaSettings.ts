@@ -95,7 +95,6 @@ export const jaSettings = {
       credentialsDescription:
         "個別ProviderのAPIキーはOSの資格情報ストアへ保存します。LARM_API_TOKENはこの保存機能の対象外です。値を再表示せず、SQLite・バックアップ・診断情報には含めません。",
       runtimePolicy: "ランタイムポリシー",
-      noCloudFallback: "ローカルのプライマリーからクラウドのフォールバックを暗黙選択しない",
       diagnosticsRedaction: "診断情報をマスキング（常に有効）",
       dataOperations: "データ操作",
       storagePolicy:

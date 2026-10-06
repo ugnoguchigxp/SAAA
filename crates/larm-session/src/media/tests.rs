@@ -34,6 +34,16 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             .lock()
             .unwrap()
             .push(serde_json::from_slice(&bytes).unwrap());
+        if fake.mode == "plain_failure" {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "upstream unavailable secret-control",
+            )
+                .into_response();
+        }
+        if fake.mode == "legacy_image" {
+            return Json(json!({"data":[{"artifact":{"id":"image-1","contentUrl":"/stored/image-1","mimeType":"image/png"}}]})).into_response();
+        }
         if fake.mode == "conflict" {
             return (
                 axum::http::StatusCode::CONFLICT,
@@ -66,7 +76,7 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
                 return Json(json!({"artifacts":[{"id":"image-1","contentUrl":"http://127.0.0.1:8810/private","mimeType":"image/png"}]})).into_response();
             }
             return Json(if fake.mode == "warm_only" { json!({"status":"ready","claimable":true}) }
-                else { json!({"data":[{"artifact":{"id":"image-1","contentUrl":"/stored/image-1","mimeType":"image/png"}}]}) }).into_response();
+                else { json!({"artifacts":[{"id":"image-1","contentUrl":"/stored/image-1","mimeType":"image/png"}]}) }).into_response();
         }
         let mut response = (
             axum::http::StatusCode::ACCEPTED,
@@ -101,9 +111,9 @@ async fn handle(State(fake): State<Arc<Fake>>, request: Request) -> Response {
             )
             .into_response();
         }
-        if fake.mode == "music_failure" {
+        if matches!(fake.mode, "music_failure" | "music_stop_failure") {
             return Json(
-                json!({"jobId":"job-1","status":"failed","error":{"code":"generation_failed"}}),
+                json!({"jobId":"job-1","status":"failed","error":{"code":if fake.mode == "music_stop_failure" {"model_stop_failed"} else {"generation_failed"}}}),
             )
             .into_response();
         }

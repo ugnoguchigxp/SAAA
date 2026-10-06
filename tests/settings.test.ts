@@ -339,7 +339,7 @@ describe("settings contracts", () => {
     (snapshot[0].valueJson as { harness: { address: string } }).harness.address = "";
     expect(() => validateSettingsDocuments(snapshot)).toThrow("Harness address is required");
   });
-  test("rejects cloud fallback behind a local-only primary", () => {
+  test("allows a cloud fallback behind a local primary so away from home works", () => {
     const snapshot = documents();
     const providers = (snapshot[0].valueJson as { providers: Array<Record<string, unknown>> })
       .providers;
@@ -356,7 +356,7 @@ describe("settings contracts", () => {
     (
       snapshot[2].valueJson as { conversationRespond: { fallbackProviderIds: string[] } }
     ).conversationRespond.fallbackProviderIds = ["cloud"];
-    expect(() => validateSettingsDocuments(snapshot)).toThrow("Cloud fallback is blocked");
+    expect(() => validateSettingsDocuments(snapshot)).not.toThrow();
   });
   test("rejects duplicate fallback providers", () => {
     const snapshot = documents();

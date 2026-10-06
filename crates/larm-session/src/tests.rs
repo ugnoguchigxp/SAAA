@@ -1672,7 +1672,8 @@ async fn warm_system_one_is_a_provider_separate_from_cold_services() {
     systemone["name"] = json!("systemone");
     systemone["protocol"] = json!("larm.system-one.v1");
     systemone["model"] = json!("laya-system-one");
-    systemone["configuration"]["fields"]["model"] = json!("laya-system-one");
+    systemone["configuration"]["fields"] =
+        json!({"daemonURL":systemone["baseUrl"],"model":"laya-system-one"});
     let snapshot = contract::parse(claim, "session-1", &names, Some(&catalog)).unwrap();
     contract::verify_against_catalog(&snapshot, &catalog).unwrap();
     assert_eq!(
@@ -1697,7 +1698,8 @@ async fn warm_system_one_is_a_provider_separate_from_cold_services() {
         .unwrap();
     systemone["protocol"] = json!("larm.system-one.v1");
     systemone["model"] = json!("laya-system-one");
-    systemone["configuration"]["fields"]["model"] = json!("laya-system-one");
+    systemone["configuration"]["fields"] =
+        json!({"daemonURL":systemone["baseUrl"],"model":"laya-system-one"});
     systemone.as_object_mut().unwrap().remove("contextWindow");
     let snapshot = contract::parse(claim, "session-1", &names, Some(&backchannel_catalog)).unwrap();
     contract::verify_against_catalog(&snapshot, &backchannel_catalog).unwrap();

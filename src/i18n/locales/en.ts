@@ -6,6 +6,6 @@ export const en = {
   ...enCore,
   ...enSettings,
   ...enVoice,
-  navigation: { ...enCore.navigation, diagnosis: "Diagnosis" },
+  navigation: { ...enCore.navigation, diagnosis: "Diagnosis", workers: "Worker Agents" },
   chat: { ...enCore.chat, diagnosis: enDiagnosis },
 } as const;

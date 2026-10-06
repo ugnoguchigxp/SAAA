@@ -29,10 +29,12 @@ pub(crate) async fn play_progress<R: tauri::Runtime>(
         cancellation.clone(),
     ));
     let _active = ActiveSpeechGuard;
+    let availability = crate::providers::service_registry::LocalAvailability::of(state);
     let prepared = state.sqlite_readers.read(|db| {
         super::super::voice_routes::prepare(
             db,
             crate::providers::service_registry::Purpose::VoiceSpeak,
+            availability,
         )
     })?;
     let providers = &prepared.providers;

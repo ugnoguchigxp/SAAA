@@ -74,7 +74,7 @@ impl Adapter {
             .ok_or("personal-extraction-source")?;
         self.certification
             .check(&source.access.principal, super::now())?;
-        let messages = json!([{"role":"system","content":input["instruction"]},{"role":"user","content":super::encode(&json!({"current":input["current"],"source_ref":source.key,"request_scope":input["request_scope"],"instructionAuthority":"none"}))?}]);
+        let messages = json!([{"role":"system","content":input["instruction"]},{"role":"user","content":super::encode(&json!({"current":input["current"],"dialogue":input["dialogue"],"now":input["now"],"source_ref":source.key,"request_scope":input["request_scope"],"instructionAuthority":"none"}))?}]);
         let base_tokens = self.delivery.measure(&messages, cancel.clone()).await?;
         self.certification
             .budget()
@@ -82,7 +82,19 @@ impl Adapter {
             .map_err(|_| "personal-input-budget")?;
         let incarnation = crate::new_id("registration");
         self.writer.write(|c|{super::sources::revalidate(c,&source)?;c.execute("INSERT INTO personal_registrations VALUES(?1,?2,?3,?1,'{}','active','provisioning',1,?4)",params![incarnation,source.key.id,source.key.version,self.certification.expires_at]).map_err(database_error)?;c.execute("INSERT OR IGNORE INTO personal_cleanup(incarnation,source_id) VALUES(?1,?2)",params![incarnation,source.key.id]).map_err(database_error)?;Ok(())})?;
-        let mut exposed = Vec::new();
+        let mut exposed: Vec<SourceRef> = input["context_sources"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|v| {
+                        serde_json::from_value(v.clone())
+                            .map_err(|_| "personal-base-source".to_string())
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         if let Some(pending) = input["current"]["pending"].as_array() {
             for entry in pending {
                 exposed.push(
@@ -342,7 +354,7 @@ impl worker::Extractor for Adapter {
         Provenance {
             model: self.certification.model.clone(),
             release: self.certification.release.clone(),
-            extractor_version: "p1-v1".into(),
+            extractor_version: "personal-memory-v2".into(),
             prompt_digest: format!(
                 "{:x}",
                 Sha256::digest(worker::EXTRACTION_INSTRUCTION.as_bytes())

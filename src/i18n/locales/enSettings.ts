@@ -96,7 +96,6 @@ export const enSettings = {
       credentialsDescription:
         "Individual Provider API keys are stored in the OS credential store. LARM_API_TOKEN is outside this storage feature. Values are never shown again or included in SQLite, backups, or diagnostics.",
       runtimePolicy: "Runtime policy",
-      noCloudFallback: "Do not implicitly select a cloud fallback from a local primary",
       diagnosticsRedaction: "Diagnostics redaction (always on)",
       dataOperations: "Data operations",
       storagePolicy:

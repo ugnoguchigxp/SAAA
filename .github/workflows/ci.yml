@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run E2E for version upgrades or major changes
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,7 +30,8 @@ jobs:
         with:
           workspaces: src-tauri
       - run: bun install --frozen-lockfile
-      - run: bun run check:local
+      - name: Verify
+        run: bun run --silent ${{ github.event_name == 'workflow_dispatch' && inputs.full && 'verify:full' || 'verify:advance' }}
 
   platform-check:
     name: Platform check (${{ matrix.name }})
@@ -36,10 +43,10 @@ jobs:
         include:
           - name: Ubuntu
             os: ubuntu-24.04
-            frontend-test: test:frontend
+            verify-options: ""
           - name: Windows
             os: windows-2022
-            frontend-test: test:frontend:portable
+            verify-options: "--portable"
     steps:
       - uses: actions/checkout@v4
       - name: Install Ubuntu desktop dependencies
@@ -63,31 +70,10 @@ jobs:
         with:
           workspaces: src-tauri
       - run: bun install --frozen-lockfile
-      - name: Frontend static checks
-        run: bun run format:check && bun run lint && bun run size:check && bun run build:frontend
-      - name: Frontend tests
-        run: bun run ${{ matrix.frontend-test }}
-      - name: Rust format
-        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
-      - name: Rust lint
-        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - name: Rust tests
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Verify TypeScript and Rust
+        run: bun run --silent verify:advance ${{ matrix.verify-options }}
       - name: Tool-chain simulator
         run: cargo run --locked --manifest-path src-tauri/Cargo.toml --bin toolchain_simulate -- --json
-      - name: Ubuntu desktop smoke
-        if: runner.os == 'Linux'
-        run: xvfb-run -a bun run desktop:smoke --report-dir "${{ runner.temp }}/saaa-desktop-smoke"
-      - name: Windows desktop smoke
-        if: runner.os == 'Windows'
-        run: bun run desktop:smoke --report-dir "${{ runner.temp }}/saaa-desktop-smoke"
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: desktop-smoke-report-${{ matrix.name }}
-          path: ${{ runner.temp }}/saaa-desktop-smoke
-          retention-days: 7
-          if-no-files-found: warn
 
   rust-packages:
     name: Rust tests (${{ matrix.package }})
@@ -96,14 +82,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [crates/personal-state-core, crates/larm-session, crates/reasoning-contract, services/reasoning-mcp]
+        package: [crates/personal-state-core, crates/larm-session, crates/reasoning-contract, crates/terminal-agent-runtime, services/reasoning-mcp]
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ${{ matrix.package }}
-      - run: cargo test --locked --manifest-path "${{ matrix.package }}/Cargo.toml"
+      - run: bun run --silent verify:advance --package "${{ matrix.package }}"
 
   spec:
     name: Specification check
@@ -118,26 +109,3 @@ jobs:
       - run: bun run spec:check
       - name: Verify documents were not rewritten
         run: git diff --exit-code -- spec/docs
-
-  desktop:
-    name: Desktop smoke
-    runs-on: macos-15
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - uses: dtolnay/rust-toolchain@1.92.0
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - run: bun install --frozen-lockfile
-      - run: bun run desktop:smoke --report-dir "${{ runner.temp }}/saaa-desktop-smoke"
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: desktop-smoke-report
-          path: ${{ runner.temp }}/saaa-desktop-smoke
-          retention-days: 7
-          if-no-files-found: warn

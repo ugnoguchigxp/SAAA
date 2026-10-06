@@ -2,9 +2,10 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { stageAudioUpload } from "../../lib/audioIpc";
 import { startBrowserVoiceCapture, type BrowserVoiceCapture } from "../../lib/browserVoiceCapture";
+import { MediaGenerationPanel } from "../media/MediaGenerationPanel";
 import "./providerUnitTestPage.css";
+import { services, type Capability } from "./providerUnitServices";
 
-type Capability = "asr" | "tts" | "llm" | "embedding";
 type TestResult = {
   capability: Capability;
   model: string;
@@ -12,28 +13,6 @@ type TestResult = {
   latencyMs: number;
   audioBase64: string | null;
 };
-
-const services: Array<{ id: Capability; label: string; description: string; initial: string }> = [
-  { id: "asr", label: "ASR", description: "マイクで録音した音声を文字起こしします。", initial: "" },
-  {
-    id: "tts",
-    label: "TTS",
-    description: "入力文を音声に変換して再生できます。",
-    initial: "こんにちは。音声合成のテストです。",
-  },
-  {
-    id: "llm",
-    label: "Ornith1.5",
-    description: "主LLMに入力文を送り、応答を表示します。",
-    initial: "短く自己紹介してください。",
-  },
-  {
-    id: "embedding",
-    label: "Embedding",
-    description: "入力文のベクトル次元と先頭値を確認します。",
-    initial: "これは埋め込みのテストです。",
-  },
-];
 
 export function ProviderUnitTestPage({
   inputDeviceId,
@@ -54,6 +33,7 @@ export function ProviderUnitTestPage({
   const [results, setResults] = useState<Partial<Record<Capability, TestResult>>>({});
   const [errors, setErrors] = useState<Partial<Record<Capability, string>>>({});
   const [busy, setBusy] = useState<Capability | null>(null);
+  const [mediaBusy, setMediaBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [recording, setRecording] = useState(false);
@@ -208,7 +188,7 @@ export function ProviderUnitTestPage({
         <div>
           <h1>単体テスト</h1>
           <p>
-            保存済みのLARM接続とprofileを使い、5つのproviderを1つずつ実行します。テスト結果は会話履歴や設定に保存しません。
+            保存済みの接続設定を使い、各機能を1つずつ実行します。画像・楽曲の生成結果は、後から確認できるよう生成履歴に保存します。
           </p>
         </div>
         <button type="button" onClick={onOpenSettings}>
@@ -221,7 +201,7 @@ export function ProviderUnitTestPage({
             <button
               key={service.id}
               type="button"
-              disabled={busy !== null || (recording && selected !== service.id)}
+              disabled={busy !== null || mediaBusy || (recording && selected !== service.id)}
               aria-current={selected === service.id ? "page" : undefined}
               className={selected === service.id ? "selected" : ""}
               onClick={() => setSelected(service.id)}
@@ -242,7 +222,14 @@ export function ProviderUnitTestPage({
             </div>
             {results[selected] && <span>成功 · {results[selected].latencyMs} ms</span>}
           </div>
-          {selected === "asr" ? (
+          {selected === "image" || selected === "music" ? (
+            <MediaGenerationPanel
+              key={selected}
+              fixedKind={selected}
+              embedded
+              onBusyChange={setMediaBusy}
+            />
+          ) : selected === "asr" ? (
             <div className="provider-unit-input">
               <button type="button" onClick={() => void toggleRecording()} disabled={busy !== null}>
                 {recording ? "録音を停止" : "録音を開始"}
@@ -268,18 +255,20 @@ export function ProviderUnitTestPage({
               />
             </label>
           )}
-          <button
-            className="provider-unit-run"
-            type="button"
-            disabled={
-              busy !== null ||
-              recording ||
-              (selected === "asr" ? !recorded : !inputs[selected].trim())
-            }
-            onClick={() => void run()}
-          >
-            {busy === selected ? "実行中…" : `${current.label}をテスト`}
-          </button>
+          {selected !== "image" && selected !== "music" && (
+            <button
+              className="provider-unit-run"
+              type="button"
+              disabled={
+                busy !== null ||
+                recording ||
+                (selected === "asr" ? !recorded : !inputs[selected].trim())
+              }
+              onClick={() => void run()}
+            >
+              {busy === selected ? "実行中…" : `${current.label}をテスト`}
+            </button>
+          )}
           {busy === selected && (
             <p role="status">
               {progress}（経過 {elapsedSeconds} 秒）

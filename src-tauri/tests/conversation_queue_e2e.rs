@@ -105,6 +105,25 @@ async fn asr_ornith_tool_saved_answer_tts_reaches_terminal_queue_states() {
     assert!(deadline["answer"].is_null(), "{deadline}");
     assert!(deadline["elapsedMs"].as_u64().unwrap() < 1800, "{deadline}");
     assert!(deadline["llmCalls"].as_u64().unwrap() < 4, "{deadline}");
+    // The fixture server is process-global, so the worker scenario runs in sequence here.
+    let worker = saaa_lib::conversation_queue_e2e::worker::run_worker()
+        .await
+        .expect("worker-mode conversation E2E");
+    assert!(
+        worker["answer"]
+            .as_str()
+            .is_some_and(|answer| answer.contains("42")),
+        "{worker}"
+    );
+    assert_eq!(worker["task"]["state"], "succeeded", "{worker}");
+    assert_eq!(worker["task"]["delivery"], "sync_delivered", "{worker}");
+    assert_eq!(worker["conversationSawOffer"], true, "{worker}");
+    assert_eq!(worker["conversationSawWorkerResult"], true, "{worker}");
+    // The conversation agent never sees raw search/page text or the injected hit.
+    assert_eq!(worker["rawTextReachedConversation"], false, "{worker}");
+    assert_eq!(worker["injectionReachedWorker"], false, "{worker}");
+    assert!(worker["checkerCalls"].as_u64().unwrap() >= 1, "{worker}");
+    assert_eq!(worker["terminalAudits"], 1, "{worker}");
 }
 
 #[test]

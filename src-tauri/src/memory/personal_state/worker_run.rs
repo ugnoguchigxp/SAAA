@@ -9,6 +9,7 @@ pub(super) async fn run(
     if job.stage == "world" {
         return world_stage(writer, extractor, job, cancel).await;
     }
+    let consolidating = job.stage == "consolidation";
     let (chunk, ledger) = writer.write(|c| {
         let tx = c.transaction().map_err(database_error)?;
         let source = sources::load(
@@ -27,18 +28,42 @@ pub(super) async fn run(
     }
     let request_scope =
         crate::memory::personal_state::worker_scope::request(job, &chunk.source.key.id);
-    let current=writer.read_serialized(|c|{
-        let mut values=Vec::new();
-        for a in ledger.assertions.values(){
-            if a.kind.is_world(){continue;}
-            if (a.access.task_request.is_none() || a.access.task_request.as_deref() == request_scope.as_deref()) && a.access.classification <= Classification::Confidential && a.access.purposes.contains(&Purpose::StateExtract) && matches!(ledger.status(&a.id,crate::memory::personal_state::now()),Status::Active|Status::Candidate|Status::Disputed){
-                let payload:String=c.query_row("SELECT value_json FROM personal_payloads WHERE id=?1",[&a.payload_ref],|r|r.get(0)).map_err(database_error)?;
-                values.push(json!({"id":a.id,"kind":a.kind,"key":a.semantic_key,"value":crate::memory::personal_state::decode::<Value>(payload)?,"task_request":a.access.task_request}));
-            }
-        }
-        Ok(values)
+    let (current, mut dependencies) = writer.read_serialized(|c| {
+        crate::memory::personal_state::admission::current(
+            c,
+            &ledger,
+            request_scope.as_deref(),
+            &chunk.text,
+        )
     })?;
-    let input = json!({"purpose":"personal_state_extract","instruction":EXTRACTION_INSTRUCTION,"request_scope":request_scope,"current":current,"source":{"ref":chunk.source,"text":chunk.text}});
+    let related = writer.read_serialized(|c| {
+        crate::memory::personal_state::admission::dialogue(
+            c,
+            &chunk.source,
+            job.scope_key.as_deref(),
+        )
+    })?;
+    let mut context_sources: Vec<SourceRef> = dependencies
+        .iter()
+        .filter_map(|key| ledger.sources.get(key).cloned())
+        .collect();
+    for (source, _) in &related {
+        dependencies.insert(source.key.clone());
+        context_sources.push(source.clone());
+    }
+    let dialogue:Vec<_>=related.iter().map(|(source,text)|json!({"source":source.key,"role":source.role,"text":text,"recorded_at":source.recorded_at,"instructionAuthority":"none"})).collect();
+    let exposed: BTreeSet<String> = current
+        .iter()
+        .filter_map(|a| a["id"].as_str().map(str::to_owned))
+        .collect();
+    if consolidating
+        && crate::memory::personal_state::admission::independent_origins(&current).len() < 2
+    {
+        writer.transact(|c| jobs::advance_world(c, job, crate::memory::personal_state::now()))?;
+        return world_stage(writer, extractor, job, cancel).await;
+    }
+    dependencies.insert(chunk.source.key.clone());
+    let input = json!({"purpose":"personal_state_extract","now":crate::memory::personal_state::now(),"instruction":if consolidating { crate::memory::personal_state::admission::CONSOLIDATION_INSTRUCTION } else { EXTRACTION_INSTRUCTION },"request_scope":request_scope,"current":current,"dialogue":dialogue,"context_sources":context_sources,"source":{"ref":chunk.source,"text":chunk.text}});
     if crate::memory::personal_state::encode(&input)?.len() > 48000 {
         return Err("personal-extraction-budget".into());
     }
@@ -51,7 +76,11 @@ pub(super) async fn run(
         return Err("personal-extraction-output-budget".into());
     }
     let extraction: Extraction = crate::memory::personal_state::decode(raw)?;
-    if extraction.candidates.iter().any(|c| c.kind.is_world()) {
+    if extraction
+        .candidates
+        .iter()
+        .any(|c| c.kind.is_world() || consolidating && c.kind != Kind::Observation)
+    {
         // World payloads are never produced by the continuity extractor.
         return Err("personal-extraction-invalid".into());
     }
@@ -60,6 +89,9 @@ pub(super) async fn run(
         return Err("personal-extraction-invalid".into());
     }
     writer.write(|c| {
+        for source in &context_sources {
+            store::remember_source(c, source)?;
+        }
         let now = crate::memory::personal_state::now();
         if !jobs::valid(c, job, now)? {
             return Err("personal-job-fence".into());
@@ -71,149 +103,33 @@ pub(super) async fn run(
         .map_err(database_error)?;
         Ok(())
     })?;
-    let mut dependencies = BTreeSet::from([chunk.source.key.clone()]);
-    for a in ledger.assertions.values() {
-        if a.kind.is_world() {
-            continue;
-        }
-        if (a.access.task_request.is_none()
-            || a.access.task_request.as_deref() == request_scope.as_deref())
-            && a.access.classification <= Classification::Confidential
-            && a.access.purposes.contains(&Purpose::StateExtract)
-            && matches!(
-                ledger.status(&a.id, crate::memory::personal_state::now()),
-                Status::Active | Status::Candidate | Status::Disputed
-            )
-        {
-            dependencies.extend(a.input_dependencies.clone());
-        }
-    }
     let patch_id = crate::new_id("patch");
     let fence = format!("job-{}-{}", job.id, job.lease);
     let now = crate::memory::personal_state::now();
-    let mut patch = StatePatch {
-        id: patch_id.clone(),
-        base_revision: ledger.revision,
-        input_epoch: job.epoch,
-        policy_revision: ledger.policy_revision,
-        fence: fence.clone(),
-        assertions: Vec::new(),
-        transitions: Vec::new(),
-        coverage: Vec::new(),
-    };
-    let mut payloads = BTreeMap::new();
-    let mut next_sequence = ledger.transitions.last().map_or(1, |t| t.sequence + 1);
-    for mut candidate in extraction.candidates {
-        if !chunk.source.finalized {
-            candidate.status = Status::Candidate;
-            candidate.replaces = None;
-        }
-        if !matches!(candidate.status, Status::Active | Status::Candidate)
-            || candidate.task_request.as_deref() != request_scope.as_deref()
-        {
-            return Err("personal-extraction-scope".into());
-        }
-        // New/backlog fairness must never allow an older observation to replace
-        // a more recent current assertion about the same topic.
-        if ledger.assertions.values().any(|a| {
-            a.kind == candidate.kind
-                && a.semantic_key == candidate.semantic_key
-                && a.access.task_request.as_deref() == request_scope.as_deref()
-                && a.observed_at > chunk.source.recorded_at
-                && ledger.status(&a.id, now) == Status::Active
-        }) {
-            continue;
-        }
-        let id = crate::new_id("assertion");
-        let payload = crate::new_id("payload");
-        let mut access = chunk.source.access.clone();
-        access.task_request = candidate.task_request;
-        let assertion = Assertion {
-            id: id.clone(),
-            kind: candidate.kind,
-            semantic_key: candidate.semantic_key,
-            payload_ref: payload.clone(),
-            access,
-            evidence: BTreeSet::from([chunk.source.key.clone()]),
-            depends_on: BTreeSet::new(),
-            input_dependencies: dependencies.clone(),
-            provenance: extractor.provenance(),
-            observed_at: chunk.source.recorded_at,
-            effective_at: now,
-            recorded_at: now,
-            valid_from: now,
-            valid_until: None,
-        };
-        let mut actions = vec![(id.clone(), Action::Assert)];
-        if let Some(old) = candidate.replaces {
-            actions.push((old, Action::Supersede { by: id.clone() }));
-        }
-        if candidate.status == Status::Active {
-            actions.push((id.clone(), Action::Activate));
-        }
-        for (target, action) in actions {
-            patch.transitions.push(Transition {
-                id: crate::new_id("transition"),
-                sequence: next_sequence,
-                assertion_id: target,
-                action,
-                reason_code: "extractor-supported".into(),
-                evidence: assertion.evidence.clone(),
-                input_dependencies: dependencies.clone(),
-                recorded_at: now,
-            });
-            next_sequence += 1;
-        }
-        payloads.insert(payload, candidate.value);
-        patch.assertions.push(assertion);
-    }
-    if job.finalizing {
-        for old in ledger.assertions.values() {
-            if ledger.status(&old.id, now) == Status::Candidate
-                && old.evidence.iter().any(|k| {
-                    k.id == chunk.source.key.id
-                        && k.version == chunk.source.key.version
-                        && *k != chunk.source.key
-                })
-            {
-                patch.transitions.push(Transition {
-                    id: crate::new_id("transition"),
-                    sequence: next_sequence,
-                    assertion_id: old.id.clone(),
-                    action: Action::Invalidate,
-                    reason_code: "full-message-finalized".into(),
-                    evidence: BTreeSet::from([chunk.source.key.clone()]),
-                    input_dependencies: dependencies.clone(),
-                    recorded_at: now,
-                });
-                next_sequence += 1;
-            }
-        }
-    }
-    patch.coverage.push((
-        chunk.source.key.clone(),
-        if !chunk.source.finalized {
-            if patch.assertions.is_empty() {
-                Coverage::Pending
-            } else {
-                Coverage::Candidate
-            }
-        } else if extraction.no_change {
-            Coverage::NoChange
-        } else if patch
-            .transitions
-            .iter()
-            .any(|t| t.action == Action::Activate)
-        {
-            Coverage::Applied
-        } else {
-            Coverage::Candidate
-        },
-    ));
-    let payload_bytes = payloads
-        .iter()
-        .map(|(k, v)| Ok((k.clone(), crate::memory::personal_state::encode(v)?.len())))
-        .collect::<Result<BTreeMap<_, _>, String>>()?;
+    let patch::Built {
+        mut patch,
+        payloads,
+        payload_bytes,
+        dependencies,
+        request_scope,
+    } = writer.read_serialized(|c| {
+        patch::build(patch::Input {
+            c,
+            chunk: &chunk,
+            ledger: &ledger,
+            job,
+            extractor,
+            current: &current,
+            dependencies,
+            extraction,
+            request_scope,
+            patch_id: patch_id.clone(),
+            fence: fence.clone(),
+            now,
+            consolidating,
+            exposed: &exposed,
+        })
+    })?;
     let mut context = CommitContext {
         access: AccessRequest {
             principal: &ledger.principal,
@@ -248,9 +164,19 @@ pub(super) async fn run(
                 &mut patch,
                 &mut context,
             )?;
-            store::commit(&tx, &patch, &context, &payloads)?;
+            let enabled:bool=tx.query_row("SELECT enabled FROM personal_consolidation_settings WHERE id=1",[],|r|r.get(0)).map_err(database_error)?;
+            if !consolidating || enabled {
+                store::commit(&tx, &patch, &context, &payloads)?;
+                if let Some(scope)=job.scope_key.as_deref() {
+                    let revision:u64=tx.query_row("SELECT COALESCE((SELECT revision FROM memory_episode_scope_policies WHERE scope_key=?1),1)",[scope],|r|r.get(0)).map_err(database_error)?;
+                    for a in &patch.assertions { tx.execute("INSERT INTO personal_assertion_scope_policies VALUES(?1,?2,?3)",rusqlite::params![a.id,scope,revision]).map_err(database_error)?; }
+                }
+            }
             if chunk.source.finalized {
-                jobs::advance_world(&tx, job, crate::memory::personal_state::now())?;
+                let enabled:bool=tx.query_row("SELECT enabled FROM personal_consolidation_settings WHERE id=1",[],|r|r.get(0)).map_err(database_error)?;
+                if enabled && !consolidating {
+                    tx.execute("UPDATE personal_jobs SET stage='consolidation',status='queued',offset_bytes=0,lease_until=NULL,next_attempt_at=?3 WHERE id=?1 AND lease_generation=?2",rusqlite::params![job.id,job.lease,crate::memory::personal_state::now()]).map_err(database_error)?;
+                } else { jobs::advance_world(&tx, job, crate::memory::personal_state::now())?; }
             } else {
                 jobs::finish(&tx, job, chunk.source.key.end, chunk.total_bytes, false)?;
             }
@@ -259,6 +185,17 @@ pub(super) async fn run(
         })
     })?;
     if chunk.source.finalized {
+        let stage = writer.read_serialized(|c| {
+            c.query_row(
+                "SELECT stage FROM personal_jobs WHERE id=?1",
+                [job.id],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(database_error)
+        })?;
+        if stage == "consolidation" {
+            return Ok(());
+        }
         world_stage(writer, extractor, job, cancel).await?;
     }
     Ok(())
@@ -267,3 +204,6 @@ pub(super) async fn run(
 #[path = "worker_run/world_stage.rs"]
 mod world_stage;
 use world_stage::run as world_stage;
+
+#[path = "worker_run/patch.rs"]
+mod patch;

@@ -10,6 +10,9 @@ lerna-debug.log*
 
 # Local tooling and build artifacts
 .commandcode/
+.serena/
+/target/
+*.tsbuildinfo
 *.bun-build
 
 node_modules

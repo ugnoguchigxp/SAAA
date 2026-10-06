@@ -27,6 +27,7 @@ pub(crate) async fn generate_media(
         }
         return Err("この生成要求は記録済みです。生成し直さず進行状況を確認してください。".into());
     }
+    let availability = crate::providers::service_registry::LocalAvailability::of(&state);
     let route = state.sqlite_readers.read(|db| {
         let loaded = persistence::service_registry_store::load_registry(db)?;
         crate::providers::service_registry::resolve_route(
@@ -35,8 +36,13 @@ pub(crate) async fn generate_media(
                 MediaKind::Image => Purpose::MediaImageGenerate,
                 MediaKind::Music => Purpose::MediaMusicGenerate,
             },
+            availability,
         )
-        .map_err(|e| format!("生成サービスの設定を確認してください: {e:?}"))
+        .map_err(|e| {
+            e.user_message()
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("生成サービスの設定を確認してください: {e:?}"))
+        })
     })?;
     let (cancel, receiver) = watch::channel(false);
     {
@@ -115,7 +121,8 @@ pub(crate) async fn generate_media(
             result=async {
             let credential=crate::providers::dynamic_lan::credential::load().map_err(|_| MediaError{kind:saaa_larm_session::media::FailureKind::Discovery,code:"credential_missing".into(),retryable:false,may_have_generated:false,job_id:None})?;
             let mut client=MediaClient::discover(&route.endpoint,credential.token().into(),input.kind).await?;
-            client.limits.submission=std::time::Duration::from_millis(route.attempt_timeout_ms.unwrap_or(route.timeout_ms));
+            // The single POST includes cold model loading, generation and worker shutdown.
+            client.limits.submission=std::time::Duration::from_millis(route.timeout_ms.saturating_sub(started.elapsed().as_millis() as u64));
             client.limits.job=std::time::Duration::from_millis(route.timeout_ms.saturating_sub(started.elapsed().as_millis() as u64));
             let readers=state.sqlite_readers.clone();let pinned=route.clone();
             let client=Arc::new(client.with_request_guard(Arc::new(move||readers.read(|db|crate::providers::service_registry::validate_active(db,&pinned)).map_err(|_|MediaError{kind:saaa_larm_session::media::FailureKind::Cancelled,code:"route_revoked".into(),retryable:false,may_have_generated:false,job_id:None}))));

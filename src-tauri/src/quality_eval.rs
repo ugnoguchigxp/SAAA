@@ -117,7 +117,7 @@ pub async fn run_json(input: &str) -> Result<String, String> {
     serde_json::to_string(&QualityResponse {
         content,
         latency_ms: started.elapsed().as_millis(),
-        runtime_path: "queue_runtime/process_ornith",
+        runtime_path: "queue_runtime/process_conversation_answer",
     })
     .map_err(|error| format!("Could not encode quality runtime response: {error}"))
 }
@@ -323,7 +323,10 @@ mod tests {
         server.await.expect("fixture joins");
         let response: serde_json::Value = serde_json::from_str(&response).expect("response JSON");
         assert_eq!(response["content"], "runtime answer");
-        assert_eq!(response["runtimePath"], "queue_runtime/process_ornith");
+        assert_eq!(
+            response["runtimePath"],
+            "queue_runtime/process_conversation_answer"
+        );
     }
 
     #[tokio::test]

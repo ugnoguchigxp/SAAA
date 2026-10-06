@@ -14,11 +14,6 @@ pub(crate) fn validate_active(
         && snapshot
             .connection(&route.connection_id)
             .is_some_and(|c| c.enabled && c.credential_ref == route.credential_ref);
-    let local_only =
-        crate::persistence::settings::read_settings_document(db, "security.runtime", "default")?
-            .value_json["localOnlyWhenSelected"]
-            .as_bool()
-            .unwrap_or(true);
     let secret_present = match &route.credential_ref {
         Some(reference) => db
             .query_row(
@@ -29,10 +24,7 @@ pub(crate) fn validate_active(
             .map_err(crate::database_error)?,
         None => true,
     };
-    if active
-        && secret_present
-        && !(route.location == "cloud" && route.primary_location == "local" && local_only)
-    {
+    if active && secret_present {
         Ok(())
     } else {
         Err("実行中のサービスが無効化されたため、追加送信を停止しました。".into())

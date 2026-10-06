@@ -81,8 +81,8 @@ END;
 CREATE TRIGGER IF NOT EXISTS personal_source_no_resurrection BEFORE INSERT ON conversation_messages
 WHEN EXISTS(SELECT 1 FROM personal_tombstones WHERE source_id=NEW.id)
 BEGIN SELECT RAISE(ABORT,'personal-source-forgotten'); END;
-CREATE TRIGGER IF NOT EXISTS personal_source_edit AFTER UPDATE OF content ON conversation_messages
-WHEN NEW.content!=OLD.content AND EXISTS(SELECT 1 FROM personal_sources WHERE message_id=OLD.id)
+CREATE TRIGGER IF NOT EXISTS personal_source_edit AFTER UPDATE OF content,role,created_at ON conversation_messages
+WHEN (NEW.content!=OLD.content OR NEW.role!=OLD.role OR NEW.created_at!=OLD.created_at) AND EXISTS(SELECT 1 FROM personal_sources WHERE message_id=OLD.id)
 BEGIN
  UPDATE personal_sources SET available=0 WHERE message_id=OLD.id;
  INSERT INTO personal_sources(message_id,version,role,bytes,recorded_at) VALUES(NEW.id,(SELECT MAX(version)+1 FROM personal_sources WHERE message_id=OLD.id),NEW.role,length(CAST(NEW.content AS BLOB)),CAST(unixepoch('subsec')*1000 AS INTEGER));

@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-06",
+  "contextstill_head": "d03869a43f6f5c09d7359f5f00e319966ae321d3",
+  "contextstill_working_tree": "clean before and after inspection and tests",
+  "rust_tests": [
+    {
+      "command": "cargo test --offline --locked -p context-stilld domains::mcp_lifecycle::native_episodes::tests -- --test-threads=2",
+      "passed": 12,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --offline --locked -p context-stilld domains::queue_lifecycle::episode_executor::tests -- --test-threads=2",
+      "passed": 15,
+      "failed": 0
+    }
+  ],
+  "raw_delete_probe": {
+    "method": "Current Episode table DDL and inspected raw-source DELETE SQL on an in-memory synthetic fixture; not the running API or live user DB",
+    "raw_sources_after_delete": 0,
+    "episode_cards_after_delete": 1,
+    "episode_refs_after_delete": 1,
+    "episode_status_after_delete": "active"
+  },
+  "live_user_database_used": false,
+  "real_llm_quality_tested": false,
+  "contextstill_code_or_settings_changed": false,
+  "saaa_application_code_changed": false,
+  "canonical_concept_page_changed": false,
+  "context_compile_this_episode_review": 1,
+  "compile_eval_this_episode_review": 1,
+  "context_run_id": "00000000-0000-0000-18db-f3ac23df0fc5"
+}

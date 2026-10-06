@@ -280,14 +280,37 @@ Settingsで登録したProvider APIキーはmacOS Keychainへ保存し、設定J
 固定された依存関係を導入し、変更に応じた検証を実行します。
 
 ```sh
-bun run check:local
-bun run test:rust-packages
+bun run --silent verify
 bun run spec:check
 ```
 
-`check:local`はformat、lint、生成物、型、module size、Rust/frontendの検証を実行します。個別修正では、先に`bun test tests/<file>`または`cargo test --manifest-path src-tauri/Cargo.toml <filter>`で対象を確認します。filter付きの成功は、目的のテストが実際に実行されたことも確認してください。
+TypeScriptと`src-tauri`・`crates`・`services`配下の全Rustパッケージを、作業に応じて次の3段階で検証します。
 
-`contexts/`の変更後は`bun run s11tnext:build`、公開するRust IPC型の変更後は`bun run ipc:generate`を実行し、生成差分を確認します。`bun run build`はfrontend buildとIPC契約検査、`bun run tauri build`はdesktop bundleを作成します。任意のcoverage reportは`bun run test:coverage`で生成できます。
+| コマンド | 検査内容 | 実行するタイミング |
+| --- | --- | --- |
+| `bun run --silent verify` | format、lint、型・コンパイル、生成context、module size。build・テストは実行しない | 全体の静的確認時 |
+| `bun run --silent verify:advance` | 通常ゲート＋TypeScript・Rustのbuild、ユニット・契約テスト、品質契約、IPC契約 | 全体ビルド・統合確認時 |
+| `bun run --silent verify advance --package <ディレクトリ>` | 指定したRust crateの静的確認・build・テスト | 部分ビルドの完成確認時。変更したcrateと影響を受ける依存先ごとに実行 |
+| `bun run --silent verify:full` | advance＋Provider・会話E2E、desktop smoke | バージョンアップなど大きな更新時 |
+
+commit・pushは現在のブランチでの作業保存です。新しいブランチやマージ、advance・fullの成功を必須条件にはしません。実行可能な軽い確認を行い、検証の失敗・未実施はcommitに記録します。完成確認の検証範囲は変更したcrateと影響を受ける利用先に合わせ、フロントエンドは`--scope typescript`を使います。共通部分が全体に影響する場合は完成確認時に全体検証を行います。ドメインのcrate化前は`src-tauri`全体がコンパイル対象で、生成context・ファイルサイズにも全体共通の検証が残っています。詳しくは[Contributing](CONTRIBUTING.md)を参照してください。
+
+`check`・`check:local`は通常ゲートへの別名です。すべて成功すれば`OK`を1行だけ出力し、失敗すれば該当コマンドの標準出力・標準エラーを省略せず表示して後続を止めます。`bunfig.toml`でBunの実行コマンド表示を抑制しているため、`bun verify`や`bun run lint`でも成功時は`OK`だけになります。通常の実装後に毎回E2Eを実行する必要はありません。CIも通常のcommit・PRではadvanceを使い、大きな更新時は手動実行のfullオプションを選べます。
+
+個別コマンドもすべて`scripts/verify.ts`を経由します。
+
+| 検査 | TypeScriptとRust | TypeScriptのみ | Rustのみ |
+| --- | --- | --- | --- |
+| lint | `bun run --silent lint` | `bun run --silent lint:typescript` | `bun run --silent lint:rust` |
+| 型・コンパイル | `bun run --silent typecheck` | `bun run --silent typecheck:typescript` | `bun run --silent typecheck:rust` |
+| build | `bun run --silent build` | `bun run --silent build:frontend` | `bun run --silent build:rust` |
+| test | `bun run --silent test` | `bun run --silent test:frontend` | `bun run --silent test:rust` |
+| format適用 | `bun run --silent format` | `bun run --silent format:typescript` | `bun run --silent format:rust` |
+| format検査 | `bun run --silent format:check` | `bun run --silent format:check:typescript` | `bun run --silent format:check:rust` |
+
+`bun run --silent verify <検査名>`でも実行できます。`verify format`は書き込まず検査し、`--write`を付けると整形します。`--scope typescript`・`--scope rust`・`--package crates/larm-session`で対象を限定できます。個別testは`bun run --silent verify test --scope typescript -- tests/<file>`または`bun run --silent verify test --package src-tauri -- --lib <filter>`を使い、目的のテストが実際に実行されたことも確認してください。デスクトップRustのClippyは既存の警告基準を維持し、他のRustパッケージは警告をエラーにします。ignored/live test、実機受入、仕様書検査、coverageは別途実行します。
+
+`contexts/`の変更後は`bun run s11tnext:build`、公開するRust IPC型の変更後は`bun run ipc:generate`を実行し、生成差分を確認します。単体buildもverifyを経由し、`bun run build`はTypeScriptとRust、`bun run build:frontend`・`bun run build:rust`は各言語のみ、`bun run build:desktop`はdesktop bundleを作成します。任意のcoverage reportは`bun run test:coverage`で生成できます。
 
 desktopと実serviceを使う受入には、各手順書で指定された環境が必要です。
 

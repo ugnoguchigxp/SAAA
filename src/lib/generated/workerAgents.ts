@@ -1,0 +1,19 @@
+// Generated from src-tauri/src/worker_agents/contracts.rs. Do not edit.
+export type ReviewState = "draft" | "approved" | "rejected" | "superseded";
+export type OutputKind = "web_claims_v1" | "json_v1";
+export type Tier = "local" | "local_large" | "cloud";
+export type CloudPolicy = "never" | "require_approval";
+export type WorkerLimits = { maxSteps: number, maxSameTierRetries: number, deadlineMs: number, syncWaitMs: number, maxRestarts: number, };
+export type TierPolicy = { maxTier: Tier, cloud: CloudPolicy, };
+export type ToolRefKind = "builtin" | "catalog";
+export type ToolRef = { kind: ToolRefKind, key: string, catalogRevisionId: string | null, };
+export type CompletionCriteria = { minItems: number, sourcesMustBeHostRecorded: boolean, };
+export type ProfileDraft = { profileId: string, purpose: string, systemContext: string, skillRevisionIds: Array<string>, tools: Array<ToolRef>, inputSchema: unknown, outputKind: OutputKind, outputSchema: unknown | null, completion: CompletionCriteria, limits: WorkerLimits, tierPolicy: TierPolicy, };
+export type SkillDraft = { skillId: string | null, name: string, body: string, };
+export type SkillSaved = { skillId: string, revisionId: string, };
+export type WebSearchMode = "inline" | "worker";
+export type RevisionSummary = { revisionId: string, revision: number, reviewState: ReviewState, purpose: string, definitionHash: string, toolKeys: Array<string>, outputKind: OutputKind, createdAtMs: number, };
+export type WorkerAgentSummary = { profileId: string, origin: string, enabled: boolean, pinnedOffer: boolean, current: RevisionSummary | null, draft: RevisionSummary | null, };
+export type WorkerAgentDetail = { profileId: string, origin: string, enabled: boolean, pinnedOffer: boolean, revisions: Array<RevisionSummary>, };
+export type WorkerTaskSummary = { taskId: string, profileId: string, state: string, delivery: string, failureCode: string | null, createdAtMs: number, updatedAtMs: number, };
+export type BlocklistEntry = { urlHash: string, host: string, reason: string, createdAtMs: number, };

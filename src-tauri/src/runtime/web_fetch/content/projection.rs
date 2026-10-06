@@ -25,19 +25,26 @@ pub(super) fn project_document(
         .collect();
     warning_categories.sort();
     warning_categories.dedup();
-    let (text, relevant, selection_truncated) = super::super::static_content::project_visible_text(
-        &document.text,
-        query,
-        model_max_characters,
-    );
+    let withheld = guard_withholds_text(decision);
+    let (text, relevant, selection_truncated) = if withheld {
+        (String::new(), false, false)
+    } else {
+        super::super::static_content::project_visible_text(
+            &document.text,
+            query,
+            model_max_characters,
+        )
+    };
     FetchContentResult {
         final_url: document.final_url.clone(),
         text,
         fetched_at: document.fetched_at.clone(),
-        truncated: document.truncated || selection_truncated,
+        truncated: !withheld && (document.truncated || selection_truncated),
         decision,
         warning_categories,
-        retrieval_status: if document.text.trim().is_empty() {
+        retrieval_status: if withheld {
+            "blocked"
+        } else if document.text.trim().is_empty() {
             "insufficient"
         } else if query.is_none() {
             "partial"
@@ -47,6 +54,19 @@ pub(super) fn project_document(
             "partial"
         },
         retrieval_method: "webview",
+    }
+}
+
+/// Page text the guard denied or held for approval never reaches the model.
+pub(super) fn guard_withholds_text(decision: &str) -> bool {
+    matches!(decision, "deny" | "require_approval")
+}
+
+/// The last gate before the model: (withheld, visible text, retrieval status).
+fn model_view(result: &FetchContentResult) -> (bool, &str, &'static str) {
+    match guard_withholds_text(result.decision) {
+        true => (true, "", "blocked"),
+        false => (false, &result.text, result.retrieval_status),
     }
 }
 

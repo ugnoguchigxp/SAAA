@@ -39,7 +39,7 @@ ASRはTTS再生中もマイクを受け取り、独立した人の声と重な�
 | --- | --- | --- |
 | 個別登録 | [IndividualProvidersSection](../../src/features/settings/IndividualProvidersSection.tsx)はLLM、Agent Session、ASR、TTSを追加できる。設定は用途別Provider単位 | 接続情報と資格情報を共有できるサービス単位の登録へ整理する |
 | 接続先選択 | [ServiceConnectionsSection](../../src/features/settings/ServiceConnectionsSection.tsx)はLLM、ASR、TTSのsourceとProviderを保存する | 「用途ごとの選択」へ集約し、LARMとクラウドを同じ候補選択で扱う |
-| 通常会話 | [queue_runtime/ornith.rs](../../src-tauri/src/runtime/conversation_check/queue_runtime/ornith.rs)はcached_larm_asrからSessionを取り、complete_larm_role_with_eventsを使う | 現行会話キューの下で用途Bindingを解決し、選んだLLMを呼ぶ |
+| 通常会話 | [queue_runtime/conversation_answer.rs](../../src-tauri/src/runtime/conversation_check/queue_runtime/conversation_answer.rs)はcached_larm_asrからSessionを取り、complete_larm_role_with_eventsを使う | 現行会話キューの下で用途Bindingを解決し、選んだLLMを呼ぶ |
 | LARM接続 | [conversation_check.rs](../../src-tauri/src/runtime/conversation_check.rs)のconnect_larmはtts、asr、llm、embeddingをまとめて要求する | 利用する機能集合を接続計画へ渡す。クラウド会話にはLARM接続を要求しない |
 | ASRとTTS | 同conversation_check.rsと[streaming_speech.rs](../../src-tauri/src/runtime/conversation_check/streaming_speech.rs)にHarnessと直接Providerの分岐がある | 既存音声処理を保持し、選択と認証と監査を共通化する |
 | 既存LLM transport | [chat_completions/mod.rs](../../src-tauri/src/providers/chat_completions/mod.rs)は旧executorのContextやTool設定を受けるとUnavailableを返す | ガードを単に外さない。現行キューから使えるtransport境界を作り、低水準HTTPとSSE処理だけを必要に応じて共有する |
@@ -208,7 +208,7 @@ LARM中心、登録クラウド中心、会話だけクラウドを用意する�
 | --- | --- | --- | --- |
 | P0 現状確認 | 使用中経路と保存設定の対応、Contextとstream契約、音声、既存テストの基準値を採取 | 現行queue、設定migration、診断、fixture | 動作と設定の食い違い、既存失敗、未確認事項を証拠として残す |
 | P1 登録とBinding | 三層の型、lossless migration、revision検証、credentialRef、ResolvedRoute、用途別attemptを追加 | models、settings、credentials、generated IPC、Provider registry案 | 既存設定保持、移行の冪等性、参照と能力と送信許可の拒否を隔離DBで確認 |
-| P2 会話LLM | 現行queueの下にModel adapterを接続し、LARMと直接Chat Completionsで同じaction loopを実行 | queue_runtime/ornith.rs、conversation_check.rs、context_compiler、Provider adapter案 | LARM未接続のテキスト会話、Tool、取消、部分失敗、回答一回保存、設定と実送信先一致がfixtureで通る |
+| P2 会話LLM | 現行queueの下にModel adapterを接続し、LARMと直接Chat Completionsで同じaction loopを実行 | queue_runtime/conversation_answer.rs、conversation_check.rs、context_compiler、Provider adapter案 | LARM未接続のテキスト会話、Tool、取消、部分失敗、回答一回保存、設定と実送信先一致がfixtureで通る |
 | P3 音声 | ASRとTTSとSystem TTSを用途Resolverへ接続し、発話単位の固定と共通playerを維持 | conversation_check.rs、streaming_speech、cloud_asr、cloud_tts、audio backend、frontend capture | 混在構成、途中版と最終版、音声割込み、接続切替、AECの両条件が通る |
 | P4 設定UI | サービス登録と用途選択、詳細設定、基本プリセット、設定と実行の表示を接続 | SettingsPage、ServiceConnectionsSection、IndividualProvidersSection、ProviderCard、RoleRoutingSection、i18n | 登録から適用と再起動、競合、無効化、削除、needs-reviewを一連のUI操作で確認 |
 | P5 Media | 同期とjob型の共通結果を定義し、LARMをMedia adapterへ接続。最初の外部画像adapterを追加 | media_generation、LARM MediaClient、成果物IPC | 二重生成防止、受付不明、再起動からjob照合、取消、成果物保存を確認。外部音楽は対応adapterの受入後に有効化 |

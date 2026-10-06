@@ -129,3 +129,4 @@ pub fn steward_typescript_bindings() -> String {
 pub fn diagnosis_typescript_bindings() -> String {
     crate::diagnosis::contract::typescript_file()
 }
+pub use crate::worker_agents::contracts::typescript_file as worker_agents_typescript_bindings;

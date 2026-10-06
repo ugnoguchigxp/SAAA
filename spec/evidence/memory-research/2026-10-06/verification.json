@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-06",
+  "saaa_head": "3f70da6285e6586ff0f542a23dbe43029b09c71d",
+  "hindsight_head": "07150298151d83c212bc3d115f3c3284fd86d0dc",
+  "saaa_core_continuity": {
+    "command": "cargo test --manifest-path crates/personal-state-core/Cargo.toml --offline --test continuity --target-dir /tmp/saaa-memory-research-core-target",
+    "passed": 17,
+    "failed": 0,
+    "scope": "Existing deterministic core contracts, not application integration or LLM quality"
+  },
+  "hindsight_pure_functions": {
+    "method": "Reviewed pure function ASTs from pinned source; synthetic dataclass inputs; no DB or LLM",
+    "source_id_count_before": 3373,
+    "source_id_count_after": 3,
+    "rrf_order": ["common", "twin"],
+    "interleave_order": ["twin", "common"],
+    "assertions_passed": 3,
+    "scope": "Illustrative deterministic behavior, not retrieval accuracy or performance"
+  },
+  "external_llm_called": false,
+  "live_user_database_used": false,
+  "application_code_changed": false,
+  "stored_settings_changed": false,
+  "canonical_concept_changed": false,
+  "context_compile_this_research_turn": 1,
+  "compile_eval_this_research_turn": 1,
+  "context_run_id": "00000000-0000-0000-18db-f188bb32e8f8"
+}

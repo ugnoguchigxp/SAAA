@@ -314,7 +314,7 @@ modeはjob開始時に読み、そのjobのTool往復中は固定する。進行
 | C3 | Memory OFF／ONで各mode20ターンのfixtureが合格。SSE／JSON usage、fallback、部分回答後の再生成禁止、Tool上限6、取消、辞書、復旧、ASR受付を確認。全体gateは別の不整合で未合格 |
 | C4 | stableのmacOS bundle起動・画面・IPC確認は合格。実モデルはlegacy14ターン、stable8ターン成功後にJSON契約不一致で停止。20ターンの実会話受入、実cache、物理音声は未合格／未確認 |
 
-新規ファイルの最終構成は `context_compiler.rs`、`context_metrics.rs`、`queue_runtime/ornith.rs`、transportの `observation.rs` と `json_response.rs`、fixtureの `context_trial.rs`／`context_live.rs`、offline report。既存のqueueとfixtureは責務ごとの実submoduleへ移し、旧機能を保つ。DB schemaとIPCの追加はない。
+新規ファイルの最終構成は `context_compiler.rs`、`context_metrics.rs`、`queue_runtime/conversation_answer.rs`、transportの `observation.rs` と `json_response.rs`、fixtureの `context_trial.rs`／`context_live.rs`、offline report。既存のqueueとfixtureは責務ごとの実submoduleへ移し、旧機能を保つ。DB schemaとIPCの追加はない。
 
 試験中、失効したLARM接続の再利用と、Memory ON時のTool上限案内の読み上げ拒否を修正した。公開本文または音声が始まった後は、通信失敗・不正形式でも別回答を作って置き換えない。制御文はchunk境界をまたいでも公開しない。Tool後の案内文も根拠を確認した同じstreaming speech経路を使い、閉じたrunのWorldアクセスを再許可しない。
 

@@ -1,5 +1,37 @@
 use super::types::*;
+use crate::providers::reachability::{Reachability, ReachabilitySnapshot};
 use sha2::{Digest, Sha256};
+
+/// Why a route was chosen. Recorded in the audit trail and shown to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum RouteSelection {
+    /// The binding's primary resource.
+    #[default]
+    Primary,
+    /// A fallback, chosen because LARM was unreachable.
+    LocalUnreachable,
+}
+
+/// Observed state of LARM at request time. `Unknown` is treated as reachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct LocalAvailability {
+    pub(crate) larm: Reachability,
+}
+
+impl LocalAvailability {
+    pub(crate) fn of(state: &crate::AppState) -> Self {
+        Self::from(&state.reachability.snapshot())
+    }
+}
+
+impl From<&ReachabilitySnapshot> for LocalAvailability {
+    fn from(snapshot: &ReachabilitySnapshot) -> Self {
+        Self {
+            larm: snapshot.harness,
+        }
+    }
+}
 
 /// Route fixed at job start. Later settings edits do not change it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -18,6 +50,8 @@ pub(crate) struct ResolvedRoute {
     pub(crate) request_options: Option<serde_json::Value>,
     pub(crate) credential_ref: Option<CredentialRef>,
     pub(crate) fallback_resource_ids: Vec<String>,
+    #[serde(default)]
+    pub(crate) selection: RouteSelection,
     pub(crate) timeout_ms: u64,
     pub(crate) attempt_timeout_ms: Option<u64>,
     /// Hash of the connection, resource and binding settings used by this route.
@@ -32,11 +66,39 @@ pub(crate) enum ResolveError {
     ResourceDisabled(String),
     ConnectionDisabled(String),
     Invalid(String),
+    CloudNotAllowed(Purpose),
+    /// LARM is unreachable and no allowed fallback exists.
+    LocalUnreachable {
+        purpose: Purpose,
+        cloud_blocked: bool,
+    },
 }
 
+impl ResolveError {
+    pub(crate) fn user_message(&self) -> Option<&'static str> {
+        match self {
+            Self::LocalUnreachable {
+                cloud_blocked: false,
+                ..
+            } => Some("LARMに接続できません。外出時の代替先が設定されていません。"),
+            Self::LocalUnreachable {
+                cloud_blocked: true,
+                ..
+            } => {
+                Some("LARMに接続できません。代替先へのクラウド送信がこの用途で許可されていません。")
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The single place that decides which resource serves a request.
+/// The primary is used unless it is LARM and LARM is known to be unreachable; then the
+/// fallbacks are tried in order. A broken primary is a configuration error, never a switch.
 pub(crate) fn resolve_route(
     snapshot: &RegistrySnapshot,
     purpose: Purpose,
+    availability: LocalAvailability,
 ) -> Result<ResolvedRoute, ResolveError> {
     let binding = snapshot
         .binding(purpose)
@@ -51,7 +113,25 @@ pub(crate) fn resolve_route(
         .primary_resource_id
         .as_deref()
         .ok_or(ResolveError::NotConfigured(purpose))?;
-    resolve_resource(snapshot, purpose, resource_id)
+    let primary = resolve_resource(snapshot, purpose, resource_id)?;
+    if primary.adapter_kind != AdapterKind::Larm || availability.larm != Reachability::Unreachable {
+        return Ok(primary);
+    }
+    let mut cloud_blocked = false;
+    for id in &binding.fallback_resource_ids {
+        match resolve_resource(snapshot, purpose, id) {
+            Ok(mut route) if route.adapter_kind != AdapterKind::Larm => {
+                route.selection = RouteSelection::LocalUnreachable;
+                return Ok(route);
+            }
+            Err(ResolveError::CloudNotAllowed(_)) => cloud_blocked = true,
+            _ => {}
+        }
+    }
+    Err(ResolveError::LocalUnreachable {
+        purpose,
+        cloud_blocked,
+    })
 }
 
 pub(crate) fn resolve_resource(
@@ -88,9 +168,7 @@ pub(crate) fn resolve_resource(
         ));
     }
     if connection.location == "cloud" && !binding.cloud_allowed {
-        return Err(ResolveError::Invalid(
-            "この用途のクラウド送信は許可されていません".into(),
-        ));
+        return Err(ResolveError::CloudNotAllowed(purpose));
     }
     if let Some(reason) = super::unsupported_reason(snapshot, purpose, resource_id) {
         return Err(ResolveError::Invalid(reason));
@@ -119,6 +197,7 @@ pub(crate) fn resolve_resource(
         request_options: resource.request_options.clone(),
         credential_ref: connection.credential_ref.clone(),
         fallback_resource_ids: binding.fallback_resource_ids.clone(),
+        selection: RouteSelection::Primary,
         timeout_ms: binding.timeout_ms,
         attempt_timeout_ms: binding.attempt_timeout_ms,
         fingerprint: digest.iter().map(|byte| format!("{byte:02x}")).collect(),

@@ -2,12 +2,22 @@
 //! unchanged voice pipeline and the registry always agree on one value.
 use super::documents::validate_voice_route_provider;
 use super::{
-    database_error, load_model_providers, load_routing_settings, now_iso, read_settings_document,
+    database_error, load_model_providers, load_routing_settings, now_iso,
     validate_routing_settings, voice_fallbacks,
 };
 use crate::providers::service_registry::{Purpose, PurposeBinding, RegistrySnapshot};
-use crate::{ModelProviderSettings, SecurityRuntimeSettings, VoiceRouteSettings};
+use crate::{ModelProviderSettings, VoiceRouteSettings};
 use rusqlite::{params, Connection};
+
+/// A voice binding that uses a service created through the registry (as primary or as a
+/// fallback) cannot be expressed by the legacy routes, so the registry owns it.
+pub(crate) fn registry_owned(binding: &PurposeBinding) -> bool {
+    binding
+        .primary_resource_id
+        .iter()
+        .chain(binding.fallback_resource_ids.iter())
+        .any(|id| id.starts_with("res:svc-"))
+}
 
 fn legacy_provider_id<'a>(
     resource_id: &'a str,
@@ -70,13 +80,9 @@ pub(crate) fn project_voice_bindings(
         let binding = snapshot
             .binding(purpose)
             .ok_or("Voice binding is missing")?;
-        if binding
-            .primary_resource_id
-            .as_deref()
-            .is_some_and(|id| id.starts_with("res:svc-"))
-        {
-            if !binding.enabled || !binding.fallback_resource_ids.is_empty() {
-                return Err("登録した音声サービスの無効化・代替先にはまだ対応していません".into());
+        if registry_owned(binding) {
+            if !binding.enabled {
+                return Err("登録した音声サービスを使う用途は無効化できません".into());
             }
             // The purpose registry is authoritative for new resources. Legacy
             // settings cannot losslessly express their credential references.
@@ -89,11 +95,7 @@ pub(crate) fn project_voice_bindings(
         }
     }
     validate_routing_settings(&routing)?;
-    let security: SecurityRuntimeSettings = serde_json::from_value(
-        read_settings_document(connection, "security.runtime", "default")?.value_json,
-    )
-    .map_err(|error| format!("Could not decode security settings: {error}"))?;
-    voice_fallbacks::validate(&providers, &routing, &security)?;
+    voice_fallbacks::validate(&providers, &routing)?;
     validate_voice_route_provider(
         &routing.voice_transcribe.source,
         routing.voice_transcribe.provider_id.as_deref(),

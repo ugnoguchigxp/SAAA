@@ -8,3 +8,6 @@ mod fixture;
 use fixture::*;
 #[path = "tests/task_bundle_rolls_back_with_answer_and_rejects_e.rs"]
 mod task_bundle_rolls_back_with_answer_and_rejects_e;
+
+#[path = "tests/memory_contract.rs"]
+mod memory_contract;

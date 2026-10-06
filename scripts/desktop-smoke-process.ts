@@ -1,9 +1,13 @@
-import { signalSmokeProcess } from "./desktop-smoke-signals";
+import {
+  startSmokeProcess as startProcess,
+  terminateSmokeProcess as terminate,
+  type SmokeProcess,
+} from "./desktop-smoke-child";
 import { readDesktopE2EChecks } from "./desktop-e2e-report";
-import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { startLockedBuild } from "./verification-build";
 
 export type SmokeOptions = {
   root: string;
@@ -17,7 +21,6 @@ export type SmokeOptions = {
 };
 
 type Stage = "build" | "bundle" | "launch" | "ready" | "cleanup";
-const LOG_LIMIT = 256_000;
 
 export function sanitizeSmokeLog(text: string, root: string): string {
   const values = Object.entries(process.env)
@@ -31,53 +34,6 @@ export function sanitizeSmokeLog(text: string, root: string): string {
     .replace(/https?:\/\/[^\s<>"']+/g, "[URL]");
 }
 
-function startProcess(command: string[], root: string, env = process.env) {
-  const child = spawn(command[0], command.slice(1), {
-    cwd: root,
-    env,
-    detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const events: { event: string; elapsedMs: number }[] = [];
-  const started = Date.now();
-  const record = (event: string) => events.push({ event, elapsedMs: Date.now() - started });
-  child.once("spawn", () => record("spawn"));
-  child.once("error", () => record("error"));
-  child.once("exit", () => record("exit"));
-  child.once("close", () => record("close"));
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => {
-    stdout = (stdout + chunk).slice(-LOG_LIMIT);
-  });
-  child.stderr.on("data", (chunk: string) => {
-    stderr = (stderr + chunk).slice(-LOG_LIMIT);
-  });
-  const exited = new Promise<number>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => resolve(code ?? 1));
-  });
-  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-  const kill = (signal: NodeJS.Signals) => signalSmokeProcess(child, signal);
-  return { child, exited, closed, kill, events, logs: () => ({ stdout, stderr }) };
-}
-
-type SmokeProcess = ReturnType<typeof startProcess>;
-async function terminate(child: SmokeProcess): Promise<void> {
-  child.kill("SIGTERM");
-  const force = setTimeout(() => child.kill("SIGKILL"), 2_000);
-  try {
-    await child.closed;
-  } finally {
-    clearTimeout(force);
-    // Parent close only accounts for inherited pipes. A descendant with its own
-    // output may still be alive after ignoring SIGTERM.
-    child.kill("SIGKILL");
-  }
-}
-
 export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
   mkdirSync(options.reportDir, { recursive: true });
   const started = Date.now();
@@ -87,9 +43,11 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
   let application: SmokeProcess | undefined;
   let active: SmokeProcess | undefined;
   let interrupted = false;
+  const abort = new AbortController();
   let stageExitCode: number | undefined;
   const interrupt = () => {
     interrupted = true;
+    abort.abort();
     active?.kill("SIGKILL");
   };
   process.once("SIGINT", interrupt);
@@ -127,7 +85,9 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
   };
   try {
     console.log("desktop smoke: build");
-    const build = startProcess(options.build, options.root);
+    const { build, release } = await startLockedBuild(options.root, abort.signal, (env, detached) =>
+      startProcess(options.build, options.root, env, detached),
+    );
     active = build;
     const buildOutput = saveOutput("build", build);
     let timedOut = false;
@@ -150,6 +110,7 @@ export async function runDesktopSmoke(options: SmokeOptions): Promise<void> {
         }
       } finally {
         clearTimeout(timeout);
+        await release();
       }
     }
     active = undefined;

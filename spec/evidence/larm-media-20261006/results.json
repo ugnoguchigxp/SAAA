@@ -1,0 +1,158 @@
+{
+  "verifiedAt": "2026-10-06T23:16:14.915299+09:00",
+  "controlUrl": "http://192.168.0.130:9810",
+  "profiles": {
+    "SAAA-w-Image": {
+      "revision": "1411986f3a921403a3a2ef724fb30e1e0390aed2471a58a7d3976dd346bdcb37",
+      "id": "saaa-conversation-gemma4-26b-voice",
+      "providers": [
+        {
+          "name": "asr",
+          "model": "qwen3-asr-1.7b"
+        },
+        {
+          "name": "embedding",
+          "model": "multilingual-e5-small"
+        },
+        {
+          "name": "llm",
+          "model": "gemma4-26b-a4b"
+        },
+        {
+          "name": "system-one",
+          "model": "laya-multilingual"
+        },
+        {
+          "name": "tts",
+          "model": "voicevox-core"
+        }
+      ],
+      "services": [
+        {
+          "name": "image",
+          "capability": "media.image.generate",
+          "protocol": "larm.image-generation.v1",
+          "endpoint": "/v1/images/generations",
+          "model": "qwen-image-2.1",
+          "startupPolicy": {
+            "minWarmInstances": 0,
+            "idleTtlSeconds": 0
+          }
+        }
+      ]
+    },
+    "SAAA-w-music": {
+      "revision": "1411986f3a921403a3a2ef724fb30e1e0390aed2471a58a7d3976dd346bdcb37",
+      "id": "saaa-conversation-gemma4-26b-voice",
+      "providers": [
+        {
+          "name": "asr",
+          "model": "qwen3-asr-1.7b"
+        },
+        {
+          "name": "embedding",
+          "model": "multilingual-e5-small"
+        },
+        {
+          "name": "llm",
+          "model": "gemma4-26b-a4b"
+        },
+        {
+          "name": "system-one",
+          "model": "laya-multilingual"
+        },
+        {
+          "name": "tts",
+          "model": "voicevox-core"
+        }
+      ],
+      "services": [
+        {
+          "name": "music",
+          "capability": "media.music.generate",
+          "protocol": "larm.music-generation.v1",
+          "endpoint": "/v1/music/generations",
+          "model": "ace-step-1.5",
+          "startupPolicy": {
+            "minWarmInstances": 0,
+            "idleTtlSeconds": 0
+          }
+        }
+      ]
+    }
+  },
+  "readyAfterGeneration": {
+    "status": 200,
+    "body": {
+      "status": "ready"
+    }
+  },
+  "image": {
+    "postCount": 1,
+    "startedAt": "2026-10-06T23:12:27+09:00",
+    "artifactRetrievedAt": "2026-10-06T23:14:02+09:00",
+    "elapsedSeconds": 95,
+    "id": "image_e3d184867b8d4ecd98b1be366093a1c9",
+    "mimeType": "image/webp",
+    "bytes": 4792,
+    "result": "passed"
+  },
+  "music": {
+    "postCount": 1,
+    "startedAt": "2026-10-06T23:14:02+09:00",
+    "artifactRetrievedAt": "2026-10-06T23:15:26+09:00",
+    "elapsedSeconds": 83,
+    "jobId": "music_b1b52810-e585-4f08-9a81-88d8768d01d9",
+    "mimeType": "audio/mpeg",
+    "bytes": 2880812,
+    "metadataRetrieved": true,
+    "result": "passed",
+    "jobReadback": {
+      "status": 200,
+      "body": {
+        "jobId": "music_b1b52810-e585-4f08-9a81-88d8768d01d9",
+        "status": "completed",
+        "phase": "completed",
+        "createdAt": "2026-10-06T14:14:02.487Z",
+        "updatedAt": "2026-10-06T14:15:24.638Z",
+        "result": {
+          "id": "music_b1b52810-e585-4f08-9a81-88d8768d01d9",
+          "provider": "ace-step",
+          "model": "acestep-v15-turbo",
+          "durationSeconds": 180,
+          "format": "mp3",
+          "seed": 2317117441,
+          "generationTimeMs": 66326,
+          "realtimeFactor": 0.36847777777777774,
+          "metadata": {
+            "upstreamTaskId": "b594da37-3e7e-4019-aa22-08767c6a5657",
+            "upstreamArtifactCleanup": "removed",
+            "lmModel": "acestep-5Hz-lm-0.6B",
+            "bpm": "N/A",
+            "duration": 180,
+            "genres": "N/A",
+            "keyscale": "N/A",
+            "timesignature": "N/A",
+            "prompt": "Gentle acoustic piano music, calm and simple melody",
+            "lyrics": ""
+          },
+          "audioUrl": "/v1/music/generations/music_b1b52810-e585-4f08-9a81-88d8768d01d9/audio",
+          "metadataUrl": "/v1/music/generations/music_b1b52810-e585-4f08-9a81-88d8768d01d9/metadata"
+        },
+        "progress": 1
+      }
+    }
+  },
+  "automaticResubmissions": 0,
+  "prestartOrSystemdOperations": false,
+  "lifecycleVerification": "Image success and music completed rely on the public Control contract that artifacts are saved and workers stopped before success; no independent process inspection was performed.",
+  "validation": {
+    "larmSessionTestsPassed": 84,
+    "mediaRegressionTestsPassedAfterFinalClientChange": 20,
+    "frontendTestsPassed": 10,
+    "typecheck": "passed",
+    "clippyAllTargets": "passed",
+    "tauriFullLibraryCheck": "not completed: cancelled own check while waiting for another build to release the shared target lock"
+  },
+  "liveTestNote": "The live test ran before the final explicit reqwest retry::never setting; that setting was subsequently verified with the 20 deterministic media tests. No live generation was repeated."
+}

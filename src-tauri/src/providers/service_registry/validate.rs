@@ -142,36 +142,18 @@ pub(crate) fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), Strin
                 ));
             }
         }
-        if matches!(
-            binding.purpose,
-            Purpose::MediaImageGenerate | Purpose::MediaMusicGenerate
-        ) && !binding.fallback_resource_ids.is_empty()
+        let larm = |id: &str| {
+            snapshot
+                .resource(id)
+                .and_then(|r| snapshot.connection(&r.connection_id))
+                .is_some_and(|c| c.adapter_kind == AdapterKind::Larm)
+        };
+        if binding.review == BindingReview::Ready
+            && binding.fallback_resource_ids.iter().any(|id| larm(id))
         {
             return Err(
-                "生成要求の代替先には対応していません。重複生成を避けるため同じ処理IDを照会します"
-                    .into(),
+                "LARMは代替先にできません。LARMが使えない時の代替先を指定してください".into(),
             );
-        }
-        if binding.purpose == Purpose::ConversationRespond
-            && binding.review == BindingReview::Ready
-            && !binding.fallback_resource_ids.is_empty()
-        {
-            let direct = |id: &str| {
-                snapshot
-                    .resource(id)
-                    .and_then(|r| snapshot.connection(&r.connection_id))
-                    .is_some_and(|c| {
-                        matches!(
-                            c.adapter_kind,
-                            AdapterKind::ChatCompletions | AdapterKind::AnthropicMessages
-                        )
-                    })
-            };
-            if !binding.primary_resource_id.as_deref().is_some_and(direct)
-                || !binding.fallback_resource_ids.iter().all(|id| direct(id))
-            {
-                return Err("会話の代替先は直接モデルAPI間の切替に対応しています".into());
-            }
         }
         if binding.primary_resource_id.is_none() && !binding.fallback_resource_ids.is_empty() {
             return Err("A fallback requires a primary resource".to_string());

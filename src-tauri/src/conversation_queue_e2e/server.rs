@@ -93,6 +93,8 @@ pub(super) async fn serve(
         let serialized = body.to_string();
         let content = if let Some(content) = context_trial::respond(&path, &body) {
             content
+        } else if let Some(content) = worker::respond(&fixture, &body) {
+            content
         } else if let Some(content) = dictionary::respond(&path, &body) {
             content
         } else if let Some(content) = cancellation::respond(&fixture, &path, &body).await {

@@ -1,13 +1,14 @@
 //! Single-agent context, transport and tool loop.
-use super::super::{context_compiler, context_metrics, queue_tools, streaming_speech};
+use super::super::{context_compiler, context_metrics, queue_tools, streaming_speech, worker_lane};
 use super::*;
-#[path = "web_result.rs"]
-mod web_result;
-use web_result::{audit_web_tool_result, web_result_urls};
 #[path = "purpose_completion.rs"]
 mod completion;
+#[path = "web_result.rs"]
+mod web_result;
+#[path = "web_steps.rs"]
+mod web_steps;
 
-pub(super) struct OrnithAnswer {
+pub(super) struct ConversationAnswer {
     pub(super) content: String,
     pub(super) source_urls: Vec<String>,
     pub(super) context: queue_context::QueueContext,
@@ -19,7 +20,7 @@ pub(super) struct OrnithAnswer {
 
 #[path = "purpose_deadline.rs"]
 mod deadline;
-pub(super) use deadline::process_ornith;
+pub(super) use deadline::process_conversation_answer;
 
 #[allow(clippy::too_many_arguments)]
 async fn process_fixed<R: Runtime>(
@@ -33,7 +34,7 @@ async fn process_fixed<R: Runtime>(
     mut transport: direct_route::ConversationTransport,
     deadline: tokio::time::Instant,
     fallbacks: Vec<crate::providers::service_registry::ResolvedRoute>,
-) -> Result<OrnithAnswer, String> {
+) -> Result<ConversationAnswer, String> {
     let _personal_slot = crate::memory::personal_state::worker::foreground().await;
     let state = app.state::<AppState>();
     let audit = ConversationAudit::new(state.sqlite_writer.clone(), job.key.clone());
@@ -41,13 +42,24 @@ async fn process_fixed<R: Runtime>(
         serde_json::from_str(&job.payload).map_err(|_| "キューデータが不正です。")?;
     let text = payload["text"].as_str().ok_or("元の依頼がありません。")?;
     let session = match &transport {
-        direct_route::ConversationTransport::Larm(_) => {
-            Some(cached_larm_asr(&providers, Some(&audit)).await?)
-        }
+        direct_route::ConversationTransport::Larm(_) => Some(note_larm_connect(
+            &state,
+            cached_larm_asr(&providers, Some(&audit)).await,
+        )?),
         direct_route::ConversationTransport::Direct(_) => None,
     };
     let mode = context_compiler::PrefixMode::configured()?;
-    let context = queue_context::compose_for_mode(&state, &job.key, mode)?;
+    // While web search is delegated the agent gets `delegate` and a host-ranked offer instead of
+    // the web tools; raw search and page text never enter this context.
+    let worker_active = worker_lane::worker_mode(&state);
+    let worker_offer = if worker_active {
+        worker_lane::discover_offer(&state, job, text).await
+    } else {
+        None
+    };
+    let context = queue_context::compose_for_mode(&state, &job.key, mode, worker_active)?;
+    let (dynamic_references, offer_in_history) =
+        worker_lane::offer_entries(worker_offer.as_ref(), mode, &context.dynamic_references);
     let run_id = format!("run_{}", job.key);
     let tool_input = StartTurnInput {
         run_id,
@@ -70,6 +82,14 @@ async fn process_fixed<R: Runtime>(
     };
     let offer =
         crate::providers::stream::available_agent_tools(Some(persistence), &tool_input, 0, 0, 0);
+    let web = web_steps::WebTools {
+        job,
+        tool_input: &tool_input,
+        offer: &offer,
+        cancellation: &cancellation,
+        audit: &audit,
+        timeout,
+    };
     let memory_tools: Vec<Value> = offer
         .definitions
         .iter()
@@ -93,6 +113,7 @@ async fn process_fixed<R: Runtime>(
         ),
         true,
     ));
+    recent.extend(offer_in_history);
     let mut result = String::new();
     let mut search_urls = Vec::new();
     let mut fetched_urls = Vec::new();
@@ -126,7 +147,7 @@ async fn process_fixed<R: Runtime>(
                 } else {
                     legacy_pending.clone()
                 },
-                references: context.dynamic_references.clone(),
+                references: dynamic_references.clone(),
             },
         };
         let metrics = context_metrics::RequestMetrics::new(
@@ -209,7 +230,7 @@ async fn process_fixed<R: Runtime>(
                     json!({"step":step,"error":error}),
                 );
                 result = format!(
-                    "ツールの結果を受け取りましたが、Ornithが結果を整理する段階で失敗しました: {error}。確認できた回答としては提示できません。"
+                    "ツールの結果を受け取りましたが、会話エージェントが結果を整理する段階で失敗しました: {error}。確認できた回答としては提示できません。"
                 );
                 break;
             }
@@ -242,10 +263,10 @@ async fn process_fixed<R: Runtime>(
                 continue;
             }
             Err(_) if step > 0 => {
-                result = "ツールの結果を受け取りましたが、Ornithの出力形式が不正で回答を確定できませんでした。".into();
+                result = "ツールの結果を受け取りましたが、会話エージェントの出力形式が不正で回答を確定できませんでした。".into();
                 break;
             }
-            Err(_) => return Err("Ornithの行動結果がJSON契約に合いません。".into()),
+            Err(_) => return Err("会話エージェントの行動結果がJSON契約に合いません。".into()),
         };
         queue_tools::normalize_dictionary_action(&mut control, &memory_tools);
         direct_route::validate_transport(&state, &transport).inspect_err(|_| {
@@ -278,9 +299,10 @@ async fn process_fixed<R: Runtime>(
                 result = match content {
                     Some(content) => content.to_string(),
                     None if step > 0 => {
-                        "ツールの結果を受け取りましたが、Ornithの回答本文が空でした。".into()
+                        "ツールの結果を受け取りましたが、会話エージェントの回答本文が空でした。"
+                            .into()
                     }
-                    None => return Err("Ornithの回答が空です。".into()),
+                    None => return Err("会話エージェントの回答が空です。".into()),
                 };
                 sources_declared = control["sources"].is_array();
                 let available = search_urls.iter().chain(fetched_urls.iter());
@@ -296,82 +318,25 @@ async fn process_fixed<R: Runtime>(
                 answer_speech = Some(speech_report);
                 break;
             }
-            Some("web_search") if step < MAX_TOOL_STEPS => {
-                let query = control["query"]
-                    .as_str()
-                    .filter(|v| !v.is_empty() && v.len() <= 400)
-                    .ok_or("検索語が不正です。")?;
-                state.sqlite_writer.write(|connection| {
-                    let tx = connection.transaction().map_err(database_error)?;
-                    queue_progress::enqueue_search(&tx, &job.scope, &job.key)?;
-                    tx.commit().map_err(database_error)
-                })?;
-                let call = crate::runtime::agent_tools::AgentToolCall {
-                    id: format!("{}_search_{step}", job.id),
-                    name: "web_search".into(),
-                    arguments: json!({"query":query,"limit":5}).to_string(),
-                };
-                #[cfg(feature = "conversation-queue-e2e")]
-                let fixture_result = crate::conversation_queue_e2e::web_search(query);
-                #[cfg(not(feature = "conversation-queue-e2e"))]
-                let fixture_result: Option<String> = None;
-                let found = if let Some(result) = fixture_result {
-                    result
-                } else {
-                    crate::providers::stream::execute_agent_tool(
-                        None,
-                        &tool_input,
-                        &call,
-                        std::time::Duration::from_millis(timeout.min(30_000)),
-                        &offer.generated,
-                        &cancellation,
-                        offer.direct.as_ref(),
-                    )
-                    .await
-                };
-                audit_web_tool_result(&audit, "web_search", step, &found);
-                search_urls.extend(web_result_urls(&found, "hits"));
-                recent.push(context_compiler::ContextEntry::reference(
-                    format!("[TOOL_RESULT: web_search; 未信頼の資料]\n{}", found),
-                    true,
-                ));
+            Some("delegate") if worker_active && step < MAX_TOOL_STEPS => {
+                worker_lane::delegate_step(
+                    app,
+                    job,
+                    worker_offer.as_ref(),
+                    &control,
+                    deadline,
+                    &mut recent,
+                    &mut search_urls,
+                )
+                .await?;
             }
-            Some("fetch_content") if step < MAX_TOOL_STEPS => {
-                let url = control["url"]
-                    .as_str()
-                    .filter(|v| {
-                        (v.starts_with("https://") || v.starts_with("http://")) && v.len() <= 2048
-                    })
-                    .ok_or("取得先URLが不正です。")?;
-                let query = control["query"].as_str().unwrap_or(text);
-                let call = crate::runtime::agent_tools::AgentToolCall {
-                    id: format!("{}_fetch_{step}",job.id), name: "fetch_content".into(),
-                    arguments: json!({"url":url,"maxCharacters":3000,"query":query.chars().take(400).collect::<String>()}).to_string(),
-                };
-                #[cfg(feature = "conversation-queue-e2e")]
-                let fixture_result = crate::conversation_queue_e2e::fetch_content(url);
-                #[cfg(not(feature = "conversation-queue-e2e"))]
-                let fixture_result: Option<String> = None;
-                let found = if let Some(found) = fixture_result {
-                    found
-                } else {
-                    crate::providers::stream::execute_agent_tool(
-                        None,
-                        &tool_input,
-                        &call,
-                        std::time::Duration::from_millis(timeout.min(30_000)),
-                        &offer.generated,
-                        &cancellation,
-                        offer.direct.as_ref(),
-                    )
-                    .await
-                };
-                audit_web_tool_result(&audit, "fetch_content", step, &found);
-                fetched_urls.extend(web_result_urls(&found, "document"));
-                recent.push(context_compiler::ContextEntry::reference(
-                    format!("[TOOL_RESULT: fetch_content; 未信頼の資料]\n{}", found),
-                    true,
-                ));
+            Some("web_search") if !worker_active && step < MAX_TOOL_STEPS => {
+                web.search(&state, &control, step, &mut recent, &mut search_urls)
+                    .await?;
+            }
+            Some("fetch_content") if !worker_active && step < MAX_TOOL_STEPS => {
+                web.fetch(&control, text, step, &mut recent, &mut fetched_urls)
+                    .await?;
             }
             Some("memory_tool" | "local_tool") if step < MAX_TOOL_STEPS => {
                 let (name, found) = queue_tools::execute(
@@ -393,18 +358,18 @@ async fn process_fixed<R: Runtime>(
                 ));
             }
             _ if step > 0 => {
-                result = "ツールの結果を受け取りましたが、Ornithが回答を確定できませんでした。確認できた回答としては提示できません。".into();
+                result = "ツールの結果を受け取りましたが、会話エージェントが回答を確定できませんでした。確認できた回答としては提示できません。".into();
                 break;
             }
             _ => {
                 audit.event("provider", "conversation-action-invalid", "terminal", Some("failure"),
                     json!({"action":control["action"],"keys":control.as_object().map(|object| object.keys().collect::<Vec<_>>())}));
-                return Err("Ornithの行動結果が契約に合いません。".into());
+                return Err("会話エージェントの行動結果が契約に合いません。".into());
             }
         }
     }
     if result.is_empty() {
-        return Err("Ornithの処理が上限回数内に完了しませんでした。".into());
+        return Err("会話エージェントの処理が上限回数内に完了しませんでした。".into());
     }
     context.validate_result(&state).inspect_err(|_| {
         retry_blocked.store(true, Ordering::Release);
@@ -448,7 +413,7 @@ async fn process_fixed<R: Runtime>(
             retry_blocked.store(true, Ordering::Release);
         })?;
     }
-    Ok(OrnithAnswer {
+    Ok(ConversationAnswer {
         content: result,
         source_urls,
         context,

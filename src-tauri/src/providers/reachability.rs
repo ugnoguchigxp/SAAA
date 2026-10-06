@@ -1,7 +1,5 @@
 //! LAN 上の Provider Harness への到達性を観測する。選択ロジックへは snapshot だけを渡す。
-#[cfg(any(test, feature = "offline-contracts"))]
-use std::sync::RwLockReadGuard;
-use std::sync::{RwLock, RwLockWriteGuard};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -52,7 +50,6 @@ pub(crate) struct ReachabilityState {
 }
 
 impl ReachabilityState {
-    #[cfg(any(test, feature = "offline-contracts"))]
     pub(crate) fn snapshot(&self) -> ReachabilitySnapshot {
         let inner = read_inner(&self.inner);
         ReachabilitySnapshot {
@@ -62,7 +59,8 @@ impl ReachabilityState {
         }
     }
 
-    /// 成功 1 回で Reachable、失敗は FAILURE_THRESHOLD(=2) 連続で Unreachable。
+    /// 成功 1 回で Reachable。Reachable からの失敗は FAILURE_THRESHOLD(=2) 連続で Unreachable。
+    /// 状態が未確定(Unknown)の最初の失敗は即 Unreachable とし、外出先の起動直後に待たせない。
     pub(crate) fn record(&self, ok: bool, now: Instant) {
         let mut inner = write_inner(&self.inner);
         inner.observed_at = Some(now);
@@ -72,7 +70,7 @@ impl ReachabilityState {
             return;
         }
         inner.consecutive_failures = inner.consecutive_failures.saturating_add(1);
-        if inner.harness == Reachability::Unreachable
+        if inner.harness != Reachability::Reachable
             || inner.consecutive_failures >= FAILURE_THRESHOLD
         {
             inner.harness = Reachability::Unreachable;
@@ -85,7 +83,6 @@ impl ReachabilityState {
     }
 }
 
-#[cfg(any(test, feature = "offline-contracts"))]
 fn read_inner(lock: &RwLock<Inner>) -> RwLockReadGuard<'_, Inner> {
     lock.read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -97,7 +94,8 @@ fn write_inner(lock: &RwLock<Inner>) -> RwLockWriteGuard<'_, Inner> {
 }
 
 pub(crate) const FAILURE_THRESHOLD: u8 = 2;
-pub(crate) const PROBE_TIMEOUT_MS: u64 = 400;
+/// Generous because a first failure from Unknown is decisive and switches requests to the fallback.
+pub(crate) const PROBE_TIMEOUT_MS: u64 = 1500;
 pub(crate) const PROBE_INTERVAL_SECS: u64 = 20;
 
 #[cfg(test)]
@@ -116,6 +114,13 @@ mod tests {
         state.record(false, now);
         assert_eq!(state.snapshot().harness, Reachability::Unreachable);
         assert_eq!(state.snapshot().consecutive_failures, FAILURE_THRESHOLD);
+    }
+
+    #[test]
+    fn rr_ls_04_unknown_first_failure_is_unreachable() {
+        let state = ReachabilityState::default();
+        state.record(false, Instant::now());
+        assert_eq!(state.snapshot().harness, Reachability::Unreachable);
     }
 
     #[test]

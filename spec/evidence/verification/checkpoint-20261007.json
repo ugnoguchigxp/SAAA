@@ -1,0 +1,53 @@
+{
+  "recordedAt": "2026-10-07T07:54:45.621307+09:00",
+  "intent": "User-requested checkpoint of current work on the existing branch, including in-progress changes. This is not a build-readiness acceptance.",
+  "branch": "feat/self-diagnosis-v2",
+  "workflow": "No new branch, worktree or merge. Advance/full are readiness checks, not prerequisites for checkpoint commit/push.",
+  "currentLightweightChecks": [
+    {
+      "command": "bun run --silent verify test --scope typescript -- tests/verification-lock.test.ts tests/verify.test.ts tests/desktop-smoke.test.ts tests/desktop-smoke-descendants.test.ts",
+      "status": "passed",
+      "note": "Includes 11 build-lock concurrency/cancellation tests."
+    },
+    {
+      "command": "bun run --silent verify lint --scope typescript",
+      "status": "passed"
+    },
+    {
+      "command": "bun run --silent verify typecheck --scope typescript",
+      "status": "passed"
+    },
+    {
+      "command": "bun run --silent verify format --scope typescript -- scripts/verify-plan.ts",
+      "status": "passed"
+    },
+    {
+      "command": "git diff --cached --check",
+      "status": "passed"
+    }
+  ],
+  "earlierWholeProjectChecks": [
+    {
+      "command": "bun run --silent verify:advance",
+      "status": "failed",
+      "stage": "lint (src-tauri)",
+      "details": "Clippy warning ratchet exceeded; 231 warning keys in the last captured lint run. Later advance stages did not run."
+    },
+    {
+      "command": "bun run --silent verify size",
+      "status": "failed",
+      "details": "63 module-size, missing registration or stale registration issues in the captured run."
+    },
+    {
+      "command": "bun run --silent spec:check",
+      "status": "failed",
+      "details": "109 link errors and one formatting issue in the captured run."
+    }
+  ],
+  "limitations": [
+    "Earlier whole-project failures were observed before subsequent shared-workspace edits and are retained as known incomplete verification; exact current counts were not remeasured.",
+    "The saved snapshot has not passed whole-project advance/full, offline E2E or desktop launch acceptance.",
+    "Live-service and real microphone/speaker overlap acceptance were not performed in this checkpoint.",
+    "Another chat is still working in the same checkout; additional edits after this snapshot may remain uncommitted."
+  ]
+}

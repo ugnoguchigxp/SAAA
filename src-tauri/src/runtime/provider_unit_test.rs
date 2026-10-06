@@ -69,7 +69,7 @@ pub(crate) async fn run_provider_unit_test(
     let capability = input.capability.as_str();
     if !matches!(
         capability,
-        "asr" | "tts" | "backchannel" | "llm" | "embedding"
+        "asr" | "tts" | "backchannel" | "llm" | "embedding" | "laya" | "laya-speech"
     ) {
         return Err("テスト対象のProviderが不正です。".into());
     }
@@ -141,6 +141,32 @@ async fn run_with_settings(
     on_progress: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<UnitTestResult, String> {
     let started = std::time::Instant::now();
+    if matches!(capability, "laya" | "laya-speech") {
+        let result = crate::providers::laya::choose(
+            &providers.harness,
+            credential,
+            &if capability == "laya-speech" {
+                serde_json::json!({"utterance":text})
+            } else {
+                serde_json::json!(text)
+            },
+            if capability == "laya-speech" {
+                crate::providers::laya::speech_question()
+            } else {
+                crate::providers::laya::test_question()
+            },
+            on_progress,
+        )
+        .await?;
+        return Ok(UnitTestResult {
+            capability: capability.into(),
+            model: result.model,
+            output: serde_json::to_string_pretty(&result.response)
+                .map_err(|_| "Layaの結果を表示できませんでした。")?,
+            latency_ms: started.elapsed().as_millis() as u64,
+            audio_base64: None,
+        });
+    }
     let preference = crate::providers::larm_resources::profile::preference(
         providers.harness.larm_profile.as_deref(),
     );
@@ -674,3 +700,9 @@ async fn run_fixture_provider_unit_test_mode(
 pub async fn verify_conversation_speaker_gate_fixture() {
     crate::voice::conversation_speaker::verify_gate_fixture().await;
 }
+
+#[cfg(feature = "provider-unit-test-harness")]
+#[path = "provider_unit_test_laya.rs"]
+mod laya_live;
+#[cfg(feature = "provider-unit-test-harness")]
+pub use laya_live::{run_saved_laya_avatar_test, run_saved_laya_unit_test};

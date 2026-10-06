@@ -6,7 +6,8 @@
 //! silent switch to another service.
 use super::*;
 use crate::providers::service_registry::{
-    resolve_route, AdapterKind, Purpose, ResolveError, ResolvedRoute,
+    resolve_route, AdapterKind, LocalAvailability, Purpose, ResolveError, ResolvedRoute,
+    RouteSelection,
 };
 
 const DIRECT_MAX_OUTPUT_TOKENS: u32 = 4_096;
@@ -27,6 +28,7 @@ pub(super) fn prepare_transport(
     ),
     String,
 > {
+    let availability = LocalAvailability::of(state);
     state.sqlite_readers.read(|db| {
         let providers = persistence::load_model_providers(db)?;
         let timeout = persistence::load_routing_settings(db)?
@@ -34,13 +36,12 @@ pub(super) fn prepare_transport(
             .timeout_ms;
         let loaded = persistence::service_registry_store::load_registry(db)?;
         let transport = if loaded.persisted {
-            transport_for(&loaded.snapshot)?
+            transport_for(&loaded.snapshot, availability)?
         } else {
             legacy_harness(&loaded.snapshot)?
         };
         let fallbacks = match &transport {
-            ConversationTransport::Direct(route) => route
-                .fallback_resource_ids
+            ConversationTransport::Direct(route) => remaining_fallbacks(route)
                 .iter()
                 .map(|id| {
                     crate::providers::service_registry::resolve_resource(
@@ -57,6 +58,16 @@ pub(super) fn prepare_transport(
     })
 }
 
+/// A route chosen because LARM was down is itself one of the fallbacks;
+/// only the candidates after it remain.
+fn remaining_fallbacks(route: &ResolvedRoute) -> &[String] {
+    let ids = route.fallback_resource_ids.as_slice();
+    match ids.iter().position(|id| *id == route.resource_id) {
+        Some(index) if route.selection == RouteSelection::LocalUnreachable => &ids[index + 1..],
+        _ => ids,
+    }
+}
+
 fn legacy_harness(
     snapshot: &crate::providers::service_registry::RegistrySnapshot,
 ) -> Result<ConversationTransport, String> {
@@ -70,15 +81,20 @@ fn legacy_harness(
     binding.review = crate::providers::service_registry::BindingReview::Ready;
     binding.primary_resource_id = Some("res:harness-llm".into());
     binding.fallback_resource_ids.clear();
-    resolve_route(&snapshot, Purpose::ConversationRespond)
-        .map(|route| ConversationTransport::Larm(Some(route)))
-        .map_err(|e| format!("LARMの設定を確認してください: {e:?}"))
+    resolve_route(
+        &snapshot,
+        Purpose::ConversationRespond,
+        LocalAvailability::default(),
+    )
+    .map(|route| ConversationTransport::Larm(Some(route)))
+    .map_err(|e| format!("LARMの設定を確認してください: {e:?}"))
 }
 
 pub(super) fn transport_for(
     snapshot: &crate::providers::service_registry::RegistrySnapshot,
+    availability: LocalAvailability,
 ) -> Result<ConversationTransport, String> {
-    match resolve_route(snapshot, Purpose::ConversationRespond) {
+    match resolve_route(snapshot, Purpose::ConversationRespond, availability) {
         Ok(route) => match route.adapter_kind {
             AdapterKind::ChatCompletions | AdapterKind::AnthropicMessages => {
                 Ok(ConversationTransport::Direct(route))
@@ -89,7 +105,10 @@ pub(super) fn transport_for(
         // Stored and executed paths disagreed at migration time. Keep the
         // existing execution until the user applies the binding.
         Err(ResolveError::NeedsReview(_)) => legacy_harness(snapshot),
-        Err(error) => Err(format!("会話サービスの設定を確認してください: {error:?}")),
+        Err(error) => Err(error
+            .user_message()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("会話サービスの設定を確認してください: {error:?}"))),
     }
 }
 
@@ -300,5 +319,91 @@ impl Drop for RouteAttempt {
         if !self.finished {
             let _ = self.finish(false);
         }
+    }
+}
+
+#[cfg(test)]
+mod failover_tests {
+    use super::*;
+    use crate::providers::reachability::Reachability;
+    use crate::providers::service_registry::{
+        BindingReview, Capability, RegistrySnapshot, ServiceConnection, ServiceResource,
+    };
+
+    fn snapshot_with_cloud_fallback() -> RegistrySnapshot {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::initialize_database(&db).unwrap();
+        let mut snapshot = persistence::service_registry_store::load_registry(&db)
+            .unwrap()
+            .snapshot;
+        snapshot.connections.push(ServiceConnection {
+            connection_id: "conn:away".into(),
+            label: "away".into(),
+            adapter_kind: AdapterKind::ChatCompletions,
+            endpoint: "https://api.example.test/v1".into(),
+            location: "cloud".into(),
+            authentication: "none".into(),
+            credential_ref: None,
+            enabled: true,
+        });
+        snapshot.resources.push(ServiceResource {
+            resource_id: "res:away".into(),
+            connection_id: "conn:away".into(),
+            capability: Capability::TextGeneration,
+            model: "m".into(),
+            detail: None,
+            request_options: None,
+            enabled: true,
+        });
+        let binding = snapshot
+            .bindings
+            .iter_mut()
+            .find(|b| b.purpose == Purpose::ConversationRespond)
+            .unwrap();
+        binding.enabled = true;
+        binding.review = BindingReview::Ready;
+        binding.cloud_allowed = true;
+        binding.primary_resource_id = Some("res:harness-llm".into());
+        binding.fallback_resource_ids = vec!["res:away".into()];
+        snapshot
+    }
+
+    fn availability(larm: Reachability) -> LocalAvailability {
+        LocalAvailability { larm }
+    }
+
+    #[test]
+    fn conversation_uses_larm_at_home_and_the_direct_fallback_away() {
+        let snapshot = snapshot_with_cloud_fallback();
+        for home in [Reachability::Reachable, Reachability::Unknown] {
+            assert!(matches!(
+                transport_for(&snapshot, availability(home)).unwrap(),
+                ConversationTransport::Larm(Some(_))
+            ));
+        }
+        let ConversationTransport::Direct(route) =
+            transport_for(&snapshot, availability(Reachability::Unreachable)).unwrap()
+        else {
+            panic!("an unreachable LARM must switch the conversation to the fallback");
+        };
+        assert_eq!(route.resource_id, "res:away");
+        assert_eq!(route.selection, RouteSelection::LocalUnreachable);
+        // The chosen fallback must not be retried as its own fallback.
+        assert!(remaining_fallbacks(&route).is_empty());
+    }
+
+    #[test]
+    fn conversation_without_an_allowed_fallback_fails_with_a_clear_message() {
+        let mut snapshot = snapshot_with_cloud_fallback();
+        snapshot
+            .bindings
+            .iter_mut()
+            .find(|b| b.purpose == Purpose::ConversationRespond)
+            .unwrap()
+            .cloud_allowed = false;
+        let Err(message) = transport_for(&snapshot, availability(Reachability::Unreachable)) else {
+            panic!("cloud sending is not allowed");
+        };
+        assert!(message.contains("クラウド送信がこの用途で許可されていません"));
     }
 }

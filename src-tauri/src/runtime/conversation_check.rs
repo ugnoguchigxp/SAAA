@@ -1,4 +1,4 @@
-//! Conversation-screen turn path: finalized ASR text, Ornith answer and TTS.
+//! Conversation-screen turn path: finalized ASR text, conversation-agent answer and TTS.
 //! Continuous partial-ASR routing and the durable work queue remain separate runtime work.
 #[path = "conversation_check/context_compiler.rs"]
 mod context_compiler;
@@ -8,10 +8,12 @@ mod direct_route;
 pub(crate) mod queue_runtime;
 #[path = "conversation_check/queue_tools.rs"]
 mod queue_tools;
+mod speech_expression;
 #[path = "conversation_check/streaming_speech.rs"]
 mod streaming_speech;
 mod terminal_decision;
 mod voice_routes;
+pub(crate) mod worker_lane;
 pub(crate) fn spawn_queue_workers<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     queue_runtime::spawn(app);
 }
@@ -453,12 +455,16 @@ async fn transcribe_conversation_audio_inner(
     let recognition = async {
         let (text, language, provider_label) = if route.source == "harness" {
             let timeout = std::time::Duration::from_millis(route.timeout_ms.min(120_000));
-            let session = tokio::time::timeout(timeout, cached_larm_asr(providers, Some(audit)))
-                .await
-                .map_err(|_| {
-                    "LARMのProvider接続準備が時間内に完了せず、ASRへ音声を送れませんでした。"
-                        .to_string()
-                })??;
+            let session = note_larm_connect(
+                state,
+                tokio::time::timeout(timeout, cached_larm_asr(providers, Some(audit)))
+                    .await
+                    .map_err(|_| {
+                        "LARMのProvider接続準備が時間内に完了せず、ASRへ音声を送れませんでした。"
+                            .to_string()
+                    })
+                    .and_then(|result| result),
+            )?;
             let result = tokio::time::timeout(timeout, async {
                 let lease = session.acquire("asr").await.map_err(str::to_string)?;
                 if lease.provider().protocol != "openai.audio-transcriptions.v1" {
@@ -652,12 +658,13 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
     }
     let _playback_state = PlaybackStateGuard::new(app, input_id);
     let answer_id = format!("reply_{input_id}");
+    let availability = crate::providers::service_registry::LocalAvailability::of(state);
     let (content, prepared) = state.sqlite_readers.read(|connection| {
         let content: String = connection.query_row(
             "SELECT content FROM conversation_messages WHERE id=?1 AND conversation_id=?2 AND role='assistant'",
             params![answer_id, PRIMARY_CONVERSATION_ID], |row| row.get(0),
         ).map_err(database_error)?;
-        Ok((content, voice_routes::prepare(connection, crate::providers::service_registry::Purpose::VoiceSpeak)?))
+        Ok((content, voice_routes::prepare(connection, crate::providers::service_registry::Purpose::VoiceSpeak, availability)?))
     })?;
     let providers = &prepared.providers;
     let mut route = prepared.route.clone();
@@ -666,7 +673,7 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
         return Err("読み上げる回答がありません。".into());
     }
     let dictionary = state.tts_dictionary_cache.snapshot(&state.sqlite_readers)?;
-    let spoken = dictionary.apply(&speech_text_for_answer(&content));
+    let spoken = speech_text_for_answer(&content);
     if spoken.trim().is_empty() {
         return Ok(());
     }
@@ -714,136 +721,18 @@ async fn speak_conversation_answer_inner<R: tauri::Runtime>(
     if crate::conversation_queue_e2e::capture_speech(&spoken) {
         return Ok(());
     }
-    let output = Arc::new(AtomicBool::new(false));
     route.timeout_ms = prepared.validate(state)?;
     let mut purpose_attempt = direct_route::RouteAttempt::begin(audit, &prepared.resolved)?;
     let result = tokio::select! {
         biased;
         _=tokio::time::sleep_until(prepared.deadline)=>{cancellation.cancel();Err("この発話の全体期限を超えました".into())},
         result=async {
-    if route.source == "harness" {
-        let session = cached_larm_asr(providers, Some(audit)).await?;
-                prepared.validate(state)?;
-        audit.event(
-            "tts",
-            "conversation-tts-provider",
-            "start",
-            None,
-            json!({
-                "role": "tts", "profile": providers.harness.larm_profile,
-                "voice": providers.harness.tts_voice,
-            }),
-        );
-        let playback_audit = audit.clone();
-        let playback_app = app.clone();
-        let playback_id = input_id.to_string();
-        let result = crate::voice::http_audio::play_larm_with_situation(
-            &session,
-            PRIMARY_CONVERSATION_ID,
-            providers.harness.tts_voice.as_deref(),
-            Some(&providers.harness),
-            crate::voice::cloud_tts::speech_directive::SpeechExpression::Natural,
-            output,
-            &spoken,
-            route.timeout_ms.min(120_000),
-            cancellation.clone(),
-            move || {
-                set_speech_playback(&playback_app, &playback_id, true);
-                playback_audit.event("tts", "conversation-tts-playback", "start", None, json!({}));
-            },
-            None,
-            None,
-        )
-        .await;
-        return result;
-    }
-    let provider = providers
-        .providers
-        .iter()
-        .find(|provider| route.provider_id.as_deref() == Some(provider.id()) && provider.enabled())
-        .ok_or("設定済みのTTS Providerが見つかりません。")?;
-    match provider {
-        ModelProviderSettings::CloudTts(provider) => {
-            audit.event(
-                "tts",
-                "conversation-tts-provider",
-                "start",
-                None,
-                json!({
-                    "model": provider.model, "providerId": provider.id,
-                }),
-            );
-            let playback_audit = audit.clone();
-            let playback_app = app.clone();
-            let playback_id = input_id.to_string();
-            crate::voice::http_audio::play_with_situation(
-                provider,
-                &spoken,
-                route.timeout_ms.min(120_000),
-                cancellation.clone(),
-                output,
-                move || {
-                    set_speech_playback(&playback_app, &playback_id, true);
-                    playback_audit.event(
-                        "tts",
-                        "conversation-tts-playback",
-                        "start",
-                        None,
-                        json!({}),
-                    )
-                },
-                None,
-                None,
-            )
-            .await
-        }
-        ModelProviderSettings::SystemTts(provider) => {
-            audit.event(
-                "tts",
-                "conversation-tts-provider",
-                "start",
-                None,
-                json!({
-                    "providerId": provider.id, "mode": "system",
-                }),
-            );
-            let playback_audit = audit.clone();
-            let playback_app = app.clone();
-            let playback_id = input_id.to_string();
-            let player = crate::voice::local_audio_output::ContinuousPlayback::start(
-                cancellation.clone(),
-                move || {
-                    set_speech_playback(&playback_app, &playback_id, true);
-                    playback_audit.event(
-                        "tts",
-                        "conversation-tts-playback",
-                        "start",
-                        None,
-                        json!({}),
-                    );
-                },
-            );
-            let directory =
-                tempfile::tempdir().map_err(|_| "TTS一時領域を作成できませんでした。")?;
-            let path = crate::voice::system_tts::render_tts_artifact(
-                spoken,
-                provider.voice.clone(),
-                directory.path().to_path_buf(),
-                cancellation.clone(),
-            )
-            .await?;
-            audit.event(
-                "tts",
-                "conversation-tts-render",
-                "terminal",
-                Some("success"),
-                json!({}),
-            );
-            player.play_wav_file(&path, &cancellation).await?;
-            player.finish().await
-        }
-        _ => Err("設定済みの音声出力ルートはTTS Providerではありません。".into()),
-    }
+            let mut continuous = None;
+            streaming_speech::play_chunk(app, input_id, state, &prepared.resolved,
+                providers, &route, &spoken, &dictionary, audit,
+                cancellation.clone(), &mut continuous).await?;
+            if let Some(player) = continuous { player.finish().await?; }
+            Ok::<(), String>(())
         }=>result,
     };
     purpose_attempt.finish(result.is_ok())?;
@@ -855,6 +744,15 @@ fn speech_text_for_answer(content: &str) -> String {
         .split_once(SOURCE_LINKS_MARKER)
         .map_or(content, |(answer, _)| answer);
     crate::voice_text::text_for_speech(answer)
+}
+
+/// A failed connection to LARM triggers an immediate re-probe, so the next request already
+/// sees whether LARM is unreachable and is routed to its fallback instead of waiting again.
+fn note_larm_connect<T>(state: &AppState, result: Result<T, String>) -> Result<T, String> {
+    if result.is_err() {
+        crate::providers::reachability_watcher::report_larm_connect_failure(state);
+    }
+    result
 }
 
 async fn cached_larm_asr(
@@ -928,7 +826,7 @@ pub(crate) async fn submit_conversation_text(
     queue_runtime::enqueue_text(&state, input.input_id.clone(), input.text)?;
     state.conversation_queue_wake.notify_waiters();
     let _ = app.emit("conversation-queue-updated", ());
-    report_stage(&on_stage, "ornith");
+    report_stage(&on_stage, "answer");
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
     loop {
         let outcome =
@@ -1108,7 +1006,7 @@ async fn complete_larm_role_with_events(
         .await?;
         audit.text("provider", "conversation-ornith-output", &content);
         if role == "llm" && (content.contains("<think>") || content.contains("</think>")) {
-            return Err("ornithの内部思考が回答本文に混入しました。".into());
+            return Err("会話エージェントの内部思考が回答本文に混入しました。".into());
         }
         Ok((content, provider.model.clone()))
     }

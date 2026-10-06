@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 
 pub(crate) fn attributes(route: &ResolvedRoute, attempt: Option<&str>) -> Value {
     json!({"purpose":route.purpose.id(),"connectionId":route.connection_id,"resourceId":route.resource_id,"connectionLabel":route.connection_label,
-        "model":route.model,"fingerprint":route.fingerprint,"attemptId":attempt})
+        "model":route.model,"fingerprint":route.fingerprint,"attemptId":attempt,
+        "location":route.location,"selection":route.selection})
 }
 
 pub(crate) fn accepted(db: &Connection, job: &str, route: &ResolvedRoute) -> Result<(), String> {

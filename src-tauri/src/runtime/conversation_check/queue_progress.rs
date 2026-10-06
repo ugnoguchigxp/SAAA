@@ -1,4 +1,4 @@
-//! Short spoken updates while Ornith has no final answer yet.
+//! Short spoken updates while the conversation agent has no final answer yet.
 use rusqlite::{params, Connection};
 use serde_json::json;
 #[cfg(any(test, feature = "offline-contracts"))]

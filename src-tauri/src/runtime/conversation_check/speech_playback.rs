@@ -1,7 +1,8 @@
 //! The same playback path for purpose-selected streaming and progress speech.
+use super::super::speech_expression::ChunkCue;
 use super::*;
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn play_chunk<R: tauri::Runtime>(
+pub(in crate::runtime::conversation_check) async fn play_chunk<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     input_id: &str,
     state: &AppState,
@@ -40,8 +41,16 @@ pub(super) async fn play_chunk<R: tauri::Runtime>(
         on_started();
         return Ok(());
     }
+    let harness = &providers.harness;
+    let budget = timeout.min(2000);
+    let (expression, cue) =
+        ChunkCue::prepare(app, input_id, state, harness, text, &cancellation, budget).await?;
+    let on_chunk = cue.on_audio_ready(cancellation.clone());
+    state
+        .sqlite_readers
+        .read(|db| direct_route::validate_route(db, resolved))?;
     if route.source == "harness" {
-        let session = cached_larm_asr(providers, Some(audit)).await?;
+        let session = note_larm_connect(state, cached_larm_asr(providers, Some(audit)).await)?;
         state
             .sqlite_readers
             .read(|db| direct_route::validate_route(db, resolved))?;
@@ -63,12 +72,12 @@ pub(super) async fn play_chunk<R: tauri::Runtime>(
             PRIMARY_CONVERSATION_ID,
             providers.harness.tts_voice.as_deref(),
             Some(&providers.harness),
-            crate::voice::cloud_tts::speech_directive::SpeechExpression::Natural,
+            expression,
             output,
             text,
             timeout,
             cancellation,
-            || {},
+            on_chunk,
             None,
             Some(player),
         )
@@ -94,13 +103,15 @@ pub(super) async fn play_chunk<R: tauri::Runtime>(
                     },
                 )
             });
+            let expressed =
+                crate::voice::cloud_tts::speech_directive::apply_expression(provider, expression);
             crate::voice::http_audio::play_with_situation(
-                provider,
+                &expressed,
                 text,
                 timeout,
                 cancellation,
                 output,
-                || {},
+                on_chunk,
                 None,
                 Some(player),
             )
@@ -125,6 +136,7 @@ pub(super) async fn play_chunk<R: tauri::Runtime>(
             if cancellation.is_cancelled() {
                 return Err("Speech cancelled".into());
             }
+            on_chunk();
             player.play_wav_file(&path, &cancellation).await
         }
         _ => Err("設定済みの音声出力ルートはTTS Providerではありません。".into()),

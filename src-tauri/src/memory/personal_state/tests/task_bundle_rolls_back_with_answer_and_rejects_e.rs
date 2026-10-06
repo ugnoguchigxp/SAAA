@@ -14,6 +14,7 @@ pub(super) fn task_bundle_rolls_back_with_answer_and_rejects_evidence_outside_ma
             status: saaa_personal_state_core::Status::Active,
             task_request: Some("s1".into()),
             replaces: None,
+            support: Default::default(),
         },
         evidence: std::collections::BTreeSet::from([m.sources[0].key.clone()]),
     };

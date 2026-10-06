@@ -284,14 +284,37 @@ To check the provider without changing conversation history, run `cargo run --ma
 Install the pinned dependencies, then run the checks appropriate to your change:
 
 ```sh
-bun run check:local
-bun run test:rust-packages
+bun run --silent verify
 bun run spec:check
 ```
 
-`check:local` runs formatting, lint, generated-file and type checks, module-size checks, and the project's Rust/frontend checks. For focused changes, run the relevant `bun test tests/<file>` or `cargo test --manifest-path src-tauri/Cargo.toml <filter>` first. A successful filtered command must actually execute the intended tests.
+`verify` checks TypeScript and every Rust package under `src-tauri`, `crates`, and `services`. Choose the gate for the work:
 
-After changing `contexts/`, run `bun run s11tnext:build`. After changing exported Rust IPC types, run `bun run ipc:generate` and inspect the generated diff. `bun run build` builds the frontend and checks IPC contracts; `bun run tauri build` creates the desktop bundle. Optional local coverage reports are available through `bun run test:coverage`.
+| Command | Checks | When to run |
+| --- | --- | --- |
+| `bun run --silent verify` | Formatting, lint, type/compile checks, generated contexts, module sizes; no builds or tests | Whole-project static verification |
+| `bun run --silent verify:advance` | Normal gate plus TypeScript/Rust builds, unit/contract tests, quality contracts, and IPC contracts | Whole-project builds and integration validation |
+| `bun run --silent verify advance --package <directory>` | Static checks, builds, and tests for the selected Rust crate | Partial build readiness, for each changed crate and affected dependent |
+| `bun run --silent verify:full` | Advance plus provider/conversation E2E and desktop smoke | Version upgrades and other major changes |
+
+Commit and push save checkpoints on the current branch; they do not require a new branch, a merge, or successful advance/full verification. Run relevant lightweight checks where practical and record failed or unperformed verification in the commit. Readiness checks cover the changed crates and affected consumers; frontend changes use `--scope typescript`. Shared changes that affect the whole application require whole-project verification for readiness. Until domain extraction, selecting `src-tauri` still compiles the entire desktop crate; generated-context and module-size checks also retain project-wide scope. See [Contributing](CONTRIBUTING.md) for the commit rules.
+
+`check` and `check:local` alias the normal gate. Success prints one `OK`; failure prints the failing command's complete stdout/stderr and stops before later commands. `bunfig.toml` suppresses Bun's script banner by default, including for `bun verify` and `bun run lint`. E2E is not required after every routine implementation. CI runs advance on commits and pull requests; select the full option when manually dispatching CI for major updates.
+
+All individual commands also go through `scripts/verify.ts`:
+
+| Check | TypeScript and Rust | TypeScript only | Rust only |
+| --- | --- | --- | --- |
+| Lint | `bun run --silent lint` | `bun run --silent lint:typescript` | `bun run --silent lint:rust` |
+| Type/compile check | `bun run --silent typecheck` | `bun run --silent typecheck:typescript` | `bun run --silent typecheck:rust` |
+| Build | `bun run --silent build` | `bun run --silent build:frontend` | `bun run --silent build:rust` |
+| Tests | `bun run --silent test` | `bun run --silent test:frontend` | `bun run --silent test:rust` |
+| Apply formatting | `bun run --silent format` | `bun run --silent format:typescript` | `bun run --silent format:rust` |
+| Check formatting | `bun run --silent format:check` | `bun run --silent format:check:typescript` | `bun run --silent format:check:rust` |
+
+The same checks are available as `bun run --silent verify <stage>`. `verify format` checks without writing; add `--write` to apply formatting. Limit checks with `--scope typescript`, `--scope rust`, or `--package crates/larm-session`. Focused tests use `bun run --silent verify test --scope typescript -- tests/<file>` or `bun run --silent verify test --package src-tauri -- --lib <filter>`. A successful filtered command must actually execute the intended tests. Desktop Clippy retains its existing warning ratchet; other Rust packages reject warnings. Ignored/live tests, manual acceptance, specification checks, and coverage require separate runs.
+
+After changing `contexts/`, run `bun run s11tnext:build`. After changing exported Rust IPC types, run `bun run ipc:generate` and inspect the generated diff. Standalone builds also go through verify: `bun run build` builds TypeScript and Rust, `bun run build:frontend` and `bun run build:rust` select one language, and `bun run build:desktop` creates the desktop bundle. Optional local coverage reports are available through `bun run test:coverage`.
 
 Desktop and live-service acceptance require their documented environment:
 

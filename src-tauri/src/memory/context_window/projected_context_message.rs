@@ -71,7 +71,7 @@ pub(crate) struct LoadedContextWindow {
     pub(super) source_history_truncated: bool,
     pub(super) source: Vec<SourceMessage>,
     pub(super) current: SourceMessage,
-    pub(super) memory_items: Vec<control_plane::ProjectionItem>,
+    pub(crate) memory_items: Vec<control_plane::ProjectionItem>,
 }
 #[cfg(any(test, feature = "offline-contracts"))]
 pub(crate) fn validate_current_instruction(content: &str) -> Result<(), String> {

@@ -18,7 +18,18 @@ pub fn get_service_registry(state: tauri::State<'_, AppState>) -> Result<Value, 
         let mut value = view(&loaded)?;
         value["latestUsage"] = json!(super::operations::latest(db, &loaded.snapshot)?);
         value["probes"] = json!(super::probe::latest(db, &loaded.snapshot)?);
+        value["larmReachability"] = larm_reachability(&state);
         Ok(value)
+    })
+}
+
+/// "reachable" | "unreachable" | "unknown": what the next request will see for LARM.
+fn larm_reachability(state: &AppState) -> Value {
+    use crate::providers::reachability::Reachability;
+    json!(match state.reachability.snapshot().harness {
+        Reachability::Reachable => "reachable",
+        Reachability::Unreachable => "unreachable",
+        Reachability::Unknown => "unknown",
     })
 }
 
@@ -40,6 +51,7 @@ pub fn save_service_registry(
     value["probes"] = json!(state
         .sqlite_readers
         .read(|db| super::probe::latest(db, &loaded.snapshot))?);
+    value["larmReachability"] = larm_reachability(&state);
     Ok(value)
 }
 

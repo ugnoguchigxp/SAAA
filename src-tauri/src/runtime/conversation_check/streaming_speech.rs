@@ -73,10 +73,13 @@ pub(super) async fn play_answer_stream<R: tauri::Runtime>(
                         .lock()
                         .await,
                 );
+                let availability =
+                    crate::providers::service_registry::LocalAvailability::of(&state);
                 let settings = state.sqlite_readers.read(|db| {
                     super::voice_routes::prepare(
                         db,
                         crate::providers::service_registry::Purpose::VoiceSpeak,
+                        availability,
                     )
                 });
                 match settings {
@@ -237,4 +240,4 @@ pub(super) use progress::play_progress;
 
 #[path = "speech_playback.rs"]
 mod playback;
-use playback::play_chunk;
+pub(super) use playback::play_chunk;

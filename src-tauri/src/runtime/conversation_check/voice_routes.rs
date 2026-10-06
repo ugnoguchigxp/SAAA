@@ -13,10 +13,16 @@ pub(super) struct PreparedVoice {
 pub(super) fn prepare(
     db: &rusqlite::Connection,
     purpose: Purpose,
+    availability: crate::providers::service_registry::LocalAvailability,
 ) -> Result<PreparedVoice, String> {
     let loaded = persistence::service_registry_store::load_registry(db)?;
-    let resolved = crate::providers::service_registry::resolve_route(&loaded.snapshot, purpose)
-        .map_err(|e| format!("音声サービスの設定を確認してください: {e:?}"))?;
+    let resolved =
+        crate::providers::service_registry::resolve_route(&loaded.snapshot, purpose, availability)
+            .map_err(|e| {
+                e.user_message()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("音声サービスの設定を確認してください: {e:?}"))
+            })?;
     let mut providers = persistence::load_model_providers(db)?;
     let resource = loaded
         .snapshot
@@ -155,9 +161,10 @@ pub(super) fn utterance(state: &AppState, id: &str) -> Result<PreparedVoice, Str
         };
         rows.remove(index);
     }
+    let availability = crate::providers::service_registry::LocalAvailability::of(state);
     let prepared = state
         .sqlite_readers
-        .read(|db| prepare(db, Purpose::VoiceTranscribe))?;
+        .read(|db| prepare(db, Purpose::VoiceTranscribe, availability))?;
     state.sqlite_writer.write(|db| {
         db.execute_batch("CREATE TABLE IF NOT EXISTS purpose_voice_utterances(id TEXT PRIMARY KEY,state TEXT NOT NULL)").map_err(database_error)?;
         let inserted=db.execute("INSERT OR IGNORE INTO purpose_voice_utterances(id,state) VALUES(?1,'open')",[id]).map_err(database_error)?;
@@ -324,7 +331,7 @@ mod tests {
         let state = crate::test_support::app_state(database("http://127.0.0.1:1/v1"));
         let prepared = state
             .sqlite_readers
-            .read(|db| prepare(db, Purpose::VoiceTranscribe))
+            .read(|db| prepare(db, Purpose::VoiceTranscribe, Default::default()))
             .unwrap();
         state
             .sqlite_writer
@@ -343,7 +350,7 @@ mod tests {
         assert!(prepared.validate(&state).is_err());
         assert!(state
             .sqlite_readers
-            .read(|db| prepare(db, Purpose::VoiceTranscribe))
+            .read(|db| prepare(db, Purpose::VoiceTranscribe, Default::default()))
             .is_err());
     }
 }

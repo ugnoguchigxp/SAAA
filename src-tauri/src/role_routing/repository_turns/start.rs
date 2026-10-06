@@ -54,7 +54,7 @@ pub(crate) fn record_provider_turn_start(
     let decision_id = format!("rr-decision-{run_id}");
     let planned_steps = compile_selected_plan(&policy, candidate)?;
     let candidates = candidate_receipt(&selection.observed);
-    let reason_codes = decision_reason_codes(&selection.observed, &candidate.recipe_id);
+    let reason_codes = decision_reason_codes();
     let transaction = connection
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
@@ -173,7 +173,7 @@ pub(crate) fn record_provider_turn_start_in_transaction(
     let decision_id = format!("rr-decision-{run_id}");
     let planned_steps = compile_selected_plan(&policy, candidate)?;
     let candidates = candidate_receipt(&selection.observed);
-    let reason_codes = decision_reason_codes(&selection.observed, &candidate.recipe_id);
+    let reason_codes = decision_reason_codes();
     transaction.execute("INSERT INTO rr_roots(root_id,conversation_id,runtime_run_id,policy_id,revision,phase,active_slot,origin,presentation_mode,started_at_ms,deadline_at_ms,scope_digest) VALUES(?1,?2,?3,?4,0,'queued',NULL,?5,?6,?7,NULL,'')",params![run_id,conversation_id,run_id,policy_id,origin,presentation_mode,now_ms]).map_err(|e|e.to_string())?;
     let payload_digest = format!("{:x}", Sha256::digest(input_content.as_bytes()));
     transaction.execute("INSERT INTO rr_inputs(input_id,root_id,conversation_id,message_id,payload_digest,origin,source_id,disposition,received_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,'accepted',?8)",params![format!("rr-input-{run_id}"),run_id,conversation_id,input_message_id,payload_digest,origin,source_id,now_ms]).map_err(|e|e.to_string())?;
@@ -323,22 +323,8 @@ fn select_dispatch_candidate(
     })
 }
 
-fn decision_reason_codes(
-    candidates: &[crate::role_routing::selection::Candidate],
-    selected_id: &str,
-) -> String {
-    let location_fallback = candidates.iter().any(|candidate| {
-        candidate.recipe_id != selected_id
-            && candidate
-                .reason_codes
-                .iter()
-                .any(|code| code == "actor_unreachable")
-    });
-    if location_fallback {
-        "[\"rules\",\"location_fallback\"]".to_string()
-    } else {
-        "[\"rules\"]".to_string()
-    }
+fn decision_reason_codes() -> String {
+    "[\"rules\"]".to_string()
 }
 
 fn candidate_ids(candidates: &[crate::role_routing::selection::Candidate]) -> Vec<String> {

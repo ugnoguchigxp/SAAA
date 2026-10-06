@@ -20,6 +20,7 @@
 | `product-readiness-acceptance-runbook.html` | 正本 | 実機・配布物の手動受入手順 | 2026-09-17 |  |
 | `context-window-records-memory-design.md` | 正本 | Context/records/memory 統合の現行設計 | 2026-09-22 |  |
 | `larm-http-api-review.md` | 正本 | LARM HTTP/設定の現行参照 | 2026-09-22 |  |
+| `saaa-larm-cloud-unified-failover-plan.md` | 進行中 | 在宅LARM／外出Cloud を単一 resolver で全 Purpose に適用する計画（実装済み・実機受入が残る） | 2026-10-07 | 実装結果は末尾 §11 |
 | `saaa-ui-concept-v1.png` | 正本 | UI コンセプト画像 | 2026-08-29 |  |
 | `saaa-settings-harness-concept-v1.png` | 正本 | Provider Harness 設定コンセプト画像 | 2026-08-30 |  |
 | `saaa-settings-individual-cloud-services-concept-v1.png` | 正本 | 個別 Cloud 設定コンセプト画像 | 2026-08-30 |  |
