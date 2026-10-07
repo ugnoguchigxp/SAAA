@@ -1,31 +1,70 @@
-//! Purpose-based service registry (plan: docs/plans/purpose-based-cloud-api-switching.md, P1).
+//! Purpose-based service registry.
 //!
-//! Three layers: connections (where and how to authenticate), resources (what a
-//! connection can run) and purpose bindings (which resource does which job).
-//! This module is pure data, validation, legacy migration and route resolution.
-//! Persistence and the current conversation queue consume the same snapshot.
+//! Selection, validation and legacy derivation live in `saaa-provider-routing`.
+//! This module keeps Tauri commands, probes, and the AppState availability read.
 mod active;
 pub(crate) mod commands;
-mod compatibility;
 pub(crate) use active::validate_active;
 mod migration;
 pub(crate) mod operations;
 mod probe;
-mod resolve;
 #[cfg(test)]
 mod tests;
-mod types;
-mod validate;
 
-pub(crate) use compatibility::unsupported_reason;
 pub(crate) use migration::migrate_legacy;
-pub(crate) const SERVICE_CREDENTIAL_SERVICE: &str =
-    crate::credentials::SERVICE_CONNECTION_CREDENTIAL_SERVICE;
-pub(crate) use resolve::{
-    resolve_resource, resolve_route, LocalAvailability, ResolveError, ResolvedRoute, RouteSelection,
+pub(crate) use saaa_provider_routing::{
+    unsupported_reason, validate_snapshot, AdapterKind, BindingReview, Capability, CredentialRef,
+    LarmReachability, Purpose, PurposeBinding, RegistrySnapshot, ResolveError, ResolvedRoute,
+    RouteSelection, ServiceConnection, ServiceResource,
 };
-pub(crate) use types::*;
-pub(crate) use validate::validate_snapshot;
+pub(crate) const SERVICE_CREDENTIAL_SERVICE: &str =
+    saaa_provider_routing::SERVICE_CONNECTION_CREDENTIAL_SERVICE;
+
+use crate::providers::reachability::{Reachability, ReachabilitySnapshot};
+
+/// Observed state of LARM at request time. `Unknown` is treated as reachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct LocalAvailability {
+    pub(crate) larm: Reachability,
+}
+
+impl LocalAvailability {
+    pub(crate) fn of(state: &crate::AppState) -> Self {
+        Self::from(&state.reachability.snapshot())
+    }
+}
+
+impl From<&ReachabilitySnapshot> for LocalAvailability {
+    fn from(snapshot: &ReachabilitySnapshot) -> Self {
+        Self {
+            larm: snapshot.harness,
+        }
+    }
+}
+
+fn larm_reachability(availability: LocalAvailability) -> LarmReachability {
+    match availability.larm {
+        Reachability::Unknown => LarmReachability::Unknown,
+        Reachability::Reachable => LarmReachability::Reachable,
+        Reachability::Unreachable => LarmReachability::Unreachable,
+    }
+}
+
+pub(crate) fn resolve_route(
+    snapshot: &RegistrySnapshot,
+    purpose: Purpose,
+    availability: LocalAvailability,
+) -> Result<ResolvedRoute, ResolveError> {
+    saaa_provider_routing::resolve_route(snapshot, purpose, larm_reachability(availability))
+}
+
+pub(crate) fn resolve_resource(
+    snapshot: &RegistrySnapshot,
+    purpose: Purpose,
+    resource_id: &str,
+) -> Result<ResolvedRoute, ResolveError> {
+    saaa_provider_routing::resolve_resource(snapshot, purpose, resource_id)
+}
 
 pub(crate) fn with_handler<R: tauri::Runtime>(
     fallback: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,

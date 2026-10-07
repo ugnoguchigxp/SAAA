@@ -70,12 +70,13 @@ CREATE TABLE IF NOT EXISTS personal_cleanup (
  snapshot_safe INTEGER NOT NULL DEFAULT 0,last_code TEXT NOT NULL DEFAULT 'pending'
 );
 CREATE TABLE IF NOT EXISTS personal_contract (id INTEGER PRIMARY KEY CHECK(id=1),value_json TEXT NOT NULL CHECK(json_valid(value_json)));
-CREATE TRIGGER IF NOT EXISTS personal_source_insert AFTER INSERT ON conversation_messages
+DROP TRIGGER IF EXISTS personal_source_insert;
+CREATE TRIGGER personal_source_insert AFTER INSERT ON conversation_messages
 WHEN NEW.conversation_id='conversation_primary' AND NEW.role IN ('user','assistant','transcript')
 BEGIN
  INSERT INTO personal_sources(message_id,version,role,bytes,recorded_at)
- VALUES(NEW.id,COALESCE((SELECT MAX(version)+1 FROM personal_sources WHERE message_id=NEW.id),1),NEW.role,length(CAST(NEW.content AS BLOB)),CAST(NEW.created_at AS INTEGER));
- UPDATE personal_scope SET input_epoch=input_epoch+1,last_foreground_at=CAST(NEW.created_at AS INTEGER);
+ VALUES(NEW.id,COALESCE((SELECT MAX(version)+1 FROM personal_sources WHERE message_id=NEW.id),1),NEW.role,length(CAST(NEW.content AS BLOB)),CASE WHEN NEW.created_at NOT GLOB '*[^0-9]*' AND NEW.created_at!='' THEN CAST(NEW.created_at AS INTEGER) ELSE COALESCE(CAST(unixepoch(NEW.created_at,'subsec')*1000 AS INTEGER),0) END);
+ UPDATE personal_scope SET input_epoch=input_epoch+1,last_foreground_at=(SELECT recorded_at FROM personal_sources WHERE sequence=last_insert_rowid());
  INSERT INTO personal_jobs(source_sequence,epoch,status) SELECT last_insert_rowid(),(SELECT input_epoch FROM personal_scope),'queued' WHERE ((SELECT count(*) FROM personal_jobs WHERE status IN ('queued','running'))+(SELECT count(*) FROM personal_review_work WHERE status IN ('queued','running','preview')))<1024;
 END;
 CREATE TRIGGER IF NOT EXISTS personal_source_no_resurrection BEFORE INSERT ON conversation_messages

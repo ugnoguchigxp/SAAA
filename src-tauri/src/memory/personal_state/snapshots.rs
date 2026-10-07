@@ -1,7 +1,7 @@
 //! Background publication of immutable bodies, with live eligibility kept out of bytes.
-use super::{decode, encode, store};
 use crate::database_error;
-use rusqlite::{params, Connection};
+use crate::memory::personal_state::{decode, encode, store};
+use rusqlite::{params, Connection, OptionalExtension};
 use saaa_personal_state_core::{Assertion, Classification, Purpose, SourceKey, Status};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -75,9 +75,18 @@ pub fn publish(c: &Connection, now: i64) -> Result<(), String> {
         let manifest = encode(
             &json!({"assertions":ids,"inputs":inputs,"policy":ledger.policy_revision,"renderer":"memory-snapshot-v1"}),
         )?;
-        c.execute("INSERT INTO personal_snapshots(scope_key,category,revision,body,digest,manifest,published_at) VALUES(?1,?2,1,?3,?4,?5,?6)
-          ON CONFLICT(scope_key,category) DO UPDATE SET revision=personal_snapshots.revision+1,body=excluded.body,digest=excluded.digest,manifest=excluded.manifest,published_at=excluded.published_at
-          WHERE personal_snapshots.digest!=excluded.digest OR personal_snapshots.manifest!=excluded.manifest",params![scope,category,text,digest,manifest,now]).map_err(database_error)?;
+        let prior: Option<(String, String)> = c
+            .query_row(
+                "SELECT digest,manifest FROM personal_snapshots WHERE scope_key=?1 AND category=?2",
+                params![scope, category],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(database_error)?;
+        if prior.as_ref() != Some(&(digest.clone(), manifest.clone())) {
+            let revision:u64=c.query_row("INSERT INTO personal_snapshot_versions VALUES(?1,?2,1) ON CONFLICT(scope_key,category) DO UPDATE SET revision=revision+1 RETURNING revision",params![scope,category],|r|r.get(0)).map_err(database_error)?;
+            c.execute("INSERT INTO personal_snapshots(scope_key,category,revision,body,digest,manifest,published_at) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(scope_key,category) DO UPDATE SET revision=excluded.revision,body=excluded.body,digest=excluded.digest,manifest=excluded.manifest,published_at=excluded.published_at",params![scope,category,revision,text,digest,manifest,now]).map_err(database_error)?;
+        }
         active.insert((scope, category));
     }
     let mut stmt = c
@@ -102,11 +111,11 @@ pub fn publish(c: &Connection, now: i64) -> Result<(), String> {
 }
 
 /// Runs in the same read snapshot as the conversation. Every dependency is live checked.
-pub fn read(
+pub fn view(
     c: &Connection,
     scope: &crate::runtime::context::scope::ScopeSnapshot,
     current: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, BTreeSet<SourceKey>), String> {
     let ledger = store::load(c)?;
     let allowed: BTreeSet<_> = scope.scopes.iter().map(|s| s.key.as_str()).collect();
     let mut stmt=c.prepare("SELECT scope_key,category,body,digest,manifest FROM personal_snapshots ORDER BY category,scope_key").map_err(database_error)?;
@@ -124,6 +133,7 @@ pub fn read(
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
     let mut texts = Vec::new();
+    let mut referenced = BTreeSet::new();
     let mut used = 0;
     for (key, category, body, digest, manifest) in records {
         if !allowed.contains(key.as_str()) {
@@ -136,16 +146,15 @@ pub fn read(
             && m["assertions"].as_array().is_some_and(|ids| {
                 ids.iter().all(|id| {
                     id.as_str().is_some_and(|id| {
-                        ledger.status(id, super::now()) == Status::Active
+                        ledger.status(id, crate::memory::personal_state::now()) == Status::Active
                             && scope_current(c, id, &key).unwrap_or(false)
                     })
                 })
             })
             && inputs.iter().all(|k| {
-                ledger
-                    .sources
-                    .get(k)
-                    .is_some_and(|s| super::sources::revalidate(c, s).is_ok())
+                ledger.sources.get(k).is_some_and(|s| {
+                    crate::memory::personal_state::sources::revalidate(c, s).is_ok()
+                })
             })
             && format!("{:x}", Sha256::digest(body.as_bytes())) == digest;
         if !valid {
@@ -168,6 +177,7 @@ pub fn read(
         if used > 24000 {
             return Err("required_context_overflow: personal snapshot".into());
         }
+        referenced.extend(inputs);
         texts.push(text);
     }
     // Related inferred observations are a separate, conditional reference. They never
@@ -190,7 +200,7 @@ pub fn read(
         let chars: Vec<_> = query.chars().take(1000).collect();
         for a in ledger.assertions.values().filter(|a| {
             a.kind == saaa_personal_state_core::Kind::Observation
-                && ledger.status(&a.id, super::now()) == Status::Candidate
+                && ledger.status(&a.id, crate::memory::personal_state::now()) == Status::Candidate
         }) {
             let key = a
                 .access
@@ -208,10 +218,9 @@ pub fn read(
                 continue;
             }
             if !a.input_dependencies.iter().all(|k| {
-                ledger
-                    .sources
-                    .get(k)
-                    .is_some_and(|src| super::sources::revalidate(c, src).is_ok())
+                ledger.sources.get(k).is_some_and(|src| {
+                    crate::memory::personal_state::sources::revalidate(c, src).is_ok()
+                })
             }) {
                 continue;
             }
@@ -230,6 +239,8 @@ pub fn read(
                 break;
             }
             used += text.len();
+            referenced.extend(a.input_dependencies.clone());
+            referenced.extend(a.evidence.clone());
             texts.push(text);
         }
     }
@@ -268,7 +279,7 @@ pub fn read(
         {
             continue;
         }
-        let chunk = super::sources::load(c, seq, 0, 32000)?;
+        let chunk = crate::memory::personal_state::sources::load(c, seq, 0, 32000)?;
         if !chunk.source.finalized {
             held = true;
             continue;
@@ -281,12 +292,21 @@ pub fn read(
             continue;
         }
         used += text.len();
+        referenced.insert(chunk.source.key);
         texts.push(text);
     }
     if held {
         texts.push("[PERSONAL_MEMORY_UNAVAILABLE; instructionAuthority=none] 未処理の原記録が予算を超えています。ここに示す直近の記録だけでは過去の状態を確定できません。必要な原文を検索して確認するか、確認できない旨を伝えてください。".into());
     }
-    Ok(texts)
+    Ok((texts, referenced))
+}
+#[cfg(test)]
+pub fn read(
+    c: &Connection,
+    scope: &crate::runtime::context::scope::ScopeSnapshot,
+    current: &str,
+) -> Result<Vec<String>, String> {
+    Ok(view(c, scope, current)?.0)
 }
 
 /// Private stamp: provenance changes invalidate an in-flight answer even when bytes agree.

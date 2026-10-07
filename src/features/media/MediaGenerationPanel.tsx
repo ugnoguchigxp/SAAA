@@ -6,17 +6,15 @@ import * as mediaApi from "./mediaApi";
 import {
   mediaFailureMessage,
   mediaProgressMessage,
+  type MediaApi,
   type MediaKind,
   type MediaOutput,
   type MediaProgress,
-} from "./mediaApi";
+} from "./mediaApiModel";
 import "./mediaGeneration.css";
 
-type MediaApi = Pick<typeof mediaApi, "generateMedia" | "cancelMedia" | "readMediaArtifact"> &
-  Partial<Pick<typeof mediaApi, "listMediaGenerations" | "reconcileMedia">>;
-
 export function MediaGenerationPanel({
-  api = mediaApi,
+  api = mediaApi.desktopMediaApi,
   fixedKind,
   embedded = false,
   onBusyChange,

@@ -7,9 +7,9 @@ macro_rules! saaa_invoke_handler {
                 memory::personal_state::retrospective::commands::with_handler(
                     tauri::generate_handler![
                         memory::personal_state::commands::personal_state_snapshot,
-                        memory::personal_state::episode_export::episode_sync_status,
-                        memory::personal_state::episode_export::set_episode_sync_scope,
-                        crate::memory::personal_state::episode_export::set_memory_consolidation,
+                        memory::personal_state::sources::episode_export::episode_sync_status,
+                        memory::personal_state::sources::episode_export::set_episode_sync_scope,
+                        crate::memory::personal_state::sources::episode_export::set_memory_consolidation,
                         memory::personal_state::commands::set_personal_state_enabled,
                         memory::personal_state::commands::personal_source_page,
                         memory::personal_state::commands::forget_personal_source,

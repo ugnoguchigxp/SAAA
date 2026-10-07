@@ -349,6 +349,12 @@ pub(crate) fn open_database_writer(
 #[tauri::command]
 
 pub(super) fn shutdown_app_state(state: &AppState) {
+    let media = state.media.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = media.shutdown(std::time::Duration::from_secs(10)).await {
+            eprintln!("media shutdown persistence failed: {}", error.message);
+        }
+    });
     crate::memory::personal_state::worker::interrupt();
     crate::coding::commands::shutdown(state);
     state.generated_capabilities.shutdown();

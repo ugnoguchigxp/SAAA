@@ -4,7 +4,6 @@ use super::*;
 use crate::memory;
 use crate::memory::personal_state::world::runtime_frame::{PreparedWorldFrame, WorldFrameService};
 use crate::runtime::context::scope::{self, ScopeSnapshot};
-use saaa_personal_state_core::world::runtime_frame::FrameValidity;
 use std::sync::Arc;
 
 pub(super) struct QueueContext {
@@ -16,6 +15,7 @@ pub(super) struct QueueContext {
     source_messages: Vec<memory::context_window::ProjectedContextMessage>,
     personal_memory: Vec<String>,
     personal_stamp: String,
+    personal_inputs: std::collections::BTreeSet<saaa_personal_state_core::SourceKey>,
     scope: ScopeSnapshot,
     world: Option<(Arc<WorldFrameService>, PreparedWorldFrame)>,
 }
@@ -41,51 +41,10 @@ impl QueueContext {
     }
 
     pub(super) fn validate_result(&self, state: &AppState) -> Result<(), String> {
-        let (current, scope) = project_window(state, &self.run_id, &self.message_id)?;
-        let personal = state.sqlite_readers.read(|c| {
-            memory::personal_state::episode_export::validate_run(c, &self.run_id)?;
-            personal_state(c, &scope, &self.message_id)
-        })?;
-        if current.messages != self.source_messages
-            || scope != self.scope
-            || personal.0 != self.personal_memory
-            || personal.1 != self.personal_stamp
-        {
-            return Err(
-                "メモリーまたは会話の根拠が応答中に変化しました。再実行してください。".into(),
-            );
-        }
-        if let Some((service, frame)) = &self.world {
-            match service.validate_result(frame) {
-                Ok(FrameValidity::Current) => {}
-                _ => {
-                    return Err(
-                        "WorldModelの根拠が応答中に変化しました。再実行してください。".into(),
-                    )
-                }
-            }
-        }
-        Ok(())
+        validation::validate_result(self, state)
     }
-
-    pub(super) fn validate_commit(&self, connection: &rusqlite::Connection) -> Result<(), String> {
-        let (current, scope) =
-            project_window_connection(connection, &self.run_id, &self.message_id)?;
-        memory::personal_state::episode_export::validate_run(connection, &self.run_id)?;
-        let personal = personal_state(connection, &scope, &self.message_id)?;
-        if current.messages != self.source_messages
-            || scope != self.scope
-            || personal.0 != self.personal_memory
-            || personal.1 != self.personal_stamp
-        {
-            return Err("メモリーまたは会話の根拠が保存前に変化しました。".into());
-        }
-        if let Some((service, frame)) = &self.world {
-            service
-                .validate_db_result(connection, frame)
-                .map_err(|error| error.code().to_string())?;
-        }
-        Ok(())
+    pub(super) fn validate_commit(&self, c: &rusqlite::Connection) -> Result<(), String> {
+        validation::validate_commit(self, c)
     }
 }
 
@@ -105,7 +64,7 @@ pub(super) fn compose_for_mode(
     let message_id = format!("check_{input_id}");
     let (original, scope) = project_window(state, &run_id, &message_id)?;
     let source_messages = original.messages.clone();
-    let (personal_memory, personal_stamp) = state
+    let (personal_memory, personal_stamp, personal_inputs) = state
         .sqlite_readers
         .read(|c| personal_state(c, &scope, &message_id))?;
     let window = if mode == PrefixMode::Legacy {
@@ -195,6 +154,7 @@ pub(super) fn compose_for_mode(
         source_messages,
         personal_memory,
         personal_stamp,
+        personal_inputs,
         scope,
         world,
     })
@@ -203,3 +163,10 @@ pub(super) fn compose_for_mode(
 #[path = "queue_context/projection.rs"]
 mod projection;
 use projection::{personal_state, project_window, project_window_connection, scope_data};
+
+#[cfg(test)]
+#[path = "queue_context/tests.rs"]
+mod tests;
+
+#[path = "queue_context/validation.rs"]
+mod validation;

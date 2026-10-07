@@ -56,7 +56,11 @@ pub(super) fn build(input: Input<'_>) -> Result<Built, String> {
         if consolidating && !candidate.semantic_key.starts_with("consolidated:") {
             candidate.semantic_key = format!("consolidated:{}", candidate.semantic_key);
         }
-        crate::memory::personal_state::admission::gate(&mut candidate, &chunk.source, &chunk.text)?;
+        crate::memory::personal_state::worker::admission::gate(
+            &mut candidate,
+            &chunk.source,
+            &chunk.text,
+        )?;
         if let Some(old_id) = &candidate.replaces {
             let old = ledger
                 .assertions
@@ -211,7 +215,7 @@ pub(super) fn build(input: Input<'_>) -> Result<Built, String> {
             next_sequence += 1;
         }
         let value = if candidate.kind.is_profile() || candidate.kind == Kind::Observation {
-            json!({"value":candidate.value,"support":candidate.support,"origin":chunk.source.digest,"policy":"personal-gate-v1","independentOrigins":if consolidating {crate::memory::personal_state::admission::independent_origins(&current)}else{BTreeSet::new()}})
+            json!({"value":candidate.value,"support":candidate.support,"origin":chunk.source.digest,"policy":"personal-gate-v1","independentOrigins":if consolidating {crate::memory::personal_state::worker::admission::independent_origins(current)}else{BTreeSet::new()}})
         } else {
             candidate.value
         };

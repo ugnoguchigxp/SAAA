@@ -1,6 +1,6 @@
 //! Host admission and bounded extraction context. Model status is a proposal.
-use super::{decode, encode, worker::Candidate};
 use crate::database_error;
+use crate::memory::personal_state::{decode, encode, worker::Candidate};
 use rusqlite::Connection;
 use saaa_personal_state_core::*;
 use serde::{Deserialize, Serialize};
@@ -65,7 +65,7 @@ pub fn gate(candidate: &mut Candidate, source: &SourceRef, text: &str) -> Result
         candidate.replaces = None;
     }
     if matches!(candidate.kind, Kind::Preference | Kind::Habit)
-        && source.recorded_at < super::now() - 90 * 24 * 60 * 60 * 1000
+        && source.recorded_at < crate::memory::personal_state::now() - 90 * 24 * 60 * 60 * 1000
     {
         candidate.status = Status::Candidate;
         candidate.replaces = None;
@@ -122,7 +122,7 @@ pub fn current(
                 && a.access.classification <= Classification::Confidential
                 && a.access.purposes.contains(&Purpose::StateExtract)
                 && matches!(
-                    ledger.status(&a.id, super::now()),
+                    ledger.status(&a.id, crate::memory::personal_state::now()),
                     Status::Active | Status::Candidate | Status::Disputed
                 )
         })
@@ -149,7 +149,7 @@ pub fn current(
                 |r| r.get(0),
             )
             .map_err(database_error)?;
-        let item = json!({"id":a.id,"kind":a.kind,"key":a.semantic_key,"value":decode::<Value>(payload)?,"task_request":a.access.task_request,"observed_at":a.observed_at,"effective_at":a.effective_at,"evidence":a.evidence,"status":ledger.status(&a.id,super::now())});
+        let item = json!({"id":a.id,"kind":a.kind,"key":a.semantic_key,"value":decode::<Value>(payload)?,"task_request":a.access.task_request,"observed_at":a.observed_at,"effective_at":a.effective_at,"evidence":a.evidence,"status":ledger.status(&a.id,crate::memory::personal_state::now())});
         let size = encode(&item)?.len();
         if bytes + size > 10000 {
             continue;
@@ -222,7 +222,7 @@ pub fn dialogue(
         .map_err(database_error)?;
     let mut result = Vec::new();
     for sequence in sequences.into_iter().rev() {
-        let chunk = super::sources::load(c, sequence, 0, 2000)?;
+        let chunk = crate::memory::personal_state::sources::load(c, sequence, 0, 2000)?;
         // Do not feed a truncated proposal as if it were complete evidence.
         if chunk.source.finalized {
             result.push((chunk.source, chunk.text));

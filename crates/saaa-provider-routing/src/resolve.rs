@@ -1,11 +1,19 @@
 use super::types::*;
-use crate::providers::reachability::{Reachability, ReachabilitySnapshot};
 use sha2::{Digest, Sha256};
+
+/// LARM reachability supplied by the host. `Unknown` is treated as reachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LarmReachability {
+    #[default]
+    Unknown,
+    Reachable,
+    Unreachable,
+}
 
 /// Why a route was chosen. Recorded in the audit trail and shown to the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum RouteSelection {
+pub enum RouteSelection {
     /// The binding's primary resource.
     #[default]
     Primary,
@@ -13,53 +21,33 @@ pub(crate) enum RouteSelection {
     LocalUnreachable,
 }
 
-/// Observed state of LARM at request time. `Unknown` is treated as reachable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct LocalAvailability {
-    pub(crate) larm: Reachability,
-}
-
-impl LocalAvailability {
-    pub(crate) fn of(state: &crate::AppState) -> Self {
-        Self::from(&state.reachability.snapshot())
-    }
-}
-
-impl From<&ReachabilitySnapshot> for LocalAvailability {
-    fn from(snapshot: &ReachabilitySnapshot) -> Self {
-        Self {
-            larm: snapshot.harness,
-        }
-    }
-}
-
 /// Route fixed at job start. Later settings edits do not change it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ResolvedRoute {
-    pub(crate) purpose: Purpose,
-    pub(crate) connection_id: String,
-    pub(crate) connection_label: String,
-    pub(crate) resource_id: String,
-    pub(crate) adapter_kind: AdapterKind,
-    pub(crate) endpoint: String,
-    pub(crate) location: String,
-    pub(crate) primary_location: String,
-    pub(crate) model: String,
-    pub(crate) detail: Option<String>,
-    pub(crate) request_options: Option<serde_json::Value>,
-    pub(crate) credential_ref: Option<CredentialRef>,
-    pub(crate) fallback_resource_ids: Vec<String>,
+pub struct ResolvedRoute {
+    pub purpose: Purpose,
+    pub connection_id: String,
+    pub connection_label: String,
+    pub resource_id: String,
+    pub adapter_kind: AdapterKind,
+    pub endpoint: String,
+    pub location: String,
+    pub primary_location: String,
+    pub model: String,
+    pub detail: Option<String>,
+    pub request_options: Option<serde_json::Value>,
+    pub credential_ref: Option<CredentialRef>,
+    pub fallback_resource_ids: Vec<String>,
     #[serde(default)]
-    pub(crate) selection: RouteSelection,
-    pub(crate) timeout_ms: u64,
-    pub(crate) attempt_timeout_ms: Option<u64>,
+    pub selection: RouteSelection,
+    pub timeout_ms: u64,
+    pub attempt_timeout_ms: Option<u64>,
     /// Hash of the connection, resource and binding settings used by this route.
-    pub(crate) fingerprint: String,
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ResolveError {
+pub enum ResolveError {
     NotConfigured(Purpose),
     Disabled(Purpose),
     NeedsReview(Purpose),
@@ -75,7 +63,7 @@ pub(crate) enum ResolveError {
 }
 
 impl ResolveError {
-    pub(crate) fn user_message(&self) -> Option<&'static str> {
+    pub fn user_message(&self) -> Option<&'static str> {
         match self {
             Self::LocalUnreachable {
                 cloud_blocked: false,
@@ -95,10 +83,10 @@ impl ResolveError {
 /// The single place that decides which resource serves a request.
 /// The primary is used unless it is LARM and LARM is known to be unreachable; then the
 /// fallbacks are tried in order. A broken primary is a configuration error, never a switch.
-pub(crate) fn resolve_route(
+pub fn resolve_route(
     snapshot: &RegistrySnapshot,
     purpose: Purpose,
-    availability: LocalAvailability,
+    larm: LarmReachability,
 ) -> Result<ResolvedRoute, ResolveError> {
     let binding = snapshot
         .binding(purpose)
@@ -114,7 +102,7 @@ pub(crate) fn resolve_route(
         .as_deref()
         .ok_or(ResolveError::NotConfigured(purpose))?;
     let primary = resolve_resource(snapshot, purpose, resource_id)?;
-    if primary.adapter_kind != AdapterKind::Larm || availability.larm != Reachability::Unreachable {
+    if primary.adapter_kind != AdapterKind::Larm || larm != LarmReachability::Unreachable {
         return Ok(primary);
     }
     let mut cloud_blocked = false;
@@ -134,7 +122,7 @@ pub(crate) fn resolve_route(
     })
 }
 
-pub(crate) fn resolve_resource(
+pub fn resolve_resource(
     snapshot: &RegistrySnapshot,
     purpose: Purpose,
     resource_id: &str,
@@ -170,7 +158,7 @@ pub(crate) fn resolve_resource(
     if connection.location == "cloud" && !binding.cloud_allowed {
         return Err(ResolveError::CloudNotAllowed(purpose));
     }
-    if let Some(reason) = super::unsupported_reason(snapshot, purpose, resource_id) {
+    if let Some(reason) = crate::compatibility::unsupported_reason(snapshot, purpose, resource_id) {
         return Err(ResolveError::Invalid(reason));
     }
     let digest = Sha256::digest(

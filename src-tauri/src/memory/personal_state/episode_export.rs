@@ -138,4 +138,8 @@ pub fn set_memory_consolidation(
 
 #[path = "episode_export/source.rs"]
 mod source;
-pub(crate) use source::{fetch_source, source_definition, SOURCE_TOOL};
+pub(crate) use source::{capture_snapshot_inputs, fetch_source, source_definition, SOURCE_TOOL};
+
+#[path = "episode_export/history.rs"]
+mod history;
+pub(crate) use history::{reuse as reuse_history, view as history_view};

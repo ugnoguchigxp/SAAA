@@ -27,7 +27,8 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     }
     c.execute_batch(include_str!("retrospective/schema.sql"))?;
     // The initial import is metadata-only; none of this history is marked processed.
-    c.execute("INSERT OR IGNORE INTO personal_sources(message_id,version,role,bytes,recorded_at) SELECT m.id,1,m.role,length(CAST(m.content AS BLOB)),CAST(m.created_at AS INTEGER) FROM conversation_messages m WHERE m.conversation_id=?1 AND m.role IN ('user','assistant','transcript') ORDER BY m.rowid", [crate::PRIMARY_CONVERSATION_ID])?;
+    c.execute("INSERT OR IGNORE INTO personal_sources(message_id,version,role,bytes,recorded_at) SELECT m.id,1,m.role,length(CAST(m.content AS BLOB)),CASE WHEN m.created_at NOT GLOB '*[^0-9]*' AND m.created_at!='' THEN CAST(m.created_at AS INTEGER) ELSE COALESCE(CAST(unixepoch(m.created_at,'subsec')*1000 AS INTEGER),0) END FROM conversation_messages m WHERE m.conversation_id=?1 AND m.role IN ('user','assistant','transcript') ORDER BY m.rowid", [crate::PRIMARY_CONVERSATION_ID])?;
+    c.execute_batch(include_str!("source_clock.sql"))?;
     super::jobs::refill(c).map_err(rusqlite::Error::InvalidParameterName)?;
     c.execute("UPDATE personal_jobs SET status='queued',lease_until=NULL,lease_generation=lease_generation+1,result_code='lease-expired' WHERE status='running' AND lease_until<=?1", params![crate::now_iso().parse::<i64>().unwrap_or(0)])?;
     c.execute("UPDATE personal_registrations SET pins=0,desired='deleted' WHERE incarnation IN (SELECT incarnation FROM personal_cleanup WHERE stage!='complete')", [])?;

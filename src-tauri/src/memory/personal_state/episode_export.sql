@@ -68,7 +68,7 @@ END;
 DROP VIEW IF EXISTS memory_episode_source_v1;
 CREATE VIEW memory_episode_source_v1 AS
 SELECT p.message_id AS source_id,p.version,p.sequence,p.role,m.content,
- p.recorded_at,CAST(m.created_at AS INTEGER) AS uttered_at,
+ p.recorded_at,CASE WHEN m.created_at NOT GLOB '*[^0-9]*' AND m.created_at!='' THEN CAST(m.created_at AS INTEGER) ELSE COALESCE(CAST(unixepoch(m.created_at,'subsec')*1000 AS INTEGER),0) END AS uttered_at,
  s.principal,g.scope_key,g.revision AS policy_revision,COALESCE(sp.revision,1) AS scope_epoch,COALESCE(mp.revision,0) AS access_revision
 FROM personal_sources p JOIN conversation_messages m ON m.id=p.message_id
 JOIN personal_scope s ON s.id='primary' JOIN memory_episode_grants g ON g.enabled=1
@@ -96,5 +96,68 @@ BEGIN
  DELETE FROM conversation_messages WHERE id IN (
   SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_episode_run_refs r ON a.run_id=r.run_id
   WHERE EXISTS(SELECT 1 FROM json_each(r.contract,'$.sources') WHERE json_extract(value,'$.sourceId')=NEW.source_id)
+ );
+END;
+
+CREATE TABLE IF NOT EXISTS memory_snapshot_run_inputs (
+ run_id TEXT NOT NULL,source_id TEXT NOT NULL,version INTEGER NOT NULL,
+ PRIMARY KEY(run_id,source_id,version)
+);
+CREATE TRIGGER IF NOT EXISTS memory_snapshot_artifact_forget AFTER INSERT ON personal_tombstones
+BEGIN
+ DELETE FROM conversation_messages WHERE id IN (
+ SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_snapshot_run_inputs r ON a.run_id=r.run_id WHERE r.source_id=NEW.source_id
+ );
+END;
+
+-- A saved answer is another derived copy. Revoke it at the same boundary as its evidence,
+-- so raw history, continuity groups, and later Episode imports cannot recycle it.
+CREATE TRIGGER IF NOT EXISTS memory_episode_artifact_grant AFTER UPDATE ON memory_episode_grants
+WHEN NEW.revision!=OLD.revision OR NEW.enabled!=OLD.enabled
+BEGIN
+ DELETE FROM conversation_messages WHERE id IN (
+ SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_episode_run_refs r ON a.run_id=r.run_id
+ WHERE EXISTS(SELECT 1 FROM json_each(r.contract,'$.sources') WHERE json_extract(value,'$.scope')=NEW.scope_key)
+ );
+END;
+CREATE TRIGGER IF NOT EXISTS memory_episode_artifact_source_change AFTER UPDATE OF available ON personal_sources
+WHEN OLD.available=1 AND NEW.available=0
+BEGIN
+ DELETE FROM conversation_messages WHERE id IN (
+ SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_episode_run_refs r ON a.run_id=r.run_id
+ WHERE EXISTS(SELECT 1 FROM json_each(r.contract,'$.sources') WHERE json_extract(value,'$.sourceId')=NEW.message_id AND json_extract(value,'$.version')=NEW.version)
+ UNION SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_snapshot_run_inputs i ON i.run_id=a.run_id WHERE i.source_id=NEW.message_id AND i.version=NEW.version
+ );
+END;
+CREATE TRIGGER IF NOT EXISTS memory_episode_artifact_retired AFTER INSERT ON memory_episode_retired_sources
+BEGIN
+ DELETE FROM conversation_messages WHERE id IN (
+ SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_episode_run_refs r ON a.run_id=r.run_id
+ WHERE EXISTS(SELECT 1 FROM json_each(r.contract,'$.sources') WHERE json_extract(value,'$.sourceId')=NEW.source_id AND json_extract(value,'$.version')=NEW.version)
+ );
+END;
+CREATE TRIGGER IF NOT EXISTS memory_episode_artifact_scope_change AFTER UPDATE OF state ON context_scopes
+WHEN NEW.state!=OLD.state
+BEGIN
+ DELETE FROM conversation_messages WHERE id IN (
+ SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_episode_run_refs r ON a.run_id=r.run_id
+ WHERE EXISTS(SELECT 1 FROM json_each(r.contract,'$.sources') WHERE json_extract(value,'$.scope')=NEW.scope_key)
+ UNION SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_snapshot_run_inputs i ON i.run_id=a.run_id JOIN personal_source_scope_refs s ON s.source_id=i.source_id AND s.version=i.version WHERE s.scope_key=NEW.scope_key
+ );
+END;
+CREATE TRIGGER IF NOT EXISTS memory_episode_artifact_membership_added AFTER INSERT ON conversation_message_scopes
+BEGIN
+ DELETE FROM conversation_messages WHERE id IN (
+ SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_episode_run_refs r ON a.run_id=r.run_id
+ WHERE EXISTS(SELECT 1 FROM json_each(r.contract,'$.sources') WHERE json_extract(value,'$.sourceId')=NEW.message_id)
+ UNION SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_snapshot_run_inputs i ON i.run_id=a.run_id WHERE i.source_id=NEW.message_id
+ );
+END;
+CREATE TRIGGER IF NOT EXISTS memory_episode_artifact_membership_removed AFTER DELETE ON conversation_message_scopes
+BEGIN
+ DELETE FROM conversation_messages WHERE id IN (
+ SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_episode_run_refs r ON a.run_id=r.run_id
+ WHERE EXISTS(SELECT 1 FROM json_each(r.contract,'$.sources') WHERE json_extract(value,'$.sourceId')=OLD.message_id)
+ UNION SELECT a.message_id FROM memory_episode_artifacts a JOIN memory_snapshot_run_inputs i ON i.run_id=a.run_id WHERE i.source_id=OLD.message_id
  );
 END;

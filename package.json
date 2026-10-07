@@ -72,6 +72,8 @@
     "spec:check": "bunx --bun spec-html check ./spec/docs --warnings-as-errors && bunx --bun spec-html check ./spec/docs/.archived --fixer --format",
     "spec:fix": "bunx --bun spec-html check ./spec/docs --fix --warnings-as-errors && bunx --bun spec-html check ./spec/docs/.archived --fixer --format --fix",
     "preview": "vite preview",
+    "feature-lab:preview": "vite --config scripts/feature-lab-vite.config.ts --open /scripts/feature-lab-preview.html",
+    "feature-lab": "bun scripts/feature-lab.ts",
     "tauri": "bun scripts/serial-command.ts -- tauri",
     "codex:smoke": "bun scripts/codex-sdk-smoke.ts",
     "codex:canary": "bun scripts/codex-sdk-canary.ts",

@@ -1,0 +1,683 @@
+path	line	source	proposed_owner
+scripts/feature-lab-smoke.ts	95	await server.listen();	existing-package-or-frontend
+scripts/feature-lab.ts	71	ui = await deps.listen({	existing-package-or-frontend
+scripts/feature-lab.ts	204	await server.listen();	existing-package-or-frontend
+src-tauri/src/acceptance_core.rs	9	fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {	saaa-application-or-host
+src-tauri/src/adaptive_evaluation/evaluation_pair.rs	286	#[tauri::command]	saaa-work
+src-tauri/src/adaptive_evaluation/evaluation_pair.rs	288	state: tauri::State<'_, crate::AppState>,	saaa-work
+src-tauri/src/adaptive_evaluation/evaluation_pair.rs	292	#[tauri::command]	saaa-work
+src-tauri/src/adaptive_evaluation/evaluation_pair.rs	294	state: tauri::State<'_, crate::AppState>,	saaa-work
+src-tauri/src/adaptive_evaluation/evaluation_pair.rs	305	#[tauri::command]	saaa-work
+src-tauri/src/adaptive_evaluation/evaluation_pair.rs	307	state: tauri::State<'_, crate::AppState>,	saaa-work
+src-tauri/src/adaptive_evaluation/evaluation_pair.rs	319	#[tauri::command]	saaa-work
+src-tauri/src/adaptive_evaluation/evaluation_pair.rs	321	state: tauri::State<'_, crate::AppState>,	saaa-work
+src-tauri/src/adaptive_improvement/domain.rs	219	tauri::async_runtime::spawn(async move {	saaa-work
+src-tauri/src/app_paths.rs	5	use tauri::Manager;	saaa-application-or-host
+src-tauri/src/app_paths.rs	60	app: &tauri::App,	saaa-application-or-host
+src-tauri/src/artifact_preview/commands.rs	9	#[tauri::command]	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	11	app: tauri::AppHandle,	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	12	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	19	on_load: tauri::ipc::Channel<super::source_loading::SourceLoadEvent>,	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	34	#[tauri::command]	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	36	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	43	#[tauri::command]	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	44	pub(crate) fn scroll_source_website(app: tauri::AppHandle, label: String) -> Result<(), String> {	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	48	#[tauri::command]	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	68	#[tauri::command]	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	73	#[tauri::command]	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	78	#[tauri::command]	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	80	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	86	#[tauri::command]	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	88	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	95	#[tauri::command]	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	97	app: tauri::AppHandle,	saaa-tools
+src-tauri/src/artifact_preview/commands.rs	98	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/artifact_preview/host.rs	1	use tauri::webview::{NewWindowResponse, WebviewBuilder};	saaa-tools
+src-tauri/src/artifact_preview/host.rs	2	use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl};	saaa-tools
+src-tauri/src/artifact_preview/protocol.rs	1	use tauri::http::{header, Request, Response, StatusCode};	saaa-tools
+src-tauri/src/artifact_preview/protocol.rs	11	if request.method() != tauri::http::Method::GET && request.method() != tauri::http::Method::HEAD	saaa-tools
+src-tauri/src/artifact_preview/protocol.rs	40	request.method() == tauri::http::Method::HEAD,	saaa-tools
+src-tauri/src/artifact_preview/source_loading.rs	7	use tauri::{ipc::Channel, webview::PageLoadEvent, Webview};	saaa-tools
+src-tauri/src/artifact_preview/source_loading.rs	36	) -> impl Fn(Webview, tauri::webview::PageLoadPayload<'_>) + Send + Sync + 'static {	saaa-tools
+src-tauri/src/artifact_preview/source_web.rs	1	use tauri::webview::{NewWindowResponse, WebviewBuilder};	saaa-tools
+src-tauri/src/artifact_preview/source_web.rs	2	use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl};	saaa-tools
+src-tauri/src/artifact_preview/source_web.rs	16	on_load: tauri::ipc::Channel<super::source_loading::SourceLoadEvent>,	saaa-tools
+src-tauri/src/artifact_preview/tests.rs	7	use tauri::http::{Request, StatusCode};	saaa-tools
+src-tauri/src/bin/webfetch_e2e.rs	25	let result = tauri::Builder::default()	saaa-application-or-host
+src-tauri/src/bin/webfetch_e2e.rs	40	.build(tauri::generate_context!())	saaa-application-or-host
+src-tauri/src/bin/webfetch_e2e.rs	48	if matches!(event, tauri::RunEvent::Ready) {	saaa-application-or-host
+src-tauri/src/bin/webfetch_e2e.rs	51	let code = tauri::async_runtime::block_on(async { run_flow().await });	saaa-application-or-host
+src-tauri/src/coding/codex_runner.rs	50	let sink = tauri::ipc::Channel::<crate::ipc_contract::RuntimeEvent>::new(|_| Ok(()));	saaa-work
+src-tauri/src/coding/commands.rs	4	#[tauri::command]	saaa-work
+src-tauri/src/coding/commands.rs	5	pub fn get_coding_settings(state: tauri::State<'_, AppState>) -> Result<CodingSettings, String> {	saaa-work
+src-tauri/src/coding/commands.rs	8	#[tauri::command]	saaa-work
+src-tauri/src/coding/commands.rs	10	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/coding/commands.rs	31	#[tauri::command]	saaa-work
+src-tauri/src/coding/commands.rs	32	pub async fn probe_coding(state: tauri::State<'_, AppState>) -> Result<Value, String> {	saaa-work
+src-tauri/src/coding/commands.rs	49	tauri::async_runtime::spawn_blocking(move||{	saaa-work
+src-tauri/src/coding/commands.rs	57	#[tauri::command]	saaa-work
+src-tauri/src/coding/commands.rs	59	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/coding/commands.rs	65	#[tauri::command]	saaa-work
+src-tauri/src/coding/commands.rs	66	pub fn coding_snapshot(state: tauri::State<'_, AppState>, conversation_id: String) -> Value {	saaa-work
+src-tauri/src/coding/commands.rs	69	#[tauri::command]	saaa-work
+src-tauri/src/coding/commands.rs	71	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/coding/e2e/tests.rs	66	let events: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));	saaa-work
+src-tauri/src/coding/terminal/commands.rs	4	#[tauri::command]	saaa-work
+src-tauri/src/coding/terminal/commands.rs	6	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/coding/terminal/commands.rs	30	#[tauri::command]	saaa-work
+src-tauri/src/coding/terminal/commands.rs	32	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/coding/terminal/commands.rs	44	#[tauri::command]	saaa-work
+src-tauri/src/coding/terminal/commands.rs	46	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/coding/terminal/commands.rs	70	#[tauri::command]	saaa-work
+src-tauri/src/coding/terminal/commands.rs	72	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/coding/terminal/host.rs	9	use tauri::{Emitter, Manager};	saaa-work
+src-tauri/src/coding/terminal/host.rs	105	pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {	saaa-work
+src-tauri/src/coding/terminal/host.rs	124	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-work
+src-tauri/src/coding/terminal/host.rs	125	let _ = app.emit(	saaa-work
+src-tauri/src/conversation_queue_e2e.rs	17	use tauri::Manager;	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/cloud_route.rs	101	let app = tauri::test::mock_builder()	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/cloud_route.rs	103	.build(tauri::test::mock_context(tauri::test::noop_assets()))	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/context_live.rs	32	let app = tauri::test::mock_builder()	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/context_live.rs	34	.build(tauri::test::mock_context(tauri::test::noop_assets()))	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/dictionary_live.rs	47	let app = tauri::test::mock_builder()	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/dictionary_live.rs	49	.build(tauri::test::mock_context(tauri::test::noop_assets()))	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/scenario.rs	26	let app = tauri::test::mock_builder()	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/scenario.rs	28	.build(tauri::test::mock_context(tauri::test::noop_assets()))	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/worker.rs	172	let app = tauri::test::mock_builder()	saaa-application-or-host
+src-tauri/src/conversation_queue_e2e/worker.rs	174	.build(tauri::test::mock_context(tauri::test::noop_assets()))	saaa-application-or-host
+src-tauri/src/database_backup.rs	5	#[tauri::command]	saaa-storage
+src-tauri/src/database_backup.rs	7	state: tauri::State<'_, AppState>,	saaa-storage
+src-tauri/src/diagnosis/commands.rs	5	#[tauri::command]	saaa-diagnosis
+src-tauri/src/diagnosis/commands.rs	7	app: tauri::AppHandle,	saaa-diagnosis
+src-tauri/src/diagnosis/commands.rs	13	#[tauri::command]	saaa-diagnosis
+src-tauri/src/diagnosis/commands.rs	15	state: tauri::State<'_, AppState>,	saaa-diagnosis
+src-tauri/src/diagnosis/engine.rs	12	use tauri::{Emitter, Manager};	saaa-diagnosis
+src-tauri/src/diagnosis/engine.rs	16	pub(crate) fn spawn_startup(app: tauri::AppHandle) {	saaa-diagnosis
+src-tauri/src/diagnosis/engine.rs	17	tauri::async_runtime::spawn(async move {	saaa-diagnosis
+src-tauri/src/diagnosis/engine.rs	23	let _ = tauri::async_runtime::spawn(async move {	saaa-diagnosis
+src-tauri/src/diagnosis/engine.rs	33	app: &tauri::AppHandle,	saaa-diagnosis
+src-tauri/src/diagnosis/engine.rs	47	"let _ = app.emit(""diagnosis-updated"", report);"	saaa-diagnosis
+src-tauri/src/generative_ui/artifact_history.rs	4	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/artifact_history.rs	6	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	6	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	7	pub(crate) fn get_ui_enabled(state: tauri::State<'_, AppState>) -> Result<bool, String> {	saaa-tools
+src-tauri/src/generative_ui/commands.rs	10	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	12	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	21	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	23	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	31	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	33	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	41	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	43	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	56	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	58	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	85	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	87	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	92	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	94	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	99	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	101	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	112	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	114	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	134	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	136	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/commands.rs	174	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/commands.rs	176	state: tauri::State<'_, AppState>,	saaa-tools
+src-tauri/src/generative_ui/history.rs	76	#[tauri::command]	saaa-tools
+src-tauri/src/generative_ui/history.rs	78	state: tauri::State<'_, crate::AppState>,	saaa-tools
+src-tauri/src/harness_llm_diagnostic.rs	77	fn send(&self, _: crate::ipc_contract::RuntimeEvent) -> tauri::Result<()> {	saaa-application-or-host
+src-tauri/src/lib.rs	13	use tauri::Manager;	saaa-application-or-host
+src-tauri/src/lib.rs	120	#[cfg_attr(mobile, tauri::mobile_entry_point)]	saaa-application-or-host
+src-tauri/src/lib.rs	144	tauri::Builder::default()	saaa-application-or-host
+src-tauri/src/lib.rs	159	".resolve(""voice"", tauri::path::BaseDirectory::Resource)?;"	saaa-application-or-host
+src-tauri/src/lib.rs	179	tauri::path::BaseDirectory::Resource,	saaa-application-or-host
+src-tauri/src/lib.rs	190	tauri::path::BaseDirectory::Resource,	saaa-application-or-host
+src-tauri/src/lib.rs	202	tauri::path::BaseDirectory::Resource,	saaa-application-or-host
+src-tauri/src/lib.rs	335	let mcp_server = tauri::async_runtime::block_on(	saaa-application-or-host
+src-tauri/src/lib.rs	425	let tauri::WindowEvent::CloseRequested { api, .. } = event else {	saaa-application-or-host
+src-tauri/src/lib.rs	441	tauri::async_runtime::spawn(async move {	saaa-application-or-host
+src-tauri/src/lib.rs	462	.build(tauri::generate_context!())	saaa-application-or-host
+src-tauri/src/lib.rs	465	if matches!(event, tauri::RunEvent::Exit) {	saaa-application-or-host
+src-tauri/src/lib.rs	466	tauri::async_runtime::block_on(memory::personal_state::product_binding::shutdown());	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	60	use tauri::Manager;	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	71	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	72	pub(super) fn frontend_ready(state: tauri::State<'_, AppState>) -> Result<(), String> {	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	75	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	76	pub(super) fn get_app_snapshot(state: tauri::State<'_, AppState>) -> Result<AppSnapshot, String> {	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	79	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	81	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	85	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	87	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	98	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	100	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	105	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	107	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	115	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	117	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	122	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	124	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	136	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	138	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	145	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	147	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	153	tauri::async_runtime::spawn_blocking(move || {	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	174	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	176	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	189	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	191	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	195	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	197	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	202	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	204	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	209	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	215	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	217	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	222	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	228	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	234	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	236	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	241	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	243	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	283	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	285	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	290	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	292	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	297	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	299	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	349	#[tauri::command]	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	353	tauri::async_runtime::spawn(async move {	saaa-application-or-host
+src-tauri/src/lib/window_shutdown_grace.rs	364	tauri::async_runtime::spawn(async move { manager.shutdown().await });	saaa-application-or-host
+src-tauri/src/media_generation/artifacts.rs	4	#[tauri::command]	saaa-media
+src-tauri/src/media_generation/artifacts.rs	6	state: tauri::State<'_, AppState>,	saaa-media
+src-tauri/src/media_generation/artifacts.rs	9	) -> Result<tauri::ipc::Response, String> {	saaa-media
+src-tauri/src/media_generation/artifacts.rs	15	Ok(tauri::ipc::Response::new(artifact.bytes))	saaa-media
+src-tauri/src/media_generation/generation.rs	5	#[tauri::command]	saaa-media
+src-tauri/src/media_generation/generation.rs	7	state: tauri::State<'_, AppState>,	saaa-media
+src-tauri/src/media_generation/generation.rs	9	on_progress: tauri::ipc::Channel<MediaProgress>,	saaa-media
+src-tauri/src/media_generation/generation.rs	21	on_progress: &tauri::ipc::Channel<MediaProgress>,	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	4	#[tauri::command]	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	13	let app = tauri::test::mock_builder()	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	15	.invoke_handler(with_handler(tauri::generate_handler![fallback_probe]))	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	16	.build(tauri::test::mock_context(tauri::test::noop_assets()))	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	18	"let window = tauri::WebviewWindowBuilder::new(&app, ""media-test"", Default::default())"	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	22	tauri::test::get_ipc_response(	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	24	tauri::webview::InvokeRequest {	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	26	callback: tauri::ipc::CallbackFn(0),	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	27	error: tauri::ipc::CallbackFn(1),	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	29	body: tauri::ipc::InvokeBody::Json(body),	saaa-media
+src-tauri/src/media_generation/ipc_tests.rs	31	invoke_key: tauri::test::INVOKE_KEY.to_string(),	saaa-media
+src-tauri/src/media_generation/mod.rs	33	pub(crate) fn with_handler<R: tauri::Runtime>(	saaa-media
+src-tauri/src/media_generation/mod.rs	34	fallback: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,	saaa-media
+src-tauri/src/media_generation/mod.rs	35	) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {	saaa-media
+src-tauri/src/media_generation/mod.rs	36	let media: fn(tauri::ipc::Invoke<R>) -> bool = tauri::generate_handler![	saaa-media
+src-tauri/src/media_generation/mod.rs	43	move |invoke: tauri::ipc::Invoke<R>| match invoke.message.command() {	saaa-media
+src-tauri/src/media_generation/mod.rs	56	#[tauri::command]	saaa-media
+src-tauri/src/media_generation/mod.rs	58	state: tauri::State<'_, AppState>,	saaa-media
+src-tauri/src/media_generation/recovery.rs	5	#[tauri::command]	saaa-media
+src-tauri/src/media_generation/recovery.rs	7	state: tauri::State<'_, AppState>,	saaa-media
+src-tauri/src/media_generation/recovery.rs	15	#[tauri::command]	saaa-media
+src-tauri/src/media_generation/recovery.rs	17	state: tauri::State<'_, AppState>,	saaa-media
+src-tauri/src/media_generation/recovery.rs	19	on_progress: tauri::ipc::Channel<MediaProgress>,	saaa-media
+src-tauri/src/media_generation/replicate.rs	41	progress: &tauri::ipc::Channel<MediaProgress>,	saaa-media
+src-tauri/src/media_generation/replicate_tests.rs	103	let channel = tauri::ipc::Channel::new(|_| Ok(()));	saaa-media
+src-tauri/src/memory/context_still_search/tests.rs	108	let events: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	4	use tauri::Emitter;	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	8	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	9	pub fn personal_state_snapshot(state: tauri::State<'_, AppState>) -> Result<Value, String> {	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	12	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	14	state: tauri::State<'_, AppState>,	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	43	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	45	state: tauri::State<'_, AppState>,	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	46	app: tauri::AppHandle,	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	90	app.emit(	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	97	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	99	state: tauri::State<'_, AppState>,	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	132	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/commands.rs	134	state: tauri::State<'_, AppState>,	saaa-memory
+src-tauri/src/memory/personal_state/episode_export.rs	17	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/episode_export.rs	18	pub fn episode_sync_status(state: tauri::State<'_, AppState>) -> Result<Value, String> {	saaa-memory
+src-tauri/src/memory/personal_state/episode_export.rs	21	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/episode_export.rs	23	state: tauri::State<'_, AppState>,	saaa-memory
+src-tauri/src/memory/personal_state/episode_export.rs	124	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/episode_export.rs	126	state: tauri::State<'_, AppState>,	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands.rs	3	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands.rs	5	state: tauri::State<'_, AppState>,	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands.rs	19	#[tauri::command]	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands.rs	20	pub fn world_review_candidates(state: tauri::State<'_, AppState>) -> Result<Value, String> {	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands/dispatch.rs	3	pub(crate) fn with_handler<R: tauri::Runtime>(	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands/dispatch.rs	4	fallback: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands/dispatch.rs	5	) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands/dispatch.rs	6	let review: fn(tauri::ipc::Invoke<R>) -> bool =	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands/dispatch.rs	7	tauri::generate_handler![set_world_review_mode, world_review_candidates];	saaa-memory
+src-tauri/src/memory/personal_state/retrospective/commands/dispatch.rs	8	move |invoke: tauri::ipc::Invoke<R>| match invoke.message.command() {	saaa-memory
+src-tauri/src/memory/personal_state/worker.rs	169	tauri::async_runtime::spawn(async move {	saaa-memory
+src-tauri/src/persistence/audit.rs	9	use tauri::ipc::Channel;	saaa-storage
+src-tauri/src/persistence/audit/audit_event_sort_field.rs	93	pub(crate) fn send(&self, event: VoiceAsrStreamEvent) -> tauri::Result<()> {	saaa-storage
+src-tauri/src/persistence/audit/record_event.rs	269	#[tauri::command]	saaa-storage
+src-tauri/src/persistence/audit/record_event.rs	272	state: tauri::State<'_, AppState>,	saaa-storage
+src-tauri/src/persistence/sqlite/readers.rs	117	tauri::async_runtime::spawn_blocking(move || readers.read(operation))	saaa-storage
+src-tauri/src/providers/agent_session/sse/generation/round.rs	75	fn send(&self, _: crate::ipc_contract::RuntimeEvent) -> tauri::Result<()> {	saaa-providers
+src-tauri/src/providers/agent_session/sse/stream_tests.rs	52	let sink = tauri::ipc::Channel::new(|_| Ok(()));	saaa-providers
+src-tauri/src/providers/agent_session/sse/workflow_tests.rs	11	fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {	saaa-providers
+src-tauri/src/providers/dynamic_lan/tests/lifecycle_tests.rs	361	fn send(&self, _event: crate::ipc_contract::RuntimeEvent) -> tauri::Result<()> {	saaa-providers
+src-tauri/src/providers/larm_voice/world_wire_fixture.rs	31	"Self::listen(""127.0.0.1:0"", route, transition, clock).await"	saaa-providers
+src-tauri/src/providers/larm_voice/world_wire_fixture.rs	34	pub async fn listen(	saaa-providers
+src-tauri/src/providers/openai_compatible/generation.rs	56	let sink = tauri::ipc::Channel::new(|_| Ok(()));	saaa-providers
+src-tauri/src/providers/openai_compatible/probe.rs	26	let sink = tauri::ipc::Channel::new(|_| Ok(()));	saaa-providers
+src-tauri/src/providers/openai_compatible/structured.rs	56	let sink = tauri::ipc::Channel::new(|_| Ok(()));	saaa-providers
+src-tauri/src/providers/reachability_watcher.rs	10	pub(crate) fn spawn(state: &AppState) -> tauri::async_runtime::JoinHandle<()> {	saaa-providers
+src-tauri/src/providers/reachability_watcher.rs	14	tauri::async_runtime::spawn(async move {	saaa-providers
+src-tauri/src/providers/service_registry.rs	69	pub(crate) fn with_handler<R: tauri::Runtime>(	saaa-providers
+src-tauri/src/providers/service_registry.rs	70	fallback: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,	saaa-providers
+src-tauri/src/providers/service_registry.rs	71	) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {	saaa-providers
+src-tauri/src/providers/service_registry.rs	72	let handler: fn(tauri::ipc::Invoke<R>) -> bool = tauri::generate_handler![	saaa-providers
+src-tauri/src/providers/service_registry.rs	79	move |invoke: tauri::ipc::Invoke<R>| match invoke.message.command() {	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	14	#[tauri::command]	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	15	pub fn get_service_registry(state: tauri::State<'_, AppState>) -> Result<Value, String> {	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	36	#[tauri::command]	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	38	state: tauri::State<'_, AppState>,	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	70	#[tauri::command]	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	72	state: tauri::State<'_, AppState>,	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	83	#[tauri::command]	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	85	state: tauri::State<'_, AppState>,	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	102	#[tauri::command]	saaa-providers
+src-tauri/src/providers/service_registry/commands.rs	104	state: tauri::State<'_, AppState>,	saaa-providers
+src-tauri/src/providers/service_registry/probe.rs	138	let sink = tauri::ipc::Channel::new(|_| Ok(()));	saaa-providers
+src-tauri/src/quality_eval.rs	11	use tauri::Manager;	saaa-application-or-host
+src-tauri/src/quality_eval.rs	67	let app = tauri::test::mock_builder()	saaa-application-or-host
+src-tauri/src/quality_eval.rs	69	.build(tauri::test::mock_context(tauri::test::noop_assets()))	saaa-application-or-host
+src-tauri/src/role_routing/ipc.rs	5	use tauri::Emitter;	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	93	#[tauri::command]	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	95	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	103	#[tauri::command]	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	105	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	118	#[tauri::command]	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	120	state: tauri::State<'_, crate::AppState>,	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	121	app: tauri::AppHandle,	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	153	let _ = app.emit(	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	159	#[tauri::command]	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	161	state: tauri::State<'_, crate::AppState>,	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	162	app: tauri::AppHandle,	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	207	let _ = app.emit(	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	215	#[tauri::command]	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	217	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	252	#[tauri::command]	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	254	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	260	#[tauri::command]	saaa-conversation
+src-tauri/src/role_routing/ipc/routing_snapshot_input.rs	262	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/capability_turn.rs	187	fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {	saaa-conversation
+src-tauri/src/runtime/codex_context_tests.rs	53	let sink = tauri::ipc::Channel::<crate::ipc_contract::RuntimeEvent>::new(|_| Ok(()));	saaa-conversation
+src-tauri/src/runtime/codex_turn.rs	75	let outcome = tauri::async_runtime::spawn_blocking(move || {	saaa-conversation
+src-tauri/src/runtime/coding_live_canary.rs	30	let events: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));	saaa-conversation
+src-tauri/src/runtime/command_registry.rs	5	crate::providers::service_registry::with_handler(voice::qwen_realtime_asr::with_handler(	saaa-conversation
+src-tauri/src/runtime/command_registry.rs	6	tts_dictionary::with_handler(media_generation::with_handler(	saaa-conversation
+src-tauri/src/runtime/command_registry.rs	7	memory::personal_state::retrospective::commands::with_handler(	saaa-conversation
+src-tauri/src/runtime/command_registry.rs	8	tauri::generate_handler![	saaa-conversation
+src-tauri/src/runtime/context/world/capabilities.rs	36	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/context/world/capabilities.rs	38	state: tauri::State<'_, crate::AppState>,	saaa-conversation
+src-tauri/src/runtime/context/world/capabilities.rs	66	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/context/world/capabilities.rs	68	state: tauri::State<'_, crate::AppState>,	saaa-conversation
+src-tauri/src/runtime/context/world/state_claim.rs	117	fn send(&self, event: crate::ipc_contract::RuntimeEvent) -> tauri::Result<()> {	saaa-conversation
+src-tauri/src/runtime/context/world/state_claim.rs	186	let sink = tauri::ipc::Channel::new(move |_| {	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	17	pub(crate) fn spawn_queue_workers<R: tauri::Runtime>(app: tauri::AppHandle<R>) {	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	29	use tauri::Emitter;	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	57	fn set_speech_playback<R: tauri::Runtime>(app: &tauri::AppHandle<R>, input_id: &str, active: bool) {	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	74	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	77	struct PlaybackStateGuard<R: tauri::Runtime> {	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	78	app: tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	82	impl<R: tauri::Runtime> PlaybackStateGuard<R> {	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	83	fn new(app: &tauri::AppHandle<R>, input_id: &str) -> Self {	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	91	impl<R: tauri::Runtime> Drop for PlaybackStateGuard<R> {	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	179	fn report_stage(channel: &tauri::ipc::Channel<ConversationStageEvent>, stage: &'static str) {	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	288	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	290	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	344	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	346	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	588	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	603	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	605	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	606	app: tauri::AppHandle,	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	643	async fn speak_conversation_answer_inner<R: tauri::Runtime>(	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	645	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	818	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	820	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	821	app: tauri::AppHandle,	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	823	on_stage: tauri::ipc::Channel<ConversationStageEvent>,	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	828	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check.rs	1199	let sink = tauri::ipc::Channel::new(|_| Ok(()));	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	5	use tauri::Emitter;	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	7	pub(super) struct AnswerDeltaSender<R: tauri::Runtime> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	10	app: tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	16	impl<R: tauri::Runtime> Clone for AnswerDeltaSender<R> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	29	impl<R: tauri::Runtime> AnswerDeltaSender<R> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	32	app: tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	55	impl<R: tauri::Runtime> RuntimeEventSender for AnswerDeltaSender<R> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	56	fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	58	use tauri::Manager;	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	64	return Err(tauri::Error::Io(std::io::Error::other(	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_answer_stream.rs	70	self.app.emit(	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	5	use tauri::{Emitter, Manager, Runtime};	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	83	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	88	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	93	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	99	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	101	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	102	app: tauri::AppHandle,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	108	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	164	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	166	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	167	app: tauri::AppHandle,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	171	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	192	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	194	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	204	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	206	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	207	app: tauri::AppHandle,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	228	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	237	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	250	pub(crate) fn spawn<R: Runtime>(app: tauri::AppHandle<R>) {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	287	tauri::async_runtime::spawn(async move { run_lane(app, lane).await });	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	307	async fn run_lane<R: Runtime>(app: tauri::AppHandle<R>, lane: &'static str) {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	326	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	338	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	374	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	392	async fn process_job<R: Runtime>(app: &tauri::AppHandle<R>, job: &Job) -> Result<(), String> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	429	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	533	"if app.emit(""conversation-queue-updated"", ()).is_ok() {"	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	591	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime.rs	791	pub(crate) async fn evaluate_one<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime/conversation_answer.rs	27	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime/conversation_answer.rs	180	tauri::async_runtime::spawn(async move {	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime/conversation_answer.rs	189	tauri::async_runtime::spawn(streaming_speech::play_answer_stream(	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime/purpose_deadline.rs	4	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime/speech.rs	17	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_runtime/speech.rs	30	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_tools.rs	3	use tauri::Emitter;	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_tools.rs	30	pub(super) async fn execute<R: tauri::Runtime>(	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_tools.rs	31	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/queue_tools.rs	82	"let _ = app.emit(""tts-dictionary-changed"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_expression.rs	10	use tauri::Emitter;	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_expression.rs	103	pub(super) struct ChunkCue<R: tauri::Runtime> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_expression.rs	104	app: tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_expression.rs	108	impl<R: tauri::Runtime> ChunkCue<R> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_expression.rs	110	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_expression.rs	131	pub(super) fn new(app: &tauri::AppHandle<R>, input_id: &str, expression: Expression) -> Self {	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_expression.rs	151	"let _ = app.emit(""conversation-speech-expression"", payload);"	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_expression.rs	157	impl<R: tauri::Runtime> Drop for ChunkCue<R> {	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_expression.rs	162	".emit(""conversation-speech-expression"", &self.payload);"	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_playback.rs	5	pub(in crate::runtime::conversation_check) async fn play_chunk<R: tauri::Runtime>(	saaa-conversation
+src-tauri/src/runtime/conversation_check/speech_playback.rs	6	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/streaming_progress.rs	3	pub(crate) async fn play_progress<R: tauri::Runtime>(	saaa-conversation
+src-tauri/src/runtime/conversation_check/streaming_progress.rs	5	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/streaming_progress.rs	62	"let _ = app.emit(""conversation-queue-updated"", ());"	saaa-conversation
+src-tauri/src/runtime/conversation_check/streaming_speech.rs	4	use tauri::Manager;	saaa-conversation
+src-tauri/src/runtime/conversation_check/streaming_speech.rs	11	pub(super) async fn play_answer_stream<R: tauri::Runtime>(	saaa-conversation
+src-tauri/src/runtime/conversation_check/streaming_speech.rs	12	app: tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/terminal_decision.rs	3	use tauri::Manager;	saaa-conversation
+src-tauri/src/runtime/conversation_check/terminal_decision.rs	5	pub(super) async fn process<R: tauri::Runtime>(	saaa-conversation
+src-tauri/src/runtime/conversation_check/terminal_decision.rs	6	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/terminal_decision.rs	27	async fn decide<R: tauri::Runtime>(	saaa-conversation
+src-tauri/src/runtime/conversation_check/terminal_decision.rs	28	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	14	use tauri::{Manager, Runtime};	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	43	app: tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	191	fn executor<R: Runtime>(app: &tauri::AppHandle<R>) -> Executor {	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	213	pub(super) fn startup<R: Runtime>(app: &tauri::AppHandle<R>) {	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	232	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	242	fn audit_terminal<R: Runtime>(app: &tauri::AppHandle<R>, job: &Job, elapsed: Duration) {	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	348	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	443	app: &tauri::AppHandle<R>,	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	518	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/conversation_check/worker_lane.rs	520	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/event_hub.rs	6	fn send(&self, event: RuntimeEvent) -> tauri::Result<()>;	saaa-conversation
+src-tauri/src/runtime/event_hub.rs	7	fn send_received(&self, event: RuntimeEvent, _received_at: Instant) -> tauri::Result<()> {	saaa-conversation
+src-tauri/src/runtime/event_hub.rs	13	impl RuntimeEventSender for tauri::ipc::Channel<RuntimeEvent> {	saaa-conversation
+src-tauri/src/runtime/event_hub.rs	14	fn send(&self, event: RuntimeEvent) -> tauri::Result<()> {	saaa-conversation
+src-tauri/src/runtime/event_hub.rs	15	tauri::ipc::Channel::send(self, event)	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	8	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	10	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	11	request: tauri::ipc::Request<'_>,	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	13	let tauri::ipc::InvokeBody::Raw(png) = request.body() else {	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	27	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	29	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	35	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	37	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	44	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	46	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	71	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/image_input/commands.rs	73	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/provider_unit_test.rs	63	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/provider_unit_test.rs	65	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/provider_unit_test.rs	67	on_progress: tauri::ipc::Channel<UnitTestProgress>,	saaa-conversation
+src-tauri/src/runtime/start_turn.rs	64	#[tauri::command]	saaa-conversation
+src-tauri/src/runtime/start_turn.rs	66	state: tauri::State<'_, AppState>,	saaa-conversation
+src-tauri/src/runtime/start_turn.rs	68	on_event: tauri::ipc::Channel<RuntimeEvent>,	saaa-conversation
+src-tauri/src/runtime/web_fetch/content.rs	10	use tauri::Runtime;	saaa-conversation
+src-tauri/src/schedule/commands.rs	11	#[tauri::command]	saaa-work
+src-tauri/src/schedule/commands.rs	13	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/schedule/commands.rs	18	#[tauri::command]	saaa-work
+src-tauri/src/schedule/commands.rs	20	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/schedule/commands.rs	85	#[tauri::command]	saaa-work
+src-tauri/src/schedule/commands.rs	87	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/schedule/commands.rs	102	#[tauri::command]	saaa-work
+src-tauri/src/schedule/commands.rs	103	pub(crate) fn schedule_status(state: tauri::State<'_, AppState>) -> Result<ScheduleStatus, String> {	saaa-work
+src-tauri/src/schedule/commands.rs	125	#[tauri::command]	saaa-work
+src-tauri/src/schedule/commands.rs	127	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/schedule/commands.rs	139	#[tauri::command]	saaa-work
+src-tauri/src/schedule/commands.rs	141	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/schedule/commands.rs	167	#[tauri::command]	saaa-work
+src-tauri/src/schedule/commands.rs	169	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/schedule/commands.rs	188	#[tauri::command]	saaa-work
+src-tauri/src/schedule/commands.rs	190	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/schedule/commands.rs	197	#[tauri::command]	saaa-work
+src-tauri/src/schedule/commands.rs	198	pub(crate) fn schedule_forget(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {	saaa-work
+src-tauri/src/schedule/tick.rs	12	use tauri::Manager;	saaa-work
+src-tauri/src/schedule/tick.rs	304	pub(crate) fn start_loop(app: tauri::AppHandle) {	saaa-work
+src-tauri/src/schedule/tick.rs	309	tauri::async_runtime::spawn(async move {	saaa-work
+src-tauri/src/situation/monitor.rs	13	tauri::async_runtime::spawn(async move {	saaa-situation
+src-tauri/src/steward/commands.rs	7	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	10	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	70	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	72	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	81	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	83	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	109	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	111	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	158	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	160	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	193	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	195	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	202	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	204	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	216	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	218	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	230	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	232	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	238	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	240	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/commands.rs	256	#[tauri::command]	saaa-work
+src-tauri/src/steward/commands.rs	258	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/steward/pump.rs	8	use tauri::Emitter;	saaa-work
+src-tauri/src/steward/pump.rs	24	app: Mutex<Option<tauri::AppHandle>>,	saaa-work
+src-tauri/src/steward/pump.rs	28	pub(crate) fn bind(&self, app: tauri::AppHandle) {	saaa-work
+src-tauri/src/steward/pump.rs	104	"let _ = app.emit(""delegated-report-committed"", payload);"	saaa-work
+src-tauri/src/steward/report/publish.rs	156	let channel = tauri::ipc::Channel::new(move |body| {	saaa-work
+src-tauri/src/steward/report/publish.rs	164	if let Err(error) = tauri::async_runtime::block_on(	saaa-work
+src-tauri/src/steward/report/publish.rs	192	pub(super) fn speech_event_state(body: &tauri::ipc::InvokeResponseBody) -> Option<&'static str> {	saaa-work
+src-tauri/src/steward/report/publish.rs	193	let tauri::ipc::InvokeResponseBody::Json(json) = body else {	saaa-work
+src-tauri/src/steward/report/tests.rs	132	use tauri::ipc::InvokeResponseBody;	saaa-work
+src-tauri/src/steward/work_queue.rs	5	#[tauri::command]	saaa-work
+src-tauri/src/steward/work_queue.rs	7	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/tests/codex_app_server_contract_covers_start_stream_re.rs	90	let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {	saaa-application-or-host
+src-tauri/src/tests/codex_app_server_contract_covers_start_stream_re.rs	91	if let tauri::ipc::InvokeResponseBody::Json(value) = body {	saaa-application-or-host
+src-tauri/src/tests/codex_app_server_contract_covers_start_stream_re.rs	332	let atomic_channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {	saaa-application-or-host
+src-tauri/src/tests/codex_app_server_contract_covers_start_stream_re.rs	333	if let tauri::ipc::InvokeResponseBody::Json(value) = body {	saaa-application-or-host
+src-tauri/src/tests/codex_app_server_contract_covers_start_stream_re.rs	376	tauri::async_runtime::block_on(execute_turn(	saaa-application-or-host
+src-tauri/src/tests/codex_app_server_contract_covers_start_stream_re.rs	437	tauri::async_runtime::block_on(execute_turn(	saaa-application-or-host
+src-tauri/src/tests/codex_live_read_only_turn_completes.rs	7	let events: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));	saaa-application-or-host
+src-tauri/src/tests/codex_live_read_only_turn_completes.rs	35	let events: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |_| {	saaa-application-or-host
+src-tauri/src/tests/conversation_route_falls_back_and_persists_compl.rs	19	let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));	saaa-application-or-host
+src-tauri/src/tests/readiness_data_directory_is_isolated_and_permiss.rs	71	let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {	saaa-application-or-host
+src-tauri/src/tests/readiness_data_directory_is_isolated_and_permiss.rs	72	if let tauri::ipc::InvokeResponseBody::Json(value) = body {	saaa-application-or-host
+src-tauri/src/tests/readiness_data_directory_is_isolated_and_permiss.rs	144	let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {	saaa-application-or-host
+src-tauri/src/tests/readiness_data_directory_is_isolated_and_permiss.rs	145	if let tauri::ipc::InvokeResponseBody::Json(value) = body {	saaa-application-or-host
+src-tauri/src/tests/readiness_data_directory_is_isolated_and_permiss.rs	225	let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));	saaa-application-or-host
+src-tauri/src/tests/rr_15_asr_tool_tts_reconnect_e2e_and_rr_38_norma.rs	21	let events = tauri::ipc::Channel::<RuntimeEvent>::new(|_| Ok(()));	saaa-application-or-host
+src-tauri/src/tests/rr_39_disable_drains_before_legacy_resume.rs	251	let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {	saaa-application-or-host
+src-tauri/src/tests/rr_39_disable_drains_before_legacy_resume.rs	252	if let tauri::ipc::InvokeResponseBody::Json(value) = body {	saaa-application-or-host
+src-tauri/src/tests/rr_39_disable_drains_before_legacy_resume.rs	389	let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(move |body| {	saaa-application-or-host
+src-tauri/src/tests/rr_39_disable_drains_before_legacy_resume.rs	390	if let tauri::ipc::InvokeResponseBody::Json(value) = body {	saaa-application-or-host
+src-tauri/src/tests/typed_memory_tools_are_routed_only_from_a_valid_.rs	350	let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));	saaa-application-or-host
+src-tauri/src/tests/typed_memory_tools_are_routed_only_from_a_valid_.rs	405	let channel: tauri::ipc::Channel<RuntimeEvent> =	saaa-application-or-host
+src-tauri/src/tests/typed_memory_tools_are_routed_only_from_a_valid_.rs	406	"tauri::ipc::Channel::new(|_| Err(tauri::Error::Io(std::io::Error::other(""closed""))));"	saaa-application-or-host
+src-tauri/src/tests/typed_memory_tools_are_routed_only_from_a_valid_.rs	491	let channel: tauri::ipc::Channel<RuntimeEvent> = tauri::ipc::Channel::new(|_| Ok(()));	saaa-application-or-host
+src-tauri/src/tool_selection/mcp_server/mod.rs	201	tauri::async_runtime::spawn(async move { server.shutdown().await });	saaa-tools
+src-tauri/src/tts_dictionary.rs	6	use tauri::Emitter;	saaa-voice
+src-tauri/src/tts_dictionary.rs	131	#[tauri::command]	saaa-voice
+src-tauri/src/tts_dictionary.rs	132	pub(crate) fn list_tts_dictionary(state: tauri::State<'_, AppState>) -> Result<Vec<Entry>, String> {	saaa-voice
+src-tauri/src/tts_dictionary.rs	136	#[tauri::command]	saaa-voice
+src-tauri/src/tts_dictionary.rs	138	_state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/tts_dictionary.rs	150	#[tauri::command]	saaa-voice
+src-tauri/src/tts_dictionary.rs	152	state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/tts_dictionary.rs	170	#[tauri::command]	saaa-voice
+src-tauri/src/tts_dictionary.rs	172	app: tauri::AppHandle,	saaa-voice
+src-tauri/src/tts_dictionary.rs	173	state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/tts_dictionary.rs	192	"let _ = app.emit(""tts-dictionary-changed"", ());"	saaa-voice
+src-tauri/src/tts_dictionary.rs	197	#[tauri::command]	saaa-voice
+src-tauri/src/tts_dictionary.rs	199	app: tauri::AppHandle,	saaa-voice
+src-tauri/src/tts_dictionary.rs	200	state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/tts_dictionary.rs	213	"let _ = app.emit(""tts-dictionary-changed"", ());"	saaa-voice
+src-tauri/src/tts_dictionary.rs	218	#[tauri::command]	saaa-voice
+src-tauri/src/tts_dictionary.rs	220	state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/tts_dictionary/dispatch.rs	2	pub(crate) fn with_handler(	saaa-voice
+src-tauri/src/tts_dictionary/dispatch.rs	3	fallback: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static,	saaa-voice
+src-tauri/src/tts_dictionary/dispatch.rs	4	) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {	saaa-voice
+src-tauri/src/tts_dictionary/dispatch.rs	5	let handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![	saaa-voice
+src-tauri/src/voice/audio_backend/commands.rs	4	use tauri::{ipc::Channel, State};	saaa-voice
+src-tauri/src/voice/audio_backend/commands.rs	20	#[tauri::command]	saaa-voice
+src-tauri/src/voice/audio_backend/commands.rs	25	#[tauri::command]	saaa-voice
+src-tauri/src/voice/audio_backend/commands.rs	41	#[tauri::command]	saaa-voice
+src-tauri/src/voice/audio_backend/commands.rs	47	#[tauri::command]	saaa-voice
+src-tauri/src/voice/audio_upload.rs	10	use tauri::ipc::{InvokeBody, Request};	saaa-voice
+src-tauri/src/voice/audio_upload.rs	76	tauri::async_runtime::spawn(async move {	saaa-voice
+src-tauri/src/voice/audio_upload.rs	118	use tauri::{http::HeaderMap, ipc::InvokeBody};	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr.rs	8	use tauri::ipc::Channel;	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr.rs	97	#[tauri::command]	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr.rs	99	state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr.rs	107	#[tauri::command]	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr.rs	109	state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr.rs	253	#[tauri::command]	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr.rs	275	#[tauri::command]	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr.rs	529	if let tauri::ipc::InvokeResponseBody::Json(json) = body {	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr/dispatch.rs	2	pub(crate) fn with_handler<R: tauri::Runtime>(	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr/dispatch.rs	3	fallback: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr/dispatch.rs	4	) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {	saaa-voice
+src-tauri/src/voice/qwen_realtime_asr/dispatch.rs	5	let handler: fn(tauri::ipc::Invoke<R>) -> bool = tauri::generate_handler![	saaa-voice
+src-tauri/src/voice/streaming_asr/session/tests.rs	3	use tauri::ipc::Channel;	saaa-voice
+src-tauri/src/voice/streaming_asr/session/tests.rs	83	if let tauri::ipc::InvokeResponseBody::Json(json) = body {	saaa-voice
+src-tauri/src/voice/streaming_tts/fallback_tests.rs	57	on_event: tauri::ipc::Channel::new(|_| Ok(())),	saaa-voice
+src-tauri/src/voice/streaming_tts/runtime/tests.rs	239	let channel = tauri::ipc::Channel::new(|_| Ok(()));	saaa-voice
+src-tauri/src/voice/unavailable_speech.rs	23	_channel: tauri::ipc::Channel<RuntimeEvent>,	saaa-voice
+src-tauri/src/voice_behavior.rs	62	#[tauri::command]	saaa-voice
+src-tauri/src/voice_behavior.rs	64	state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/voice_behavior.rs	70	#[tauri::command]	saaa-voice
+src-tauri/src/voice_behavior.rs	72	state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/voice_behavior.rs	78	#[tauri::command]	saaa-voice
+src-tauri/src/voice_behavior.rs	80	state: tauri::State<'_, AppState>,	saaa-voice
+src-tauri/src/voice_commands.rs	3	#[tauri::command]	saaa-application-or-host
+src-tauri/src/voice_commands.rs	5	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/voice_commands.rs	12	#[tauri::command]	saaa-application-or-host
+src-tauri/src/voice_commands.rs	14	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/voice_commands.rs	15	request: tauri::ipc::Request<'_>,	saaa-application-or-host
+src-tauri/src/voice_commands.rs	20	#[tauri::command]	saaa-application-or-host
+src-tauri/src/voice_commands.rs	22	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/voice_commands.rs	34	#[tauri::command]	saaa-application-or-host
+src-tauri/src/voice_commands.rs	36	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/voice_commands.rs	44	#[tauri::command]	saaa-application-or-host
+src-tauri/src/voice_commands.rs	46	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/voice_commands.rs	54	#[tauri::command]	saaa-application-or-host
+src-tauri/src/voice_commands.rs	56	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/voice_commands.rs	61	#[tauri::command]	saaa-application-or-host
+src-tauri/src/voice_commands.rs	63	state: tauri::State<'_, AppState>,	saaa-application-or-host
+src-tauri/src/voice_commands.rs	65	) -> Result<tauri::ipc::Response, String> {	saaa-application-or-host
+src-tauri/src/voice_commands.rs	69	.map(tauri::ipc::Response::new)	saaa-application-or-host
+src-tauri/src/voice_commands.rs	73	#[tauri::command]	saaa-application-or-host
+src-tauri/src/voice_commands.rs	74	pub(crate) fn stop_tts(state: tauri::State<'_, AppState>, run_id: String) -> Result<(), String> {	saaa-application-or-host
+src-tauri/src/window_size.rs	3	use tauri::{LogicalSize, WebviewWindow};	saaa-application-or-host
+src-tauri/src/window_size.rs	38	pub(crate) fn save(window: &tauri::Window, data_directory: &Path) {	saaa-application-or-host
+src-tauri/src/worker_agents/registry/commands.rs	7	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	9	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	14	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	16	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	24	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	26	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	34	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	36	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	54	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	56	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	66	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	68	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	76	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	78	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	86	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	88	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	96	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	98	state: tauri::State<'_, AppState>,	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	107	#[tauri::command]	saaa-work
+src-tauri/src/worker_agents/registry/commands.rs	109	state: tauri::State<'_, AppState>,	saaa-work
+src/features/chat/ConversationCheckPage.tsx	15	"import { listen } from ""@tauri-apps/api/event"";"	existing-package-or-frontend
+src/features/chat/ConversationCheckPage.tsx	201	"listen(""conversation-queue-updated"", () => {"	existing-package-or-frontend
+src/features/chat/ConversationCheckPage.tsx	204	"listen<{ conversationId: string }>(""delegated-report-committed"", ({ payload }) => {"	existing-package-or-frontend
+src/features/chat/ConversationCheckPage.tsx	231	"void listen<{ inputId: string; text: string }>(""conversation-answer-delta"", ({ payload }) => {"	existing-package-or-frontend
+src/features/chat/artifacts/ArtifactDrawer.tsx	16	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/chat/artifacts/artifactPreviewApi.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/chat/artifacts/artifactWebviewHost.ts	1	"import { LogicalPosition, LogicalSize } from ""@tauri-apps/api/dpi"";"	existing-package-or-frontend
+src/features/chat/artifacts/artifactWebviewHost.ts	2	"import { Webview } from ""@tauri-apps/api/webview"";"	existing-package-or-frontend
+src/features/chat/artifacts/artifactWebviewHost.ts	3	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/chat/artifacts/useSourceWebsite.ts	1	"import { Channel, invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/chat/avatar/useAvatarDecision.ts	1	"import { listen } from ""@tauri-apps/api/event"";"	existing-package-or-frontend
+src/features/chat/avatar/useAvatarDecision.ts	15	"void listen<unknown>(""conversation-speech-expression"", ({ payload }) => {"	existing-package-or-frontend
+src/features/chat/ui/api.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/chat/ui/mutationsApi.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/chat/ui/revisionsApi.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/chat/useDelegatedReports.ts	1	"import { listen } from ""@tauri-apps/api/event"";"	existing-package-or-frontend
+src/features/chat/useMessageHistory.ts	2	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/chat/usePersonalStateForget.ts	1	"import { listen } from ""@tauri-apps/api/event"";"	existing-package-or-frontend
+src/features/chat/usePersonalStateForget.ts	14	"void listen<{ runIds: string[] }>(""personal-state-forgotten"", (event) =>"	existing-package-or-frontend
+src/features/chat/useRoleRouting.ts	2	"import { listen } from ""@tauri-apps/api/event"";"	existing-package-or-frontend
+src/features/chat/useRoleRouting.ts	85	"void listen<{ rootId?: string }>(""role-routing-updated"", (event) => {"	existing-package-or-frontend
+src/features/coding/api.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/coding/stewardApi.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/diagnosis/api.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/diagnosis/useDiagnosisReport.ts	16	"const { listen } = await import(""@tauri-apps/api/event"");"	existing-package-or-frontend
+src/features/diagnosis/useDiagnosisReport.ts	17	"return listen<unknown>(""diagnosis-updated"", (event) => handler(event.payload));"	existing-package-or-frontend
+src/features/diagnosis/useDiagnosisReport.ts	54	.listen((payload) => {	existing-package-or-frontend
+src/features/media/mediaApi.ts	1	"import { Channel, invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/memory/api.ts	3	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/memory/reviewApi.ts	2	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/providerUnitTest/ProviderUnitTestPage.tsx	1	"import { Channel, invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/settings/EpisodeSyncSection.tsx	2	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/settings/WorldProviderCapabilities.tsx	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/ttsDictionary/TtsDictionaryPage.tsx	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/ttsDictionary/useTtsDictionarySync.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/ttsDictionary/useTtsDictionarySync.ts	2	"import { listen } from ""@tauri-apps/api/event"";"	existing-package-or-frontend
+src/features/ttsDictionary/useTtsDictionarySync.ts	37	"void listen(""tts-dictionary-changed"", refresh)"	existing-package-or-frontend
+src/features/work/api.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/features/workerAgents/api.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/audioBackend.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/audioIpc.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/auditRuntime.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/ipcChannels.ts	2	"import { Channel, invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/nativeVoiceCapture.ts	1	"import { Channel, invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/providerRuntime.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/qwenRealtimeAsr.ts	1	"import { Channel, invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/roleRoutingApi.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/roleRoutingControls.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/runtime.ts	2	"import { Channel, invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/scheduleApi.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/serviceRegistry.ts	2	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+src/lib/voiceBehaviorRuntime.ts	1	"import { invoke } from ""@tauri-apps/api/core"";"	existing-package-or-frontend
+tests/avatar-decision.test.tsx	6	"mock.module(""@tauri-apps/api/event"", () => ({"	existing-package-or-frontend
+tests/conversation-queue-page.test.tsx	37	"mock.module(""@tauri-apps/api/event"", () => ({"	existing-package-or-frontend
+tests/tauriCoreMock.ts	23	"mock.module(""@tauri-apps/api/core"", () => ({"	existing-package-or-frontend
+tests/terminal-agent-ui.test.tsx	25	"mock.module(""@tauri-apps/api/core"", () => ({"	existing-package-or-frontend
+tests/tts-dictionary-page.test.tsx	7	"mock.module(""@tauri-apps/api/event"", () => ({"	existing-package-or-frontend

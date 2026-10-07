@@ -13,6 +13,7 @@ pub(super) use std::sync::{Mutex, OnceLock};
 #[path = "tests/env_lock.rs"]
 mod env_lock;
 use env_lock::*;
+pub(crate) use env_lock::with_memory;
 #[path = "tests/dw_10_failure_creates_at_most_two_durable_replan.rs"]
 mod dw_10_failure_creates_at_most_two_durable_replan;
 #[path = "tests/ml_05_hold_skips_insert_then_flush_one.rs"]

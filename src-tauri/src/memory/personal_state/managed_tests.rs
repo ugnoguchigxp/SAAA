@@ -14,7 +14,14 @@ use std::sync::Arc;
 struct FixtureDelivery;
 #[async_trait]
 impl Delivery for FixtureDelivery {
-    async fn measure(&self, _: &Value, _: Arc<RunCancellation>) -> Result<u64, String> {
+    async fn measure(&self, messages: &Value, _: Arc<RunCancellation>) -> Result<u64, String> {
+        if messages.is_array() {
+            let context: Value =
+                serde_json::from_str(messages[1]["content"].as_str().unwrap()).unwrap();
+            assert_eq!(context["source"]["role"], "user");
+            assert_eq!(context["source"]["recorded_at"], 1);
+            assert_eq!(context["source"]["finalized"], true);
+        }
         Ok(10)
     }
     async fn provision(

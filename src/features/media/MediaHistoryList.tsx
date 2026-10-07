@@ -1,4 +1,10 @@
 import type { MediaHistory } from "./mediaApi";
+
+function updatedAtLabel(value: string): string {
+  const parsed = /^\d+$/.test(value) ? Number(value) : Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : value;
+}
+
 const statusLabel: Record<string, string> = {
   reserved: "受付準備中",
   submitting: "受付を確認中",
@@ -38,7 +44,7 @@ export function MediaHistoryList({
                 <p>
                   {record.kind === "image" ? "画像" : "楽曲"} · {record.connectionLabel} /{" "}
                   {record.model} · {statusLabel[record.status] ?? "処理を確認中"}（
-                  {new Date(record.updatedAt).toLocaleString()}）
+                  {updatedAtLabel(record.updatedAt)}）
                 </p>
                 {(record.result || (record.jobId && canReconcile)) && (
                   <button type="button" disabled={busy} onClick={() => void recover(record)}>

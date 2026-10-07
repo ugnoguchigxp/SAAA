@@ -45,6 +45,8 @@ cc = "1"
 saaa-terminal-agent-runtime = { path = "../crates/terminal-agent-runtime" }
 saaa-personal-state-core = { path = "../crates/personal-state-core" }
 saaa-larm-session = { path = "../crates/larm-session" }
+saaa-provider-routing = { path = "../crates/saaa-provider-routing" }
+saaa-media = { path = "../crates/saaa-media" }
 saaa-reasoning-mcp = { path = "../services/reasoning-mcp" }
 axum = "0.8"
 saaa-reasoning-contract = { path = "../crates/reasoning-contract" }

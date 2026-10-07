@@ -1,4 +1,11 @@
 use super::*;
+use sha2::{Digest, Sha256};
+
+type PersonalProjection = (
+    Vec<String>,
+    String,
+    std::collections::BTreeSet<saaa_personal_state_core::SourceKey>,
+);
 
 pub(super) fn project_window(
     state: &AppState,
@@ -51,13 +58,25 @@ pub(super) fn personal_state(
     c: &rusqlite::Connection,
     scope: &ScopeSnapshot,
     current: &str,
-) -> Result<(Vec<String>, String), String> {
+) -> Result<PersonalProjection, String> {
     if memory::control_plane::memory_enabled() {
-        Ok((
-            memory::personal_state::snapshots::read(c, scope, current)?,
-            memory::personal_state::snapshots::stamp(c, scope)?,
-        ))
+        let (mut texts, mut inputs) =
+            memory::personal_state::projection::snapshots::view(c, scope, current)?;
+        let (references, dependencies) =
+            memory::personal_state::sources::episode_export::history_view(c, scope, current)?;
+        inputs.extend(dependencies);
+        if let Some(text) =
+            references.filter(|t| texts.iter().map(String::len).sum::<usize>() + t.len() <= 32000)
+        {
+            texts.push(text);
+        }
+        let stamp = memory::personal_state::projection::snapshots::stamp(c, scope)?;
+        let stamp = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&(stamp, &inputs)).map_err(|e| e.to_string())?)
+        );
+        Ok((texts, stamp, inputs))
     } else {
-        Ok((Vec::new(), String::new()))
+        Ok((Vec::new(), String::new(), std::collections::BTreeSet::new()))
     }
 }

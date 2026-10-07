@@ -29,7 +29,7 @@ pub(super) async fn run(
     let request_scope =
         crate::memory::personal_state::worker_scope::request(job, &chunk.source.key.id);
     let (current, mut dependencies) = writer.read_serialized(|c| {
-        crate::memory::personal_state::admission::current(
+        crate::memory::personal_state::worker::admission::current(
             c,
             &ledger,
             request_scope.as_deref(),
@@ -37,7 +37,7 @@ pub(super) async fn run(
         )
     })?;
     let related = writer.read_serialized(|c| {
-        crate::memory::personal_state::admission::dialogue(
+        crate::memory::personal_state::worker::admission::dialogue(
             c,
             &chunk.source,
             job.scope_key.as_deref(),
@@ -57,13 +57,13 @@ pub(super) async fn run(
         .filter_map(|a| a["id"].as_str().map(str::to_owned))
         .collect();
     if consolidating
-        && crate::memory::personal_state::admission::independent_origins(&current).len() < 2
+        && crate::memory::personal_state::worker::admission::independent_origins(&current).len() < 2
     {
         writer.transact(|c| jobs::advance_world(c, job, crate::memory::personal_state::now()))?;
         return world_stage(writer, extractor, job, cancel).await;
     }
     dependencies.insert(chunk.source.key.clone());
-    let input = json!({"purpose":"personal_state_extract","now":crate::memory::personal_state::now(),"instruction":if consolidating { crate::memory::personal_state::admission::CONSOLIDATION_INSTRUCTION } else { EXTRACTION_INSTRUCTION },"request_scope":request_scope,"current":current,"dialogue":dialogue,"context_sources":context_sources,"source":{"ref":chunk.source,"text":chunk.text}});
+    let input = json!({"purpose":"personal_state_extract","now":crate::memory::personal_state::now(),"instruction":if consolidating { crate::memory::personal_state::worker::admission::CONSOLIDATION_INSTRUCTION } else { EXTRACTION_INSTRUCTION },"request_scope":request_scope,"current":current,"dialogue":dialogue,"context_sources":context_sources,"source":{"ref":chunk.source,"text":chunk.text}});
     if crate::memory::personal_state::encode(&input)?.len() > 48000 {
         return Err("personal-extraction-budget".into());
     }

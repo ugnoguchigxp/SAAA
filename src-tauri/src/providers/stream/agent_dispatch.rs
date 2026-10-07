@@ -79,7 +79,13 @@ pub(crate) fn available_agent_tools(
             .is_some_and(|persistence| persistence.state.context_still_search.is_configured())
     {
         definitions.extend(crate::memory::context_still_search::tool_definitions());
-        definitions.push(crate::memory::personal_state::episode_export::source_definition());
+    }
+    if context_still_within_budget
+        && output_persistence.is_some()
+        && crate::memory::control_plane::memory_enabled()
+    {
+        definitions
+            .push(crate::memory::personal_state::sources::episode_export::source_definition());
     }
     if voice_calls_this_attempt == 0 && output_persistence.is_some() {
         definitions.push(crate::voice_behavior::tool_definition());
@@ -333,79 +339,10 @@ pub(crate) async fn execute_agent_tool(
             ),
         };
     }
-    if call.name == crate::memory::personal_state::episode_export::SOURCE_TOOL {
-        let Some(persistence) = output_persistence else {
-            return agent_tools::tool_error_content(
-                "episode-source-unavailable",
-                "原記録を確認できません。",
-            );
-        };
-        return persistence
-            .state
-            .sqlite_readers
-            .read(|c| {
-                crate::memory::personal_state::episode_export::fetch_source(
-                    c,
-                    &input.run_id,
-                    &call.arguments,
-                )
-            })
-            .unwrap_or_else(|_| {
-                agent_tools::tool_error_content(
-                    "episode-source-unavailable",
-                    "許可された最新の原記録を確認できません。",
-                )
-            });
-    }
-    if crate::memory::context_still_search::is_search_tool(&call.name) {
-        let Some(persistence) = output_persistence else {
-            return crate::runtime::agent_tools::tool_error_content(
-                "context-still-unavailable",
-                "ContextStill search is temporarily unavailable.",
-            );
-        };
-        let scopes = persistence
-            .state
-            .sqlite_readers
-            .read(|c| {
-                crate::runtime::context::scope::load(c, &input.run_id)
-                    .map(|s| s.scopes.into_iter().map(|s| s.key).collect::<Vec<_>>())
-            })
-            .unwrap_or_default();
-        return match tokio::time::timeout(
-            timeout,
-            persistence.state.context_still_search.search_scoped(
-                &call.name,
-                &call.arguments,
-                input.workspace_path.as_deref(),
-                &scopes,
-            ),
-        )
-        .await
-        {
-            Ok(Ok(content)) => match persistence.state.sqlite_writer.transact(|c| {
-                crate::memory::personal_state::episode_export::capture(
-                    c,
-                    &input.run_id,
-                    &content,
-                    &scopes,
-                )
-            }) {
-                Ok(()) => content,
-                Err(_) => crate::runtime::agent_tools::tool_error_content(
-                    "episode-source-unavailable",
-                    "Episode evidence changed or is outside the authorized scope.",
-                ),
-            },
-            Ok(Err(error)) => crate::runtime::agent_tools::tool_error_content(
-                error.tool_code(),
-                error.safe_message(),
-            ),
-            Err(_) => crate::runtime::agent_tools::tool_error_content(
-                "context-still-unavailable",
-                "ContextStill search is temporarily unavailable.",
-            ),
-        };
+    if call.name == crate::memory::personal_state::sources::episode_export::SOURCE_TOOL
+        || crate::memory::context_still_search::is_search_tool(&call.name)
+    {
+        return context_still_dispatch::execute(output_persistence, input, call, timeout).await;
     }
     execute_recall_tool(output_persistence, input, call)
 }
@@ -413,3 +350,6 @@ pub(crate) async fn execute_agent_tool(
 #[path = "artifact_webview_dispatch.rs"]
 mod artifact_webview_dispatch;
 use artifact_webview_dispatch::execute_artifact_webview;
+
+#[path = "context_still_dispatch.rs"]
+mod context_still_dispatch;

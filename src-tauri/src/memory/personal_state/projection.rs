@@ -252,3 +252,6 @@ pub fn compose(c: &Connection, task: Option<&str>, max_bytes: usize) -> Result<V
     }
     Ok(value)
 }
+
+#[path = "snapshots.rs"]
+pub mod snapshots;

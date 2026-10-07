@@ -67,7 +67,7 @@ export function EpisodeSyncSection() {
               .finally(() => setBusy(false));
           }}
         />
-        会話から傾向を整理する（推測として保持）
+        会話から傾向を整理する（試験運用・推測として保持）
       </label>
       {error && <p role="alert">{error}</p>}
     </section>

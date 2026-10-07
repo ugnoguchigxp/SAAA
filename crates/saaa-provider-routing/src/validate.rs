@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 /// Cross-reference validation for a whole snapshot. Disabled resources may stay
 /// bound (the user disabled them); resolution rejects them at run time.
-pub(crate) fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), String> {
+pub fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), String> {
     let mut connection_ids = HashSet::new();
     for connection in &snapshot.connections {
         if !matches!(connection.location.as_str(), "local" | "cloud") {
@@ -28,7 +28,7 @@ pub(crate) fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), Strin
         }
         if connection.connection_id.starts_with("conn:svc-") {
             if let Some(reference) = &connection.credential_ref {
-                if reference.service != super::SERVICE_CREDENTIAL_SERVICE
+                if reference.service != crate::SERVICE_CONNECTION_CREDENTIAL_SERVICE
                     || reference.account != connection.connection_id
                 {
                     return Err(
@@ -79,7 +79,7 @@ pub(crate) fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), Strin
             .connection(&resource.connection_id)
             .is_some_and(|c| c.adapter_kind == AdapterKind::ReplicateMedia)
         {
-            crate::media_generation::replicate::model_parts(&resource.model)?;
+            crate::model_parts(&resource.model)?;
             if !matches!(
                 resource.capability,
                 Capability::ImageGeneration | Capability::MusicGeneration
@@ -131,7 +131,9 @@ pub(crate) fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), Strin
                 ));
             }
             if binding.review == BindingReview::Ready {
-                if let Some(reason) = super::unsupported_reason(snapshot, binding.purpose, id) {
+                if let Some(reason) =
+                    crate::compatibility::unsupported_reason(snapshot, binding.purpose, id)
+                {
                     return Err(format!("{}: {reason}", binding.purpose.id()));
                 }
             }

@@ -1,6 +1,7 @@
 use super::*;
 use crate::persistence::{SqliteReaders, SqliteWriter};
 use crate::RunCancellation;
+use crate::{RuntimeEvent, StartTurnInput};
 use rusqlite::Connection;
 #[test]
 fn search_inputs_are_bounded_and_do_not_accept_model_supplied_paths() {
@@ -128,3 +129,6 @@ async fn live_saaa_conversation_proactively_searches_context_still() {
         "the SAAA conversation completed without starting ContextStill exploration"
     );
 }
+
+#[path = "tests/episode_contract.rs"]
+mod episode_contract;

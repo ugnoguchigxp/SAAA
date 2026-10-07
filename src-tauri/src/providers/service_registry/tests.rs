@@ -156,14 +156,14 @@ fn voice_routes_resolve_to_their_own_resources() {
 fn fingerprint_changes_with_the_resource_but_not_unrelated_resources() {
     let mut snapshot = migrate_legacy(&providers(), &routing("harness")).unwrap();
     let before = resolve_route(&snapshot, Purpose::VoiceTranscribe, Default::default()).unwrap();
-    snapshot.resource_mut_for_test("res:cloud-tts").model = "other".into();
+    resource_mut(&mut snapshot, "res:cloud-tts").model = "other".into();
     assert_eq!(
         before.fingerprint,
         resolve_route(&snapshot, Purpose::VoiceTranscribe, Default::default())
             .unwrap()
             .fingerprint
     );
-    snapshot.resource_mut_for_test("res:cloud-asr").model = "other".into();
+    resource_mut(&mut snapshot, "res:cloud-asr").model = "other".into();
     assert_ne!(
         before.fingerprint,
         resolve_route(&snapshot, Purpose::VoiceTranscribe, Default::default())
@@ -175,7 +175,7 @@ fn fingerprint_changes_with_the_resource_but_not_unrelated_resources() {
 #[test]
 fn disabled_resource_is_rejected_without_falling_back() {
     let mut snapshot = migrate_legacy(&providers(), &routing("harness")).unwrap();
-    snapshot.resource_mut_for_test("res:cloud-asr").enabled = false;
+    resource_mut(&mut snapshot, "res:cloud-asr").enabled = false;
     assert_eq!(
         resolve_route(&snapshot, Purpose::VoiceTranscribe, Default::default()),
         Err(ResolveError::ResourceDisabled("res:cloud-asr".into()))
@@ -300,6 +300,14 @@ const FAILOVER_PURPOSES: [Purpose; 5] = [
     Purpose::MediaMusicGenerate,
 ];
 
+fn resource_mut<'a>(snapshot: &'a mut RegistrySnapshot, id: &str) -> &'a mut ServiceResource {
+    snapshot
+        .resources
+        .iter_mut()
+        .find(|resource| resource.resource_id == id)
+        .expect("test resource")
+}
+
 fn larm(reachability: Reachability) -> LocalAvailability {
     LocalAvailability { larm: reachability }
 }
@@ -382,7 +390,7 @@ fn a_cloud_primary_ignores_larm_reachability_and_a_broken_primary_never_falls_ba
     assert_eq!(route.selection, RouteSelection::Primary);
 
     let mut disabled = failover_snapshot(Purpose::VoiceTranscribe);
-    disabled.resource_mut_for_test("res:harness-asr").enabled = false;
+    resource_mut(&mut disabled, "res:harness-asr").enabled = false;
     assert_eq!(
         resolve_route(
             &disabled,
@@ -429,4 +437,110 @@ fn a_binding_awaiting_review_may_keep_legacy_larm_fallbacks_without_breaking_loa
     binding.fallback_resource_ids = vec![harness_id(Capability::TextGeneration)];
     binding.review = BindingReview::NeedsReview;
     assert!(validate_snapshot(&snapshot).is_ok());
+}
+
+#[test]
+fn local_availability_matches_domain_reachability() {
+    let snapshot = migrate_legacy(&providers(), &routing("harness")).unwrap();
+    for (local, domain) in [
+        (Reachability::Unknown, LarmReachability::Unknown),
+        (Reachability::Reachable, LarmReachability::Reachable),
+        (Reachability::Unreachable, LarmReachability::Unreachable),
+    ] {
+        let desktop = resolve_route(
+            &snapshot,
+            Purpose::VoiceSpeak,
+            LocalAvailability { larm: local },
+        );
+        let direct = saaa_provider_routing::resolve_route(&snapshot, Purpose::VoiceSpeak, domain);
+        assert_eq!(desktop, direct);
+    }
+}
+
+#[test]
+fn desktop_settings_conversion_matches_an_independent_legacy_fixture() {
+    use saaa_provider_routing::{LegacyHarness, LegacyProvider, LegacyRoute, LegacySettings};
+    let desktop = migrate_legacy(&providers(), &routing("harness")).unwrap();
+    let domain = saaa_provider_routing::migrate_legacy(&LegacySettings {
+        harness: LegacyHarness {
+            address: "http://larm.test".into(),
+            tts_voice: None,
+        },
+        providers: vec![
+            LegacyProvider {
+                id: "cloud-llm".into(),
+                label: "cloud-llm".into(),
+                location: "cloud".into(),
+                enabled: true,
+                adapter_kind: AdapterKind::ChatCompletions,
+                capability: Capability::TextGeneration,
+                endpoint: "https://api.example.test/v1".into(),
+                authentication: "api-key".into(),
+                model: "m".into(),
+                detail: None,
+                request_options: None,
+            },
+            LegacyProvider {
+                id: "cloud-asr".into(),
+                label: "cloud-asr".into(),
+                location: "cloud".into(),
+                enabled: true,
+                adapter_kind: AdapterKind::HttpAsr,
+                capability: Capability::Transcription,
+                endpoint: "https://api.example.test/v1".into(),
+                authentication: "api-key".into(),
+                model: "w".into(),
+                detail: Some("ja".into()),
+                request_options: None,
+            },
+            LegacyProvider {
+                id: "cloud-tts".into(),
+                label: "cloud-tts".into(),
+                location: "cloud".into(),
+                enabled: true,
+                adapter_kind: AdapterKind::HttpTts,
+                capability: Capability::Speech,
+                endpoint: "https://api.example.test/v1".into(),
+                authentication: "none".into(),
+                model: "t".into(),
+                detail: Some("v".into()),
+                request_options: None,
+            },
+        ],
+        conversation_respond: LegacyRoute {
+            source: "harness".into(),
+            primary_provider_id: None,
+            provider_id: None,
+            fallback_provider_ids: vec![],
+            timeout_ms: 60_000,
+            attempt_timeout_ms: None,
+        },
+        voice_transcribe: LegacyRoute {
+            source: "provider".into(),
+            primary_provider_id: None,
+            provider_id: Some("cloud-asr".into()),
+            fallback_provider_ids: vec![],
+            timeout_ms: 30_000,
+            attempt_timeout_ms: None,
+        },
+        voice_speak: LegacyRoute {
+            source: "harness".into(),
+            primary_provider_id: None,
+            provider_id: None,
+            fallback_provider_ids: vec![],
+            timeout_ms: 30_000,
+            attempt_timeout_ms: None,
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&desktop).unwrap(),
+        serde_json::to_value(&domain).unwrap()
+    );
+    assert_eq!(desktop.connections.len(), 4);
+    assert!(domain
+        .connection("conn:cloud-tts")
+        .unwrap()
+        .credential_ref
+        .is_none());
 }

@@ -15,10 +15,21 @@ async function until(check: () => boolean, timeout = 5_000) {
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "saaa-serial-test-"));
+  const git = (...args: string[]) => {
+    const result = spawnSync(
+      "git",
+      ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...args],
+      { cwd: directory, encoding: "utf8" },
+    );
+    if (result.status !== 0) throw new Error(result.stderr);
+  };
+  git("init", "--quiet");
+  git("commit", "--quiet", "--allow-empty", "-m", "fixture");
   const children: ReturnType<typeof Bun.spawn>[] = [];
   const held = (name: string) => `
     const fs = require("node:fs");
-    fs.writeFileSync(${JSON.stringify(join(directory, name))}, String(process.pid));
+    const target = ${JSON.stringify(join(directory, name))};
+    if (!fs.existsSync(target)) fs.writeFileSync(target, String(process.pid));
     while (!fs.existsSync(${JSON.stringify(join(directory, `${name}.release`))})) await Bun.sleep(10);
   `;
   const start = (name: string, sources: string[], cwd = directory, env = {}) => {
@@ -315,3 +326,45 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("cancellation gives a lab-smoke owner time to finish detached-resource cleanup", async () => {
+  const f = fixture();
+  const smoke = f.file("feature-lab-smoke.ts");
+  const ready = f.file("smoke-ready");
+  const cleaned = f.file("smoke-cleaned");
+  const runner = f.file("smoke-runner.ts");
+  writeFileSync(
+    smoke,
+    `
+import { writeFileSync } from "node:fs";
+process.on("SIGTERM", async () => {
+  await Bun.sleep(2_500);
+  writeFileSync(${JSON.stringify(cleaned)}, "cleaned");
+  process.exit(143);
+});
+writeFileSync(${JSON.stringify(ready)}, "ready");
+await Bun.sleep(60_000);
+`,
+  );
+  writeFileSync(
+    runner,
+    `
+import { runSerialCommand } from ${JSON.stringify(join(ROOT, "scripts/serial-command.ts"))};
+process.exitCode = await runSerialCommand([process.execPath, ${JSON.stringify(smoke)}], ${JSON.stringify(f.directory)});
+`,
+  );
+  const child = Bun.spawn([process.execPath, runner], { stdout: "pipe", stderr: "pipe" });
+  try {
+    await until(() => existsSync(ready));
+    child.kill("SIGTERM");
+    expect(await child.exited).toBe(143);
+    expect(existsSync(cleaned)).toBe(true);
+    expect(await new Response(child.stdout).text()).not.toContain("OK");
+    expect(await new Response(child.stderr).text()).toBe("");
+    expect((await f.start("after-smoke", ["process.exit(0)"]).result).code).toBe(0);
+  } finally {
+    child.kill("SIGTERM");
+    await child.exited;
+    await f.cleanup();
+  }
+});

@@ -343,6 +343,13 @@ pub fn run() {
             if let Some(manager) = tool_selection.mcp_manager() {
                 manager.start_background();
             }
+            let reachability =
+                std::sync::Arc::new(providers::reachability::ReachabilityState::default());
+            let media = std::sync::Arc::new(media_generation::assemble(
+                sqlite_writer.clone(),
+                sqlite_readers.clone(),
+                reachability.clone(),
+            ));
             app.manage(AppState {
                 sqlite_writer,
                 sqlite_readers,
@@ -370,12 +377,17 @@ pub fn run() {
                 steward_wake: steward::pump::Wake::default(),
                 conversation_queue_wake: std::sync::Arc::new(tokio::sync::Notify::new()),
                 artifact_preview,
-                reachability: std::sync::Arc::new(providers::reachability::ReachabilityState::default()),
+                reachability,
                 reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
                 diagnosis: std::sync::Arc::new(diagnosis::store::DiagnosisStore::new()),
                 context_segments_enabled: app_state::context_segments_from_env(),
                 wire_prefixes: Mutex::new(std::collections::VecDeque::new()),
+                media,
             });
+            app.state::<AppState>()
+                .media
+                .reconcile_interrupted()
+                .map_err(|error| format!("media recovery: {}", error.message))?;
             // Startup diagnosis reads local state and the LARM catalog without
             // allocating a Connection or blocking the window setup.
             diagnosis::engine::spawn_startup(app.handle().clone());

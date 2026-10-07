@@ -64,3 +64,11 @@ BEGIN
 END;
 
 CREATE TABLE IF NOT EXISTS personal_assertion_scope_policies(assertion_id TEXT PRIMARY KEY,scope_key TEXT NOT NULL,revision INTEGER NOT NULL);
+
+-- Versions survive deletion of a published body; history contains no forgotten text.
+CREATE TABLE IF NOT EXISTS personal_snapshot_versions (
+ scope_key TEXT NOT NULL,category TEXT NOT NULL,revision INTEGER NOT NULL,
+ PRIMARY KEY(scope_key,category)
+);
+INSERT INTO personal_snapshot_versions SELECT scope_key,category,revision FROM personal_snapshots WHERE true
+ON CONFLICT(scope_key,category) DO UPDATE SET revision=max(revision,excluded.revision);

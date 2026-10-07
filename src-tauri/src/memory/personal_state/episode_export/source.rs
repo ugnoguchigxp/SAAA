@@ -18,8 +18,16 @@ pub(crate) fn fetch_source(c: &Connection, run: &str, raw: &str) -> Result<Strin
     }
     let r: Request = serde_json::from_str(raw).map_err(|_| "episode-source-input")?;
     let scope = crate::runtime::context::scope::load(c, run)?;
-    if scope.status != "resolved" {
+    if !super::history::scope_current(c, &scope)? {
         return Err("episode-source-scope".into());
+    }
+    if let Some(current) = scope
+        .scopes
+        .iter()
+        .find(|s| s.kind == "request" && s.relation == "current")
+        .and_then(|s| s.key.strip_prefix("request:"))
+    {
+        super::reuse_history(c, run, &scope, current)?;
     }
     let stored:String=c.query_row("SELECT contract FROM memory_episode_run_refs WHERE run_id=?1 AND episode_id=?2 AND source_key=?3",params![run,r.id,r.source_key],|row|row.get(0)).map_err(|_|"episode-source-not-recalled")?;
     let contract: Value = serde_json::from_str(&stored).map_err(|_| "episode-source-contract")?;
@@ -53,4 +61,19 @@ pub(crate) fn fetch_source(c: &Connection, run: &str, raw: &str) -> Result<Strin
         end -= 1;
     }
     Ok(json!({"instructionAuthority":"none","sourceId":r.source_id,"version":src["version"],"digest":src["digest"],"role":role,"utteredAt":at,"recordedAt":src["recordedAt"],"range":{"start":start,"end":end},"text":&text[start..end],"truncated":end<limit,"nextOffset":if end<limit{Some(end)}else{None}}).to_string())
+}
+
+pub(crate) fn capture_snapshot_inputs(
+    c: &Connection,
+    run: &str,
+    inputs: &std::collections::BTreeSet<saaa_personal_state_core::SourceKey>,
+) -> Result<(), String> {
+    for key in inputs {
+        c.execute(
+            "INSERT OR IGNORE INTO memory_snapshot_run_inputs VALUES(?1,?2,?3)",
+            params![run, key.id, key.version],
+        )
+        .map_err(database_error)?;
+    }
+    Ok(())
 }

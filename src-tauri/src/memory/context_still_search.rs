@@ -13,8 +13,6 @@ use url::{Host, Url};
 #[path = "context_still_search/context_still_search_client.rs"]
 mod context_still_search_client;
 #[cfg(test)]
-pub(super) use crate::{RunCancellation, RuntimeEvent, StartTurnInput};
-#[cfg(test)]
 pub(super) use context_still_search_client::SEARCH_CALL_LOG;
 #[cfg(any(test, feature = "offline-contracts"))]
 pub(super) use context_still_search_client::{compact_result, parse_arguments};

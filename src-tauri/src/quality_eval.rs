@@ -220,6 +220,13 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         &crate::tool_selection::ToolSelectionConfig::direct(),
         Some(generated_capabilities.clone()),
     ));
+    let reachability =
+        std::sync::Arc::new(crate::providers::reachability::ReachabilityState::default());
+    let media = std::sync::Arc::new(crate::media_generation::assemble(
+        sqlite_writer.clone(),
+        sqlite_readers.clone(),
+        reachability.clone(),
+    ));
     Ok(AppState {
         sqlite_writer,
         sqlite_readers,
@@ -248,14 +255,13 @@ fn quality_state(request: &QualityRequest) -> Result<AppState, String> {
         steward_wake: crate::steward::pump::Wake::default(),
         conversation_queue_wake: Arc::new(tokio::sync::Notify::new()),
         artifact_preview: crate::artifact_preview::PreviewRuntime::default(),
-        reachability: std::sync::Arc::new(
-            crate::providers::reachability::ReachabilityState::default(),
-        ),
+        reachability,
         reachability_kick: std::sync::Arc::new(tokio::sync::Notify::new()),
         diagnosis: std::sync::Arc::new(crate::diagnosis::store::DiagnosisStore::new()),
         context_segments_enabled: std::env::var("SAAA_CONTEXT_SEGMENTS").ok().as_deref()
             == Some("1"),
         wire_prefixes: std::sync::Mutex::new(std::collections::VecDeque::new()),
+        media,
     })
 }
 

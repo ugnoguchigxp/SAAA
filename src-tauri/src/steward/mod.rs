@@ -189,3 +189,6 @@ mod sc_tests {
 }
 
 pub(crate) use repository::enqueue_report as enqueue_terminal_report;
+
+#[cfg(test)]
+pub(crate) use tests::with_memory as with_test_memory;

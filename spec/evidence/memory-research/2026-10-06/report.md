@@ -1,12 +1,16 @@
 # SAAAメモリー改善の根拠と実装順序
 
+2026年10月7日追記：本計画に基づくSAAAとContextStillの実装を行った。[実装範囲・運用設定・検証・残る受入項目](./implementation.md)を参照。以下の調査時点の実装状況と検証記録は、当時の根拠として保持する。
+
+並行計画：[Rustのドメインcrate分割](../../../../docs/plans/rust-domain-crate-migration.md)と同時進行する。本書が記憶の挙動・採用条件を定め、分割計画がコード配置・依存方向・テスト移植を定める。共有する所有者と引渡し条件は、分割計画の第15節と本書の「crate移行との作業順序」に従う。
+
 SAAAで目指すのは、過去の会話を多く保存するだけでなく、本人について必要なことを理解し、訂正と時間変化を反映し、根拠を示しながら会話を継続できるメモリーである。現時点の推奨は、既存のSource・Assertion・Transitionの台帳を活かし、実際の会話への接続、記憶候補の採用判定、時間と訂正の処理、小さな公開Snapshotを順に整えること。HindsightのConsolidationは、その上で品質を比較しながら追加する。
 
 Hindsightは、派生記憶の更新、検索、再統合の実装例として有用である。一方、証拠件数は信頼度そのものではなく、文章の書換えや非同期再生成だけではSAAAの訂正・忘却・公開版の失効契約を満たさない。「最良」の優劣は実測前には確定できないため、単純な台帳と検索を比較対象に残し、機能追加ごとに日本語の記憶品質と費用を測る。
 
 Episodeは、2026年10月6日のユーザー承認により、ContextStillのEpisodeCardと既存Distillerを再利用する方針で確定した。既存モデルには意図・判断・結果・未解決事項・原典参照があり、個人の出来事、時間、版と失効、保持責務の不足を補う。SAAAに同等の生成・保存・検索基盤を新設しない。[ContextStill Episodeの調査記録](/Users/y.noguchi/Code/SAAA/spec/evidence/memory-research/2026-10-06/contextstill-episode-review.md)
 
-生成方式は、SAAAのSQLite原記録 → vibe memoryの差分取得・同期 → ContextStillのEpisodeDistiller → EpisodeCard → 必要時のSAAA検索・参照とする。完成EpisodeをSAAAが事前生成して挿入する作業は含めない。現在状態と明示的な訂正・忘却はSAAAが即時処理し、同期済み原記録・Episode・進行中生成への失効伝播を連携契約として実装する。取得Adapterと連携全体は未受入であり、方針の確定と実装の完成を区別する。概念正本の責務分担とEpisode定義も同日更新した。
+2026年10月7日のユーザー指定により、ContextStillがSAAAのSQLiteを自動で読み、vibe memory化する処理は既存の前提とする。その取得・同期経路の新設は、本計画の作業と完了条件から外す。SAAAはContextStillが生成したEpisodeを必要時に検索・参照し、現在状態、Snapshot、訂正・忘却、参照の利用可否を扱う。EpisodeをSAAAで事前生成して送る作業は含めない。自動取得の構成は後述の補足メモに残す。
 
 ## 対象版と判断の前提
 
@@ -25,7 +29,7 @@ Episodeは、2026年10月6日のユーザー承認により、ContextStillのEpi
 |---|---|---|
 | 台帳 | SourceKeyはID・version・範囲、SourceRefはdigest・sequence・role・access・可用性を持つ。Assertionは根拠、生成入力、論理依存、複数の時刻を分ける | 第二のFact正本を増設せず、必要な記憶型と履歴を既存台帳へ追加する |
 | 状態遷移 | Candidate、Active、Disputed、Supersede、Retract、Invalidate等と、再実行・競合・Scope・削除の検証がある | 機構の正しさと、LLMによる対象選択の正しさを分ける |
-| 抽出 | 現行ExtractorはObjective・Constraint・Decision・OpenLoop等の継続状態が中心。出力を検証する処理は既にある | 嗜好・習慣・本人の状態を採用条件付きで広げる。Episode生成はContextStillへ集約し、原記録の取得と失効を接続する。LLMのActive出力だけで昇格を決めない |
+| 抽出 | 現行ExtractorはObjective・Constraint・Decision・OpenLoop等の継続状態が中心。出力を検証する処理は既にある | 嗜好・習慣・本人の状態を採用条件付きで広げる。Episode生成はContextStillへ集約し、参照利用と失効を接続する。LLMのActive出力だけで昇格を決めない |
 | 抽出入力 | 対象Scope内の現行Assertionをまとめて渡し、48,000 bytesを超えると失敗する。各候補は、その入力群の依存を引き継ぐ | 対象・Scopeで検索を絞り、生成単位を小さくする。実際に見せた入力の依存は落とさない |
 | 時間 | coreにはobserved_at・effective_at・recorded_at・valid_from・valid_untilがある。一方workerはobserved_atにsource記録時刻、effective_at・valid_fromに処理時刻を使う | 出来事の時刻、有効期間、知った時刻、処理時刻を抽出・保存・検索までつなぐ |
 | ジョブ | durable jobs、lease、checkpoint、再起動時の回復、バックログ補充、キャンセルがある | 新しい独立キューを作らず、既存ジョブに段階と適用条件を追加する |
@@ -121,7 +125,7 @@ Gateは短さではなく、発話者、対象、確定度、Scope、時間、�
 | graph検索用リンク | 必要時にMemoryの検索補助へ配置 | 初期は保留。品質差が出るケースで判断 |
 | 因果・条件・依存の理解 | World Modelの既存契約を使う | HindsightのWorld区分やmemory_linksを正本として持ち込まない |
 | Knowledge Pages | 外部知識と再利用可能な経験はcontextStillの責務 | SAAAに第二のWikiを作らない |
-| Episode生成と保存 | ContextStillのEpisodeCardとDistillerを再利用する方針で確定 | SAAAは原典・取得許可・即時失効・参照の応答適格性を担当。ContextStillは差分取得・蒸留・採用・重複整理・保存・再生成・検索を担当する |
+| Episode生成と保存 | ContextStillのEpisodeCardとDistillerを再利用する方針で確定 | SAAAは原典・即時失効・参照の応答適格性を担当。ContextStillは蒸留・採用・重複整理・保存・再生成・検索を担当する。SQLiteの自動取得とvibe memory化は計画外の既存前提とする |
 | Reflect | 共通の予算付きtool実行へ配置 | 通常会話で常時実行せず、証拠不足時に限定 |
 
 HindsightのEntityとmemory_linksは、対象とtemporal・semantic・causalな検索用接続を扱う。PostgreSQLではrelationとして保存され、専用Graph DBが必須ではない。一方、「ユーザーが現在何を好むか」の訂正可能な正本や、SAAAの条件付きWorld Modelの代替と見なすべきではない。[link生成](https://github.com/vectorize-io/hindsight/blob/07150298151d83c212bc3d115f3c3284fd86d0dc/hindsight-api-slim/hindsight_api/engine/retain/link_creation.py)
@@ -199,9 +203,9 @@ Hindsightの長所は、元Factを残した更新・再統合と検索の実装�
 
 | 段階 | 具体的な作業と主な接続先 | 完了条件 |
 |---|---|---|
-| 0 会話経路と評価の固定 | queue_context・context_window・control_plane・personal_stateを追い、合成DBで現在値・Pending・失効が応答に届く経路を再現。既存経路と新台帳の役割を明記。Episode連携E0の取得・失効契約とfixtureを固定 | 通常ビルドの経路で、どの正本と検証を使ったかを再現できる。テスト専用の成功をproduction接続と誤認しない |
+| 0 会話経路と評価の固定 | queue_context・context_window・control_plane・personal_stateを追い、合成DBで現在値・Pending・失効が応答に届く経路を再現。既存経路と新台帳の役割を明記。Episode連携E0の参照・失効契約とfixtureを固定 | 通常ビルドの経路で、どの正本と検証を使ったかを再現できる。テスト専用の成功をproduction接続と誤認しない |
 | 1 型と採用判定 | model・workerの嗜好等の型、時間精度、訂正対象、origin、独立Gateを実装。対象とScopeでbounded extractionを行う | 遅延取り込み、明示と推論、引用、承認、曖昧な訂正、複製を固定suiteで区別できる |
-| 2 失効と応答受理 | 既存source・transition・generation検証を使い、関連Pending、訂正・削除・Scope変更を送信前と結果受理に接続。Episode連携E1〜E3の差分取得・背景生成・失効を隔離環境で接続 | 受理済みの訂正・削除後に旧版が新たに採用されない。再起動・競合・途中失敗でも復活しない。同期済み原記録とEpisodeも検証対象に含む |
+| 2 失効と応答受理 | 既存source・transition・generation検証を使い、関連Pending、訂正・削除・Scope変更を送信前と結果受理に接続。Episode連携E3の失効を隔離環境で接続 | 受理済みの訂正・削除後に旧版が新たに採用されない。再起動・競合・途中失敗でも復活しない。ContextStillの派生記憶とEpisode参照も失効の検証対象に含む |
 | 3 小さな公開Snapshot | 確定AssertionからProfile・Project・Topic本文を決定的に生成し、manifestと公開revisionを実装。Compilerへ接続しCheckpointとTailを分ける | 本文の安定と適格性の更新を独立に検証できる。required contextが欠けた場合は明示的に保留・再構成する |
 | 4 ObservationとConsolidation | 既存jobsに、関連候補検索・LLM統合・適用前検証・履歴・再生成段階を追加。LLM待機をtransaction外に置く | 必須の安全契約と事前に定めた品質下限を満たし、台帳とSnapshotだけの方式より品質・費用・継続性の少なくとも一つが改善する |
 | 5 条件付き深掘りと調整 | Episode連携E4を会話経路へ接続し、ContextStillのEpisodeから原文への段階検索を使う。必要なsemantic・Entity・graph arm、予算付きReflect、公開頻度を調整 | Episodeの原典版・時間・Scope・訂正と削除を検証できる。検索機能を一つずつ外す比較で効果が残る。平均精度だけでなく誤Profile・時間混同・費用も合格する |
@@ -210,25 +214,50 @@ Hindsightの長所は、元Factを残した更新・再統合と検索の実装�
 
 データ移行はコピーしたDBで検証する。旧projectionとの切替期間は、書込正本を一つに保ち、影響を観察できる比較読取を使う。古い公開データは、原典の適格性を確認できなければそのまま新しいActiveへ移さない。既存の保存設定・providerを維持し、設定の初期化で接続問題を回避しない。
 
+### crate移行との作業順序
+
+メモリーの改善は現行moduleと既存personal-state-coreで進め、Memory crate、root workspace、affectedの導入を前提にしない。画像preview・media抽出・隔離HTTP hostは並行して進められる。Memory・Context・Conversationの抽出は、移す境界の機能変更と決定的な契約を固定してから行う。実LLM品質評価の完了をすべての抽出の前提にはしない。
+
+| 本計画の作業 | 分割計画との接点と順序 |
+|---|---|
+| 段階0〜1：会話接続・型・採用 | SourceKey・Assertion・追加した記憶型は既存personal-state-coreを再利用する。core、Scope、投影と同じファイルを移す作業は、進行中の型・機能変更を反映してから行う |
+| 段階2：失効・応答受理 | 同じwriter transaction内の検証・保存・rollbackを維持する。Memoryの依存処理とdesktopの横断調停を分け、crateごとのcommitや通知だけによる代用をしない |
+| 段階3：Snapshot | 永続本文・manifest・公開版・Pending・失効はMemoryの責務。Contextは送信時の予算・構成を担当し、両者の変換はdesktopへ置く。MemoryからContextへの逆依存を作らない |
+| 段階4：Consolidation | personal_jobsとreviewの段階・入力依存・checkpointはMemoryに残す。task-queue抽出へ統合しない。移行の成功と品質の改善を分け、実測前の既定オフを維持する |
+| Episode連携E0・E2〜E4 | ContextStillの生成・保存正本とSAAAの検索・原典参照・適格性を維持する。Tool配送、応答依存、同focusでの参照継続は実際の利用側も検証する。SQLite自動取得・vibe memory化は双方の計画対象外 |
+
+同じファイル・契約を扱う機能変更と移動は順番に適用する。移行直前に現在の作業ツリーと未追跡ファイルを含めて、入力版、公開API、SQL・serde形式、テスト登録・feature、既存失敗を記録する。抽出中は対象境界への新しい機能変更の適用を待ち、実装とテストを一緒に移す。利用側の回帰を通した後は新しい所有者で機能改善を再開する。別の境界の作業は継続できる。
+
+crate抽出にschema・保存形式・採用条件の変更を混ぜない。必要なメモリーmigrationは別の変更単位として管理し、移行側は最新の確定済み契約を引き継ぐ。旧位置の再公開は互換入口に限定し、実装、writer、schema正本、Episode正本を二重保持しない。
+
+検証は既存verifyと共有ロックを使う。現行Memoryの対象検証はsrc-tauri、独立した意味論はpersonal-state-coreで実行する。抽出後は新crateの検証に会話保存・失効・IPC等の利用側統合を加える。通常実装後のnormal、コミット前のadvance、大規模移行時のfullを区別する。affectedの導入前や影響を確定できない場合は既存の広いgateを使う。
+
+テストの移植先、SQL・IPCを含む検証入力、具体的なgateと並行編集時の扱いは、[分割計画の第15節](../../../../docs/plans/rust-domain-crate-migration.md#15-メモリー計画との同時進行)にまとめる。[実装記録](./implementation.md)の局所合格と全体gateの既存失敗を引渡し時にも区別し、移行によって未測定の品質・費用・実機受入を完了扱いにしない。
+
 ### Episode連携の実装と完了条件
 
-以下は同じ実装計画の作業分解である。E0は段階0、E1〜E3は段階2の失効契約と併せて進め、E4の通常会話への公開は段階3のSnapshot基盤とE3の合格後に行う。Episode取得・生成をConsolidationや高度な検索の完成まで先送りしない。許可された範囲で背景処理を自動化し、毎回全件を読み直さず、訂正・忘却の処理を背景LLMの待ち行列へ埋めない。
+以下は同じ実装計画の作業分解である。E0は段階0、E3は段階2の失効契約と併せて進め、E2の採用品質を確認する。E4の通常会話への公開は段階3のSnapshot基盤とE0・E2・E3の合格後に行う。旧E1のSQLite取得・vibe memory化は計画から除外した。過去の実装記録との対応のため、残る作業番号は維持する。訂正・忘却の受理と旧参照の利用停止は背景LLMの完了を待たない。
 
 | 作業 | 担当と主な変更先 | 完了条件 |
 |---|---|---|
-| E0 原記録と利用契約 | SAAAのSourceKey・SourceRefと既存のContextStill永続根拠契約を基に、SQLite読取境界、取得許可、個人Scope、版指定fetch、変更・削除feedを定義する。ContextStillのrepo/globalをそのまま個人Scopeに流用しない | 発話者、原典ID・不変版・digest・範囲、順序、記録時刻、出来事時刻と精度、保持条件を両側で照合できる。許可外の原記録は取得されない。SQLite直読を採る場合も読取専用の限定境界を契約化し、相互DBへの直接書込はしない |
-| E1 vibe memoryへの差分取得 | SAAAは確定原記録と変更履歴を提供し、ContextStillのagent_log_syncにSAAA取得Adapterを追加する。既存Writer経由でvibe memoryへ保存し、episode_distillerをenqueueする | cursorと原典版を永続化し、同じ原記録の再取得、順序変更、途中停止・再起動で欠落や二重生成を起こさない。削除通知を過去記録の再投入が打ち消さない。Topic境界や承認は補助情報として渡し、完成Episodeにしない |
+| E0 原典参照と利用契約 | SAAAのSourceKey・SourceRefと既存のContextStill永続根拠契約を基に、個人Scope、利用許可、版指定fetch、訂正・削除時の失効を定義する。ContextStillのrepo/globalをそのまま個人Scopeに流用しない | 発話者、原典ID・不変版・digest・範囲、順序、記録時刻、出来事時刻と精度、保持条件を両側で照合できる。許可外・失効済みの参照を応答に使わない |
 | E2 会話・出来事の蒸留 | ContextStillのepisode_executorのsource・prompt・quality・persistenceとEpisodeCardを拡張する。作業教訓に偏る現行条件を、個人の出来事・判断・未解決事項を扱う条件へ広げる | 既存canonicalの意図・判断・行動・結果を再利用する。開始・終了時刻と精度、Topic・Entity、全根拠IDと版を保持する。成果や教訓のない出来事に架空の結果を補わず、保存対象外・保留を明示する。生成・採用policy版と入力依存が残る |
 | E3 訂正・忘却と再生成 | SAAAは受理時に影響する参照・Snapshot・進行中応答を利用停止し、永続的な失効通知を発行する。ContextStillは同期済み原記録、Episode、FTS等の索引、生成job、保持コピーへ反映する | LLM実行前と保存前に原典版・Scope・生存を再検証する。変更・削除中の保存、遅延通知、再試行・再起動で旧Episodeが復活しない。訂正は履歴と現在値を区別し、忘却は対象コピーを除去する。残存根拠からの再生成完了まで旧本文を使わない |
 | E4 必要時の検索と応答利用 | ContextStillのnative_episodes・typed recallに版・時間・個人Scope・失効検証を接続する。SAAAの検索AdapterとCompilerはEpisode参照をTopic／Snapshot manifestに結び付ける | 検索から版指定詳細取得・原文参照まで追跡できる。送信前と結果受理時に適格性を検証し、未検証・失効・Scope外の参照を使わない。同Topicでは参照集合を再利用し、必要な問いだけ深掘りする |
 
-E1とE2の保存検証は合成DBで先行できるが、実データの継続同期と応答公開の開始条件はE0〜E3の合格とする。失効の範囲を確定できなければ、影響し得るEpisodeの利用を保留する。ContextStill停止時は通知を永続保存して再送し、未検証の旧Episodeを回答に戻さない。SAAAの原記録・現在状態・直近会話で通常会話を継続し、必要な過去の根拠を確認できなければその制約を回答へ反映する。
+E2の保存検証は合成DBで先行できる。Episodeの応答利用の開始条件はE0・E2・E3の合格とし、自動取得の新設や受入を条件にしない。失効の範囲を確定できなければ、影響し得るEpisodeの利用を保留する。ContextStill停止時は通知を永続保存して再送し、未検証の旧Episodeを回答に戻さない。SAAAの原記録・現在状態・直近会話で通常会話を継続し、必要な過去の根拠を確認できなければその制約を回答へ反映する。
 
-受入fixtureには共通6ケースに加え、差分取得中の終了、同一原典の再投入、個人Scope越境、許可取消し、蒸留中の削除、失効通知より遅く届く旧生成、ContextStill停止・復帰を含める。許可外取得・失効後の採用・忘却後の復活・二重適用は一件でも失敗とする。時間抽出と出来事の採用品質は、実LLMを使う日本語suiteで別途測り、合成応答の成功だけで受入としない。
+受入fixtureには共通6ケースに加え、個人Scope越境、利用許可取消し、蒸留中の削除、失効通知より遅く届く旧生成、ContextStill停止・復帰を含める。許可外参照・失効後の採用・忘却後の復活・二重適用は一件でも失敗とする。時間抽出と出来事の採用品質は、実LLMを使う日本語suiteで別途測り、合成応答の成功だけで受入としない。
 
-既存27件の回帰確認はContextStillで `cargo test --offline --locked -p context-stilld domains::mcp_lifecycle::native_episodes::tests -- --test-threads=2` と `cargo test --offline --locked -p context-stilld domains::queue_lifecycle::episode_executor::tests -- --test-threads=2` を使う。新しい契約・取得・失効fixtureは両側の通常ビルドを接続して検証し、実装時に追加するテストの実行方法と結果を記録する。決定的な検証を先に通し、その後に実LLMの品質比較を行う。失敗した段階では公開を進めず、原因を修正して該当検証を再実行する。
+既存27件の回帰確認と、新しい参照・利用・失効fixtureは、各リポジトリで定められた検証経路を使う。両側の通常ビルドを接続して検証し、実装時に追加するテストの実行方法と結果を記録する。決定的な検証を先に通し、その後に実LLMの品質比較を行う。失敗した段階では公開を進めず、原因を修正して該当検証を再実行する。
 
 原典の書込正本はSAAA、派生Episodeの書込正本はContextStillとする。SAAAが持つEpisodeのID・版・利用可否・公開参照は、独立したEpisode正本ではない。両側の連携受入を満たせないときは、未完成の機能として留め、SAAA内の別生成系で穴埋めしない。
+
+### 補足メモ：ContextStillの自動取得（計画対象外）
+
+ユーザーが示した既存構成は、SAAAのSQLite原記録 → ContextStillによる自動取得・vibe memory化 → EpisodeDistiller → EpisodeCardである。本計画は、その生成済みEpisodeを利用する構成を前提にする。SQLite取得Adapter、差分同期、cursor管理、vibe memoryへの保存、Distillerへの投入の新設・設定・受入は作業項目と完了条件に含めない。
+
+前回の実装では取得Adapterも追加した。そのコードと検証履歴は[実装記録](./implementation.md)の補足に保持する。今回の範囲修正は計画書の変更であり、既存コードの削除・設定変更は行わない。訂正・忘却の伝播とEpisode参照の利用判定は引き続き本計画の対象とする。
 
 ## ベストを判定する評価
 

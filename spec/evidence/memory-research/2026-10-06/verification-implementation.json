@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-07",
+  "scope": "SAAA current state / snapshots / ContextStill personal Episode integration",
+  "checks": [
+    {
+      "name": "SAAA personal-state core",
+      "command": "bun run --silent verify test --package crates/personal-state-core",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-core-tests.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA personal-state production domain",
+      "command": "bun run --silent verify test --package src-tauri -- --lib memory::personal_state::",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-finish-domain.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA production schema + evaluation harness compilation",
+      "command": "SAAA_EPISODE_FIXTURE_PATH=/tmp/saaa-memory-final-contract-v5-20261007.sqlite bun run --silent verify test --package src-tauri -- --features quality-eval-harness --lib memory::personal_state::",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-domain-final.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA managed source speaker/time delivery",
+      "command": "bun run --silent verify test --package src-tauri -- --lib managed_generation_tracks_registration_view_materialization_and_cleanup",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-managed-final-v2.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA ISO clock / idempotent migration",
+      "command": "bun run --silent verify test --package src-tauri -- --lib memory::personal_state::tests::source_clock",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-clock-tests.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA production conversation snapshot fence",
+      "command": "bun run --silent verify test --package src-tauri -- --lib production_queue_snapshot",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-history-queue-v2.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA recent Episode reference reuse / scope / revoke",
+      "command": "bun run --silent verify test --package src-tauri -- --lib memory::personal_state::tests::episode_history",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-history-tests-last.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA Episode transport contract",
+      "command": "bun run --silent verify test --package src-tauri -- --lib memory::context_still_search",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-transport-current.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA memory settings + evaluator tests",
+      "command": "bun run --silent verify test --scope typescript -- tests/episode-sync-settings.test.tsx tests/personal-state-eval.test.ts",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-ui-eval-current.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA TypeScript typecheck",
+      "command": "bun run --silent verify typecheck --scope typescript",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-typecheck-current.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "ContextStill all Rust library tests",
+      "command": "bun scripts/serial-command.ts -- cargo test --manifest-path /Users/y.noguchi/Code/contextStill/Cargo.toml -p context-stilld --lib",
+      "status": "passed",
+      "log": "/tmp/contextstill-memory-all-tests-current-v3.log",
+      "logSha256": "b7bc093d3a5ae69901b503f34a1f20199497f0b040db2132300886c755cde9b4"
+    },
+    {
+      "name": "ContextStill real SAAA schema adapter contract",
+      "command": "SAAA_EPISODE_FIXTURE_PATH=/tmp/saaa-memory-final-contract-v5-20261007.sqlite bun scripts/serial-command.ts -- cargo test --manifest-path /Users/y.noguchi/Code/contextStill/Cargo.toml -p context-stilld --lib domains::agent_log_sync::saaa::tests",
+      "status": "passed",
+      "log": "/tmp/contextstill-saaa-fixture-v5-tests.log",
+      "logSha256": "f2ecdfa9d6457c24f0476267e2ca4b9239803303ba333c3aafef869717fc20eb"
+    },
+    {
+      "name": "ContextStill real SAAA schema Episode persistence/search/fetch/forget",
+      "command": "SAAA_EPISODE_FIXTURE_PATH=/tmp/saaa-memory-final-contract-v5-20261007.sqlite bun scripts/serial-command.ts -- cargo test --manifest-path /Users/y.noguchi/Code/contextStill/Cargo.toml -p context-stilld --lib synced_personal_episode",
+      "status": "passed",
+      "log": "/tmp/contextstill-saaa-fixture-v5-episode.log",
+      "logSha256": "7eaebe78a1e7a9e73bdbaf120a5c596a3c1a02aa04967485c5dd6ae06d4c1809"
+    },
+    {
+      "name": "ContextStill Rust lint all targets",
+      "command": "bun scripts/serial-command.ts -- /bin/sh -c 'cd /Users/y.noguchi/Code/contextStill && exec bun run lint:rust'",
+      "status": "passed",
+      "log": "/tmp/contextstill-memory-rust-lint-final-v2.log",
+      "logSha256": "8716c4464a0411a38d016c5eae3ddc554de10c6ebff02bcb91b7f5a148b28abc"
+    },
+    {
+      "name": "ContextStill TypeScript typecheck",
+      "command": "bun scripts/serial-command.ts -- /bin/sh -c 'cd /Users/y.noguchi/Code/contextStill && exec bun run typecheck'",
+      "status": "passed",
+      "log": "/tmp/contextstill-memory-typecheck-current.log",
+      "logSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "name": "ContextStill spec fix",
+      "command": "bun run spec:fix (ContextStill cwd)",
+      "status": "passed",
+      "log": "/tmp/contextstill-memory-spec-fix-last.log",
+      "logSha256": "d591a7314de7b509ecbc1b2bb47e2b7ecadc9cbbb281330ea7267ddd0a01f4fa"
+    },
+    {
+      "name": "ContextStill spec check",
+      "command": "bun run spec:check (ContextStill cwd)",
+      "status": "passed",
+      "log": "/tmp/contextstill-memory-spec-check-last.log",
+      "logSha256": "a0ef96be73915b40b4c16d2ac02fc7fd33f52297fe6ab677fb6bf60632ac1238"
+    },
+    {
+      "name": "SAAA major-change full gate",
+      "command": "bun run --silent verify:full",
+      "status": "blocked_at_rust_lint",
+      "log": "/tmp/saaa-memory-full-final.log",
+      "logSha256": "c70b9636c12b0db804c8f2b1be4633888b6f7c2abb0682c134ee5ae5392c1932"
+    },
+    {
+      "name": "SAAA module size",
+      "command": "bun run --silent verify size",
+      "status": "blocked_by_existing_diagnostics",
+      "log": "/tmp/saaa-memory-last-size.log",
+      "logSha256": "349c1335d5e5352857736886e094f8db85e45cb598521b9a3b623e47a0489630"
+    },
+    {
+      "name": "ContextStill normal gate",
+      "command": "bun scripts/serial-command.ts -- /bin/sh -c 'cd /Users/y.noguchi/Code/contextStill && exec bun run verify'",
+      "status": "blocked_at_maintainability",
+      "log": "/tmp/contextstill-memory-verify-current-v2.log",
+      "logSha256": "3c6617a9ae0b68cc70b648761bd85033d8e4f8e420b3985ab0eb62b6e8a307f1"
+    },
+    {
+      "name": "ContextStill TypeScript lint",
+      "command": "bun scripts/serial-command.ts -- /bin/sh -c 'cd /Users/y.noguchi/Code/contextStill && exec bun run lint'",
+      "status": "blocked_existing_wiki_style",
+      "log": "/tmp/contextstill-memory-lint-current.log",
+      "logSha256": "39ecd872340a87db7a165132929cddcfe0f24131f319abef79d19015720849d8"
+    },
+    {
+      "name": "ContextStill format check",
+      "command": "bun scripts/serial-command.ts -- /bin/sh -c 'cd /Users/y.noguchi/Code/contextStill && exec bun run format:check'",
+      "status": "blocked_existing_runtime_data_format",
+      "log": "/tmp/contextstill-memory-format-check-current.log",
+      "logSha256": "0d42f7c37da49bec070622222ddf9c8957482641f491a9edfdc411d81b003035"
+    },
+    {
+      "name": "SAAA final normal gate",
+      "command": "bun run --silent verify",
+      "status": "blocked_at_rust_lint",
+      "log": "/tmp/saaa-memory-last-verify.log",
+      "logSha256": "3f81c135bc1b81eb8b4f3f21b922fca81d974a66fc16ff33053238af886dc132"
+    },
+    {
+      "name": "SAAA final Rust format",
+      "command": "bun run --silent verify format --package src-tauri --write",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-history-format-last.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA focused TypeScript format",
+      "command": "bun run --silent verify format --scope typescript -- scripts/module-size-baseline.json src/features/settings/EpisodeSyncSection.tsx tests/episode-sync-settings.test.tsx",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-ts-format-final.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA IPC contracts",
+      "command": "bun run --silent verify ipc",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-ipc-final.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    },
+    {
+      "name": "SAAA standalone frontend build",
+      "command": "bun run --silent verify build --scope typescript",
+      "status": "passed",
+      "log": "/tmp/saaa-memory-frontend-build.log",
+      "logSha256": "a12b7cb43c9d9134b5bb1b35e9096b66775d9e92e7611d1cc92b02edd6782a87"
+    }
+  ],
+  "counts": {
+    "contextStillRust": {
+      "passed": 596,
+      "failed": 0,
+      "ignored": 11
+    },
+    "realSaaaFixtureAdapter": {
+      "passed": 3,
+      "failed": 0
+    },
+    "realSaaaFixtureEpisode": {
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "productionDataMutated": false,
+  "storedSettingsReset": false,
+  "existingModuleCeilingsChanged": false,
+  "liveModelQualityMeasured": false,
+  "costLatencyCacheAblationMeasured": false,
+  "liveBindingConfigured": false,
+  "consolidationDefault": "off",
+  "episodeGrantsDefault": "off",
+  "notAccepted": [
+    "Live Japanese extraction and Episode quality, human-reviewed gold, baseline/ablation",
+    "Real user data continuous operation and voice/manual acceptance",
+    "Global normal/full gates: existing diagnostics stop later stages; no full-gate build/unit/E2E claim"
+  ],
+  "globalBlockers": {
+    "saaa": "Existing Clippy warnings/ratchet, module-size growth/missing/stale registrations outside the new memory modules. All existing size ceilings preserved.",
+    "contextStill": "core-schema.ts was already 1406 lines at HEAD versus ceiling1367; ours adds schema composition lines (current1409). Existing provider lease/service/manager sizes, wiki content-repo.ts style errors, runtime data JSON formatting."
+  },
+  "referenceReuse": {
+    "maxPreviousMessages": 16,
+    "maxReferences": 5,
+    "requiresSameFocusScope": true,
+    "requiresLiveSourceVersionAndGrant": true,
+    "storesAdditionalEpisodeBodies": false
+  }
+}

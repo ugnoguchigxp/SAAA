@@ -4,7 +4,7 @@ import { join } from "node:path";
 export type VerificationStep = { name: string; command: string[] };
 const STANDARD = ["format", "lint", "typecheck", "generated", "size"];
 const ADVANCE = [...STANDARD, "build", "quality", "ipc", "test"];
-const FULL = [...ADVANCE, "e2e"];
+const FULL = [...ADVANCE, "e2e", "lab-smoke"];
 const STAGES = [...FULL, "desktop-build", "asr", "conversation-queue", "coverage"];
 const DESKTOP = "src-tauri";
 const TS_FORMAT = [
@@ -42,6 +42,10 @@ Examples:
   bun run --silent build
   bun run --silent build:rust
   bun run --silent build:desktop -- --debug
+  bun run --silent verify affected --explain
+  bun run --silent verify affected --level advance
+  bun run --silent verify affected --mode selected --level advance
+  bun run --silent verify lab-smoke
 `;
 
 /** Discover every local package instead of keeping a second, incomplete list. */
@@ -279,6 +283,17 @@ export function verificationPlan(args: string[], root: string): VerificationStep
           for (const directory of packages)
             cargo("tests", "test", directory, "--locked", ...forwarded);
         }
+        break;
+      case "lab-smoke":
+        cargo(
+          "feature-lab host",
+          "build",
+          "services/feature-lab",
+          "--locked",
+          "--bin",
+          "saaa-feature-lab",
+        );
+        bun("feature-lab browser smoke", "scripts/feature-lab-smoke.ts");
         break;
       case "e2e":
         cargo(

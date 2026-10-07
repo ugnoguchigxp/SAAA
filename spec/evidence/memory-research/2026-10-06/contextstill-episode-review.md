@@ -65,12 +65,12 @@ SAAA側には既に[ContextStillの永続根拠契約の依頼書](/Users/y.nogu
 
 2026年10月6日のユーザー承認により、ContextStillのEpisodeCardと既存Distillerを再利用する方針で確定した。SAAAでは既存原会話と本人状態を正本に保ちながら、Episodeへの参照、Topicとの対応、利用可否、応答contextへの公開を扱う。同等のEpisode生成worker、保存repository、検索サービスをSAAAへ新設せず、以下の不足を連携の実装対象にする。
 
-1. **会話と出来事の入力**：SAAAの原典を適切に参照できる入力adapterと、作業教訓以外のEpisodeを扱う型・採用条件。
+1. **会話と出来事の扱い**：既に生成されるEpisodeについて、作業教訓以外の出来事を扱う型・採用条件と原典参照を整える。SQLite取得Adapterの新設は含めない。
 2. **時間と対象**：出来事の開始・終了、精度、Topic・Entity、有効期間。既存canonicalとmetadataを使える部分を残す。
 3. **根拠の版と失効**：原典版・digest、版指定fetch、変更・削除・利用範囲の再検証と通知。生成途中と応答途中の失効を含む。
 4. **利用範囲と保持責務**：個人情報の送信可否、原典所有者、忘却の担当、サービス停止時に使える情報。現在のrepo/globalを無条件に本人Scopeへ読み替えない。
 
-内容の形が大きく重なるため、既存モデルを拡張する。取得範囲と利用許可は個別に管理し、個人原記録を無条件に同期しない。ローカルの原典・本人状態と即時失効の責務は維持する。
+内容の形が大きく重なるため、既存モデルを拡張する。応答への利用許可を検証し、ローカルの原典・本人状態と即時失効の責務は維持する。2026年10月7日のユーザー指定により、SQLiteの自動取得とvibe memory化は既存の前提として計画対象外にする。
 
 概念正本の「SAAAが最近のEpisodeを所有する」という記述は、SAAAが原典・参照と応答利用の可否・訂正と忘却を担当し、ContextStillがEpisodeの生成・保存・再生成・検索を担当する分担へ同日更新した。[SAAAの全体コンセプト](https://chatgpt.com/space/page_9fc5877949748191b556705128f6a2f5)。作業順序と受入条件は[実装計画](/Users/y.noguchi/Code/SAAA/spec/evidence/memory-research/2026-10-06/report.md)の「Episode連携の実装と完了条件」にまとめる。
 
@@ -78,9 +78,9 @@ SAAA側には既に[ContextStillの永続根拠契約の依頼書](/Users/y.nogu
 
 標準方式は、vibe memoryの取得経路でSAAAのSQLite原記録を読み、ContextStillが背景で蒸留してEpisodeを作る構成とする。SAAAが事前にEpisodeを生成して送る作業は実装計画に含めない。
 
-想定する流れは、SAAAのSQLite原記録 → vibe memoryの差分取得・同期 → ContextStillのEpisodeDistiller → EpisodeCard → 必要時のSAAA検索・参照である。これは目指す接続構成であり、SAAA SQLiteの取得adapterが既に受入済みという意味ではない。
+既存の前提は、SAAAのSQLite原記録 → ContextStillによる自動取得・vibe memory化 → EpisodeDistiller → EpisodeCardである。本計画は生成済みEpisodeの検索・参照、採用品質、訂正・忘却を対象とする。取得・同期経路の新設や受入は、作業項目と完了条件に含めない。
 
-現行Rustには、外部agentログをvibe_memoriesへ保存するとEpisodeDistillerをenqueueする経路がある。一方、その既存source enumはCodex・Antigravity・Claudeである。EpisodeDistiller自体はContextStillのSQLite内のvibe_memoriesを読む。SAAA原記録を読む入口は、その範囲・版・権限を定義して接続確認する対象である。[保存とenqueue](/Users/y.noguchi/Code/contextStill/crates/context-stilld/src/domains/agent_log_sync/store.rs:136)、[既存source](/Users/y.noguchi/Code/contextStill/crates/context-stilld/src/domains/agent_log_sync/types.rs:9)、[Episodeの入力読取](/Users/y.noguchi/Code/contextStill/crates/context-stilld/src/domains/queue_lifecycle/episode_executor/source.rs:42)
+補足の調査メモ：10月6日に確認したRustには、外部agentログをvibe_memoriesへ保存するとEpisodeDistillerをenqueueする経路があり、その時点のsource enumはCodex・Antigravity・Claudeだった。EpisodeDistiller自体はContextStillのSQLite内のvibe_memoriesを読む。この当時のコード観察を、更新後の計画で取得Adapter追加の要件にはしない。[保存とenqueue](/Users/y.noguchi/Code/contextStill/crates/context-stilld/src/domains/agent_log_sync/store.rs:136)、[調査時のsource参照先](/Users/y.noguchi/Code/contextStill/crates/context-stilld/src/domains/agent_log_sync/types.rs:9)、[Episodeの入力読取](/Users/y.noguchi/Code/contextStill/crates/context-stilld/src/domains/queue_lifecycle/episode_executor/source.rs:42)
 
 | 判断軸 | SAAAがEpisodeを作って送る | ContextStillが原記録から作る |
 |---|---|---|
@@ -91,11 +91,11 @@ SAAA側には既に[ContextStillの永続根拠契約の依頼書](/Users/y.nogu
 
 SAAAは、確定した原記録、発話者、IDと版、記録順、出来事の時刻、Scope、取得してよい範囲を提供する。Topicや作業の区切り、本人が承認した判断、検証された結果は補助情報として渡せる。ただし、その補助情報を完成Episodeや検証済みの教訓と取り違えない。
 
-ContextStillは、取得した範囲からEpisodeを生成し、採用判定、重複整理、原典への参照、更新・再生成、保存と検索を担当する。自動実行の対象と頻度は、同期範囲・処理予算・会話優先の条件で制御する。原記録の全件を毎回再読込したり、無制限に生成したりする方式にはしない。
+ContextStillは、取得した範囲からEpisodeを生成し、採用判定、重複整理、原典への参照、更新・再生成、保存と検索を担当する。取得範囲・同期頻度・cursor等の管理は既存の自動処理側の責務であり、今回の計画では新設しない。
 
 本人の現在状態、明示的な制約、直近会話、訂正・忘却の受理、応答Snapshotの適格性はSAAA側で扱い、背景のEpisode生成を待たない。原典を訂正・削除した場合は、その版に依存するContextStillのEpisodeと進行中生成を失効させ、SAAAも旧Episodeを応答に再投入しない。
 
-この方式の受入では、差分取得の再開と冪等性、許可された原典範囲、発話者と時刻の保持、訂正・削除の伝播、生成中の原典失効、ContextStill停止中の通常会話継続を検証する。先に確認した27件の既存テストは、このSAAA取得・連携全体の合格を示すものではない。
+今回の受入では、参照の利用許可、発話者と時刻の保持、訂正・削除の伝播、生成中の原典失効、ContextStill停止中の通常会話継続を検証する。差分取得の再開・cursor・取り込みの冪等性は、この計画の完了条件に含めない。先に確認した27件の既存テストは、SAAAのEpisode利用・失効連携全体の合格を示すものではない。
 
 ## 検証結果
 

@@ -11,31 +11,7 @@ pub async fn run_json(raw: &str) -> Result<String, String> {
     if input["schemaVersion"] != 1 || input["resetState"] != true || input.get("gold").is_some() {
         return Err("harness-input-schema".into());
     }
-    let c = rusqlite::Connection::open_in_memory().map_err(database_error)?;
-    crate::persistence::schema::initialize_database(&c).map_err(database_error)?;
-    // A stable synthetic owner avoids creating one OS credential-store record per scenario.
-    c.execute(
-        "UPDATE personal_scope SET principal='personal-state-synthetic-eval'",
-        [],
-    )
-    .map_err(database_error)?;
-    let sources = input["sources"]
-        .as_array()
-        .filter(|s| !s.is_empty() && s.len() <= 64)
-        .ok_or("harness-sources")?;
-    for s in sources {
-        let id = s["id"].as_str().ok_or("harness-source")?;
-        crate::validate_identifier(id, "synthetic source")?;
-        let text = s["text"].as_str().ok_or("harness-source")?;
-        if s["version"] != 1 {
-            return Err("harness-source-version".into());
-        }
-        c.execute(
-            "INSERT INTO conversation_messages VALUES(?1,?2,'user',?3,'1')",
-            rusqlite::params![id, crate::PRIMARY_CONVERSATION_ID, text],
-        )
-        .map_err(database_error)?;
-    }
+    let c = source::database(&input)?;
     let writer = Arc::new(SqliteWriter::from_connection(c));
     let a = managed::Adapter::configured(writer.clone()).await?;
     let deployment = &input["deployment"];
@@ -64,6 +40,7 @@ pub async fn run_json(raw: &str) -> Result<String, String> {
             break;
         }
     }
+    writer.transact(|c| projection::snapshots::publish(c, now()))?;
     let mut result=writer.read_serialized(|c|{
         let ledger=store::load(c)?;let mut items=Vec::new();
         for assertion in ledger.assertions.values(){
@@ -71,7 +48,7 @@ pub async fn run_json(raw: &str) -> Result<String, String> {
             let status=ledger.status(&assertion.id,now());
             if !matches!(status,saaa_personal_state_core::Status::Active|saaa_personal_state_core::Status::Candidate|saaa_personal_state_core::Status::Disputed){continue;}
             let value:String=c.query_row("SELECT value_json FROM personal_payloads WHERE id=?1",[&assertion.payload_ref],|r|r.get(0)).map_err(database_error)?;
-            let value:Value=decode(value)?;
+            let value:Value=decode(value)?;let value=if value["policy"]=="personal-gate-v1"{value["value"].clone()}else{value};
             for source in &assertion.evidence{items.push(json!({"kind":assertion.kind,"target":assertion.access.task_request.as_deref().unwrap_or("primary"),"value":value.as_str().map(str::to_string).unwrap_or_else(||value.to_string()),"status":status,"source":source}));}
         }
         let mut q=c.prepare("SELECT s.message_id FROM personal_sources s JOIN personal_jobs j ON j.source_sequence=s.sequence WHERE j.status='completed' AND s.available=1").map_err(database_error)?;
@@ -97,3 +74,6 @@ pub async fn run_json(raw: &str) -> Result<String, String> {
     product_binding::shutdown().await;
     encode(&result)
 }
+
+#[path = "live_harness/source.rs"]
+mod source;

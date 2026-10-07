@@ -77,6 +77,34 @@
       "total": 75,
       "production": 75
     },
+    "scripts/feature-lab-preview.tsx": {
+      "total": 10,
+      "production": 10
+    },
+    "scripts/feature-lab-smoke-browser.ts": {
+      "total": 135,
+      "production": 135
+    },
+    "scripts/feature-lab-smoke-page.ts": {
+      "total": 69,
+      "production": 69
+    },
+    "scripts/feature-lab-smoke-reap.ts": {
+      "total": 183,
+      "production": 183
+    },
+    "scripts/feature-lab-smoke.ts": {
+      "total": 191,
+      "production": 191
+    },
+    "scripts/feature-lab-vite.config.ts": {
+      "total": 106,
+      "production": 106
+    },
+    "scripts/feature-lab.ts": {
+      "total": 235,
+      "production": 235
+    },
     "scripts/generative-ui-openui-spike.tsx": {
       "total": 104,
       "production": 104
@@ -201,9 +229,45 @@
       "total": 51,
       "production": 51
     },
+    "scripts/verify-affected-changes.ts": {
+      "total": 206,
+      "production": 206
+    },
+    "scripts/verify-affected-graph.ts": {
+      "total": 151,
+      "production": 151
+    },
+    "scripts/verify-affected-inputs.ts": {
+      "total": 204,
+      "production": 204
+    },
+    "scripts/verify-affected-plan.ts": {
+      "total": 200,
+      "production": 200
+    },
+    "scripts/verify-fingerprint.ts": {
+      "total": 111,
+      "production": 111
+    },
+    "scripts/verify-input-scan.ts": {
+      "total": 163,
+      "production": 163
+    },
+    "scripts/verify-input-watch.ts": {
+      "total": 86,
+      "production": 86
+    },
     "scripts/verify-plan.ts": {
       "total": 364,
       "production": 364
+    },
+    "scripts/verify-report.ts": {
+      "total": 117,
+      "production": 117
+    },
+    "scripts/verify-run.ts": {
+      "total": 405,
+      "production": 405
     },
     "scripts/verify.ts": {
       "total": 77,
@@ -1041,6 +1105,10 @@
       "total": 231,
       "production": 231
     },
+    "src-tauri/src/media_generation/host.rs": {
+      "total": 102,
+      "production": 102
+    },
     "src-tauri/src/media_generation/ipc_tests.rs": {
       "total": 53,
       "production": 53
@@ -1064,6 +1132,10 @@
     "src-tauri/src/media_generation/replicate.rs": {
       "total": 587,
       "production": 587
+    },
+    "src-tauri/src/media_generation/writer_contract.rs": {
+      "total": 196,
+      "production": 196
     },
     "src-tauri/src/memory/context_still_recall.rs": {
       "total": 1284,
@@ -1097,9 +1169,17 @@
       "total": 491,
       "production": 491
     },
+    "src-tauri/src/memory/context_still_search/context_still_search_result.rs": {
+      "total": 79,
+      "production": 79
+    },
     "src-tauri/src/memory/context_still_search/tests.rs": {
       "total": 131,
       "production": 131
+    },
+    "src-tauri/src/memory/context_still_search/tests/episode_contract.rs": {
+      "total": 22,
+      "production": 22
     },
     "src-tauri/src/memory/context_window.rs": {
       "total": 1231,
@@ -1153,6 +1233,10 @@
       "total": 10,
       "production": 10
     },
+    "src-tauri/src/memory/personal_state/admission.rs": {
+      "total": 256,
+      "production": 256
+    },
     "src-tauri/src/memory/personal_state/codec.rs": {
       "total": 10,
       "production": 10
@@ -1168,6 +1252,18 @@
     "src-tauri/src/memory/personal_state/contract.rs": {
       "total": 89,
       "production": 89
+    },
+    "src-tauri/src/memory/personal_state/episode_export.rs": {
+      "total": 142,
+      "production": 142
+    },
+    "src-tauri/src/memory/personal_state/episode_export/history.rs": {
+      "total": 105,
+      "production": 105
+    },
+    "src-tauri/src/memory/personal_state/episode_export/source.rs": {
+      "total": 72,
+      "production": 72
     },
     "src-tauri/src/memory/personal_state/generation.rs": {
       "total": 119,
@@ -1200,6 +1296,14 @@
     "src-tauri/src/memory/personal_state/live_harness.rs": {
       "total": 99,
       "production": 99
+    },
+    "src-tauri/src/memory/personal_state/live_harness/source_tests.rs": {
+      "total": 41,
+      "production": 41
+    },
+    "src-tauri/src/memory/personal_state/live_harness/source.rs": {
+      "total": 73,
+      "production": 73
     },
     "src-tauri/src/memory/personal_state/local_binding.rs": {
       "total": 91,
@@ -1325,6 +1429,10 @@
       "total": 70,
       "production": 70
     },
+    "src-tauri/src/memory/personal_state/snapshots.rs": {
+      "total": 339,
+      "production": 339
+    },
     "src-tauri/src/memory/personal_state/sources.rs": {
       "total": 120,
       "production": 120
@@ -1349,9 +1457,29 @@
       "total": 387,
       "production": 387
     },
+    "src-tauri/src/memory/personal_state/tests/artifact_invalidation.rs": {
+      "total": 95,
+      "production": 95
+    },
+    "src-tauri/src/memory/personal_state/tests/consolidation.rs": {
+      "total": 131,
+      "production": 131
+    },
+    "src-tauri/src/memory/personal_state/tests/episode_history.rs": {
+      "total": 104,
+      "production": 104
+    },
     "src-tauri/src/memory/personal_state/tests/fixture.rs": {
       "total": 523,
       "production": 523
+    },
+    "src-tauri/src/memory/personal_state/tests/memory_contract.rs": {
+      "total": 492,
+      "production": 492
+    },
+    "src-tauri/src/memory/personal_state/tests/source_clock.rs": {
+      "total": 73,
+      "production": 73
     },
     "src-tauri/src/memory/personal_state/tests/task_bundle_rolls_back_with_answer_and_rejects_e.rs": {
       "total": 219,
@@ -1360,6 +1488,10 @@
     "src-tauri/src/memory/personal_state/worker_run.rs": {
       "total": 277,
       "production": 277
+    },
+    "src-tauri/src/memory/personal_state/worker_run/patch.rs": {
+      "total": 276,
+      "production": 276
     },
     "src-tauri/src/memory/personal_state/worker_run/world_stage.rs": {
       "total": 69,
@@ -2193,6 +2325,10 @@
       "total": 318,
       "production": 318
     },
+    "src-tauri/src/providers/stream/context_still_dispatch.rs": {
+      "total": 84,
+      "production": 84
+    },
     "src-tauri/src/providers/stream/dispatch.rs": {
       "total": 140,
       "production": 140
@@ -2853,6 +2989,18 @@
       "total": 199,
       "production": 199
     },
+    "src-tauri/src/runtime/conversation_check/queue_context/projection.rs": {
+      "total": 75,
+      "production": 75
+    },
+    "src-tauri/src/runtime/conversation_check/queue_context/tests.rs": {
+      "total": 53,
+      "production": 53
+    },
+    "src-tauri/src/runtime/conversation_check/queue_context/validation.rs": {
+      "total": 52,
+      "production": 52
+    },
     "src-tauri/src/runtime/conversation_check/queue_input_state.rs": {
       "total": 43,
       "production": 43
@@ -2900,6 +3048,14 @@
     "src-tauri/src/runtime/conversation_check/queue_tools.rs": {
       "total": 104,
       "production": 104
+    },
+    "src-tauri/src/runtime/conversation_check/speech_expression_tests.rs": {
+      "total": 202,
+      "production": 0
+    },
+    "src-tauri/src/runtime/conversation_check/speech_expression.rs": {
+      "total": 169,
+      "production": 169
     },
     "src-tauri/src/runtime/conversation_check/speech_playback.rs": {
       "total": 133,
@@ -2984,6 +3140,10 @@
     "src-tauri/src/runtime/provider_failure.rs": {
       "total": 40,
       "production": 21
+    },
+    "src-tauri/src/runtime/provider_unit_test_laya.rs": {
+      "total": 47,
+      "production": 47
     },
     "src-tauri/src/runtime/provider_unit_test.rs": {
       "total": 675,
@@ -3977,6 +4137,10 @@
       "total": 74,
       "production": 74
     },
+    "src-tauri/src/voice/http_audio/chunk_tests.rs": {
+      "total": 94,
+      "production": 0
+    },
     "src-tauri/src/voice/http_audio/client.rs": {
       "total": 57,
       "production": 15
@@ -3992,6 +4156,10 @@
     "src-tauri/src/voice/http_audio/mod.rs": {
       "total": 378,
       "production": 169
+    },
+    "src-tauri/src/voice/http_audio/receive.rs": {
+      "total": 87,
+      "production": 87
     },
     "src-tauri/src/voice/http_audio/requests.rs": {
       "total": 152,
@@ -4513,6 +4681,10 @@
       "total": 31,
       "production": 31
     },
+    "src/features/chat/avatar/lightAvatarBackground.css": {
+      "total": 15,
+      "production": 15
+    },
     "src/features/chat/avatar/LightAvatarBackground.tsx": {
       "total": 146,
       "production": 146
@@ -4520,6 +4692,10 @@
     "src/features/chat/avatar/model.d.ts": {
       "total": 24,
       "production": 24
+    },
+    "src/features/chat/avatar/speechExpression.ts": {
+      "total": 67,
+      "production": 67
     },
     "src/features/chat/avatar/useAvatarDecision.ts": {
       "total": 72,
@@ -4801,9 +4977,17 @@
       "total": 104,
       "production": 104
     },
+    "src/features/media/FeatureLabPreview.tsx": {
+      "total": 156,
+      "production": 156
+    },
     "src/features/media/mediaApi.ts": {
       "total": 108,
       "production": 108
+    },
+    "src/features/media/mediaApiModel.ts": {
+      "total": 95,
+      "production": 95
     },
     "src/features/media/MediaArtifacts.tsx": {
       "total": 52,
@@ -4828,6 +5012,14 @@
     "src/features/media/MediaHistoryList.tsx": {
       "total": 58,
       "production": 58
+    },
+    "src/features/media/mediaHttpApi.ts": {
+      "total": 98,
+      "production": 98
+    },
+    "src/features/media/mediaHttpStream.ts": {
+      "total": 139,
+      "production": 139
     },
     "src/features/memory/api.ts": {
       "total": 62,
@@ -4896,6 +5088,10 @@
     "src/features/settings/ConversationTimeoutField.tsx": {
       "total": 78,
       "production": 78
+    },
+    "src/features/settings/EpisodeSyncSection.tsx": {
+      "total": 76,
+      "production": 76
     },
     "src/features/settings/IndividualProvidersSection.css": {
       "total": 187,
@@ -5689,9 +5885,29 @@
       "total": 130,
       "production": 130
     },
+    "tests/episode-sync-settings.test.tsx": {
+      "total": 63,
+      "production": 63
+    },
     "tests/extended-coverage.test.ts": {
       "total": 124,
       "production": 124
+    },
+    "tests/feature-lab-launcher.test.ts": {
+      "total": 242,
+      "production": 242
+    },
+    "tests/feature-lab-preview.test.ts": {
+      "total": 20,
+      "production": 20
+    },
+    "tests/feature-lab-preview.test.tsx": {
+      "total": 75,
+      "production": 75
+    },
+    "tests/feature-lab-smoke.test.ts": {
+      "total": 109,
+      "production": 109
     },
     "tests/final-markdown.test.ts": {
       "total": 49,
@@ -5788,6 +6004,14 @@
     "tests/media-generation.test.tsx": {
       "total": 261,
       "production": 261
+    },
+    "tests/media-http-api.test.ts": {
+      "total": 116,
+      "production": 116
+    },
+    "tests/media-http-stream.test.ts": {
+      "total": 126,
+      "production": 126
     },
     "tests/media-recovery.test.tsx": {
       "total": 103,
@@ -6025,6 +6249,30 @@
       "total": 297,
       "production": 297
     },
+    "tests/verify-affected.test.ts": {
+      "total": 308,
+      "production": 308
+    },
+    "tests/verify-fingerprint.test.ts": {
+      "total": 56,
+      "production": 56
+    },
+    "tests/verify-input-scan.test.ts": {
+      "total": 74,
+      "production": 74
+    },
+    "tests/verify-input-watch.test.ts": {
+      "total": 74,
+      "production": 74
+    },
+    "tests/verify-plan-window.test.ts": {
+      "total": 73,
+      "production": 73
+    },
+    "tests/verify-selected-attempt.test.ts": {
+      "total": 177,
+      "production": 177
+    },
     "tests/verify.test.ts": {
       "total": 128,
       "production": 128
@@ -6144,30 +6392,6 @@
     "tests/world-scope.test.ts": {
       "total": 26,
       "production": 26
-    },
-    "src-tauri/src/runtime/conversation_check/speech_expression.rs": {
-      "total": 169,
-      "production": 169
-    },
-    "src-tauri/src/runtime/conversation_check/speech_expression_tests.rs": {
-      "total": 202,
-      "production": 0
-    },
-    "src-tauri/src/runtime/provider_unit_test_laya.rs": {
-      "total": 47,
-      "production": 47
-    },
-    "src-tauri/src/voice/http_audio/chunk_tests.rs": {
-      "total": 94,
-      "production": 0
-    },
-    "src-tauri/src/voice/http_audio/receive.rs": {
-      "total": 87,
-      "production": 87
-    },
-    "src/features/chat/avatar/speechExpression.ts": {
-      "total": 67,
-      "production": 67
     }
   }
 }

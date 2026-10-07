@@ -26,7 +26,7 @@ pub struct Candidate {
     pub task_request: Option<String>,
     pub replaces: Option<String>,
     #[serde(default)]
-    pub support: super::admission::Support,
+    pub support: admission::Support,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -186,7 +186,7 @@ pub fn spawn(writer: std::sync::Weak<SqliteWriter>) {
             let enabled = super::super::control_plane::memory_enabled();
             if enabled {
                 // Publication failure must not starve durable extraction or cleanup.
-                let _ = writer.transact(|c| super::snapshots::publish(c, super::now()));
+                let _ = writer.transact(|c| super::projection::snapshots::publish(c, super::now()));
             }
             let admission =
                 writer.read_serialized(|c| super::maintenance::admission(c, super::now(), enabled));
@@ -291,3 +291,6 @@ pub fn interrupt() {
 #[path = "worker/review.rs"]
 mod review;
 use review::tick as review_tick;
+
+#[path = "admission.rs"]
+pub mod admission;

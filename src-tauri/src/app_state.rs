@@ -37,6 +37,7 @@ pub(super) struct AppState {
     #[allow(dead_code)]
     pub(crate) context_segments_enabled: bool,
     pub(crate) wire_prefixes: Mutex<std::collections::VecDeque<(String, Vec<u8>)>>,
+    pub(super) media: std::sync::Arc<saaa_media::MediaService>,
 }
 
 #[derive(Clone)]

@@ -236,6 +236,7 @@ pub fn is_supported_agent_tool(name: &str) -> bool {
         || name == RECALL_TOOL_NAME
         || name == crate::memory::personal_state::worker::explicit::TOOL
         || is_typed_recall_tool(name)
+        || name == crate::memory::personal_state::sources::episode_export::SOURCE_TOOL
         || crate::memory::context_still_search::is_search_tool(name)
         || crate::runtime::web_fetch::is_web_fetch_tool(name)
         || name == crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME
@@ -244,7 +245,9 @@ pub fn is_typed_memory_tool(name: &str) -> bool {
     is_typed_recall_tool(name)
 }
 pub fn is_context_still_tool(name: &str) -> bool {
-    is_typed_memory_tool(name) || crate::memory::context_still_search::is_search_tool(name)
+    name == crate::memory::personal_state::sources::episode_export::SOURCE_TOOL
+        || is_typed_memory_tool(name)
+        || crate::memory::context_still_search::is_search_tool(name)
 }
 pub fn context_still_call_key(call: &AgentToolCall) -> Option<String> {
     if !is_context_still_tool(&call.name) {
@@ -324,6 +327,12 @@ pub(super) fn merge_tool_name(
         .chain(TYPED_RECALL_TOOL_NAMES)
         .chain(crate::coding::contracts::NAMES)
         .chain(crate::runtime::web_fetch::WEB_FETCH_TOOL_NAMES)
+        .chain([
+            "search_knowledge",
+            "search_episodes",
+            "fetch_episode",
+            crate::memory::personal_state::sources::episode_export::SOURCE_TOOL,
+        ])
         .chain(std::iter::once(
             crate::voice_behavior::UPDATE_VOICE_BEHAVIOR_TOOL_NAME,
         ))

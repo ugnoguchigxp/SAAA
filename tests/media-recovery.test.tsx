@@ -41,7 +41,7 @@ test("stored predictions are reconciled and reopened without creating a new gene
         mayHaveGenerated: true,
         jobId: "stored-job",
       },
-      updatedAt: "2026-10-05T00:00:00Z",
+      updatedAt: "1791158400000",
     },
   ];
   let submitted = 0;
@@ -73,6 +73,8 @@ test("stored predictions are reconciled and reopened without creating a new gene
   try {
     await act(async () => root.render(<MediaGenerationPanel api={api} />));
     expect(document.body.textContent).toContain("結果未確認");
+    expect(document.body.textContent).not.toContain("Invalid Date");
+    expect(document.body.textContent).toContain("2026");
     await act(async () =>
       [...document.querySelectorAll("button")]
         .find((b) => b.textContent === "進行状況を照会")!

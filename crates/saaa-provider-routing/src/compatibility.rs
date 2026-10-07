@@ -1,7 +1,7 @@
 //! Executable contracts, shared by validation, resolution and UI projection.
 use super::types::*;
 
-pub(crate) fn unsupported_reason(
+pub fn unsupported_reason(
     snapshot: &RegistrySnapshot,
     purpose: Purpose,
     resource_id: &str,

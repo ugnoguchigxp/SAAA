@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-10-07T11:32:50.900441+00:00",
+  "head": "cced8b8177b615b50167841fe760a823c0ecbf8b",
+  "branch": "feat/self-diagnosis-v2",
+  "counts": {
+    "sources": 1716,
+    "commands": 170,
+    "transport": 682,
+    "tests": 3029,
+    "manifests": 9
+  },
+  "changed_during_scan": [],
+  "limitations": [
+    "Static occurrence inventory, not compiled registration or executed test count.",
+    "Owner is a migration default; host adapters and shared transaction orchestration follow the plan exceptions.",
+    "Resolve aliases, wrapper handlers, macros, cfg, parameterization and dynamic event names during H00/H12.",
+    "Source hashes identify the observed dirty worktree; they are not a commit snapshot."
+  ]
+}

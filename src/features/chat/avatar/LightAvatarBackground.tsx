@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AvatarMotion, LightAvatar } from "./model.js";
+import "./lightAvatarBackground.css";
 
 export type AvatarCue = { id: string; motion: AvatarMotion };
 

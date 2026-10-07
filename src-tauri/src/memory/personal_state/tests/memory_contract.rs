@@ -3,7 +3,7 @@ use saaa_personal_state_core::{Kind, Status};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-fn grant(c: &Connection) -> String {
+pub(super) fn grant(c: &Connection) -> String {
     let p: String = c
         .query_row("SELECT principal FROM personal_scope", [], |r| r.get(0))
         .unwrap();
@@ -16,7 +16,7 @@ fn grant(c: &Connection) -> String {
     .unwrap();
     key
 }
-fn result(c: &Connection, key: &str) -> String {
+pub(super) fn result(c: &Connection, key: &str) -> String {
     let (version,sequence,policy,text,epoch,access):(u64,u64,u64,String,u64,u64)=c.query_row("SELECT version,sequence,policy_revision,content,scope_epoch,access_revision FROM memory_episode_source_v1 WHERE source_id='origin' AND scope_key=?1",[key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).unwrap();
     let principal: String = c
         .query_row("SELECT principal FROM personal_scope", [], |r| r.get(0))
@@ -39,7 +39,7 @@ fn export_requires_grant_and_current_scope_epoch_and_response_cannot_survive_for
     let key = grant(&c);
     let payload = result(&c, &key);
     assert!(episode_export::capture(&c, "run", &payload, &["project:other".into()]).is_err());
-    episode_export::capture(&c, "run", &payload, &[key.clone()]).unwrap();
+    episode_export::capture(&c, "run", &payload, std::slice::from_ref(&key)).unwrap();
     episode_export::validate_run(&c, "run").unwrap();
     c.execute(
         "UPDATE context_scope_epochs SET epoch=epoch+1 WHERE scope_key=?1",
@@ -54,7 +54,7 @@ fn export_requires_grant_and_current_scope_epoch_and_response_cannot_survive_for
     )
     .unwrap();
     assert!(episode_export::validate_run(&c, "run").is_err());
-    episode_export::capture(&c, "run", &result(&c, &key), &[key.clone()]).unwrap();
+    episode_export::capture(&c, "run", &result(&c, &key), std::slice::from_ref(&key)).unwrap();
     insert(&c, "answer", "京都についての派生回答");
     c.execute(
         "INSERT INTO memory_episode_artifacts VALUES('run','answer')",
@@ -86,7 +86,7 @@ fn revoked_grant_or_scope_and_edited_source_invalidate_episode_immediately() {
         [&key],
     )
     .unwrap();
-    assert!(episode_export::capture(&c, "run", &payload, &[key.clone()]).is_err());
+    assert!(episode_export::capture(&c, "run", &payload, std::slice::from_ref(&key)).is_err());
     c.execute(
         "UPDATE memory_episode_grants SET enabled=1,revision=revision+1 WHERE scope_key=?1",
         [&key],
@@ -98,7 +98,7 @@ fn revoked_grant_or_scope_and_edited_source_invalidate_episode_immediately() {
         [],
     )
     .unwrap();
-    assert!(episode_export::capture(&c, "run", &payload, &[key.clone()]).is_err());
+    assert!(episode_export::capture(&c, "run", &payload, std::slice::from_ref(&key)).is_err());
     c.execute(
         "UPDATE context_scopes SET state='revoked' WHERE scope_key=?1",
         [&key],
@@ -206,7 +206,7 @@ fn scope_snapshot(c: &Connection, key: &str) -> crate::runtime::context::scope::
         }],
     }
 }
-fn bind(c: &Connection, id: &str, key: &str) {
+pub(super) fn bind(c: &Connection, id: &str, key: &str) {
     c.execute(
         "INSERT INTO personal_source_scope_refs VALUES(?1,1,?2)",
         params![id, key],
@@ -257,7 +257,13 @@ async fn published_snapshot_is_stable_and_pending_correction_and_forget_disable_
             snapshots::publish(c, now())?;
             let current = snapshots::read(c, &scope_snapshot(c, &key), "question")?;
             assert_ne!(initial, current);
-            assert!(episode_export::capture(c, "late-old", &old_episode, &[key.clone()]).is_err());
+            assert!(episode_export::capture(
+                c,
+                "late-old",
+                &old_episode,
+                std::slice::from_ref(&key)
+            )
+            .is_err());
             assert!(!current.join("").contains("甘いもの"));
             c.execute(
                 "DELETE FROM conversation_messages WHERE id='correction'",
@@ -381,9 +387,13 @@ async fn same_body_new_evidence_changes_private_stamp_and_ambiguous_update_is_he
                 snapshots::read(c, &scope_snapshot(c, &key), "question")?
             );
             assert_ne!(stamp, snapshots::stamp(c, &scope_snapshot(c, &key))?);
-            assert!(
-                episode_export::capture(c, "same-body", &result(c, &key), &[key.clone()]).is_ok()
-            );
+            assert!(episode_export::capture(
+                c,
+                "same-body",
+                &result(c, &key),
+                std::slice::from_ref(&key)
+            )
+            .is_ok());
             insert(c, "ambiguous", "辛いものが好きです。");
             bind(c, "ambiguous", &key);
             Ok(())
@@ -411,4 +421,71 @@ async fn same_body_new_evidence_changes_private_stamp_and_ambiguous_update_is_he
             Ok(())
         })
         .unwrap();
+}
+
+#[test]
+fn episode_original_fetch_is_versioned_bounded_and_requires_recalled_authorized_reference() {
+    let c = db();
+    let key = grant(&c);
+    let text = "京都の原文。".repeat(1600);
+    insert(&c, "origin", &text);
+    insert(&c, "question", "原文を見せて");
+    c.execute("INSERT INTO runtime_runs(id,conversation_id,route_kind,status,input_message_id,started_at) VALUES('run',?1,'conversation.respond','running','question','1')",[crate::PRIMARY_CONVERSATION_ID]).unwrap();
+    c.execute("INSERT INTO runtime_scope_resolutions(run_id,status,focus_scope_key,scope_digest,resolved_at) VALUES('run','resolved',?1,?2,'1')",params![key,"a".repeat(64)]).unwrap();
+    c.execute(
+        "INSERT INTO runtime_run_scopes VALUES('run',?1,'focus','runtime',0)",
+        [&key],
+    )
+    .unwrap();
+    let request = json!({"id":"episode","sourceKey":"immutable","sourceId":"origin"}).to_string();
+    assert!(episode_export::fetch_source(&c, "run", &request).is_err());
+    episode_export::capture(&c, "run", &result(&c, &key), std::slice::from_ref(&key)).unwrap();
+    let first: Value =
+        serde_json::from_str(&episode_export::fetch_source(&c, "run", &request).unwrap()).unwrap();
+    assert!(first["text"].as_str().unwrap().len() <= 8192);
+    assert_eq!(first["truncated"], true);
+    assert_eq!(
+        first["text"],
+        text[..first["range"]["end"].as_u64().unwrap() as usize]
+    );
+    let next=json!({"id":"episode","sourceKey":"immutable","sourceId":"origin","offset":first["nextOffset"]}).to_string();
+    assert!(episode_export::fetch_source(&c, "run", &next).is_ok());
+    let foreign = json!({"id":"episode","sourceKey":"immutable","sourceId":"question"}).to_string();
+    assert!(episode_export::fetch_source(&c, "run", &foreign).is_err());
+    c.execute(
+        "UPDATE conversation_messages SET content='訂正後の原文' WHERE id='origin'",
+        [],
+    )
+    .unwrap();
+    assert!(episode_export::fetch_source(&c, "run", &next).is_err());
+}
+
+#[test]
+fn forgetting_snapshot_evidence_erases_saved_derived_answer() {
+    let c = db();
+    insert(&c, "origin", "本人の嗜好です。");
+    insert(&c, "derived", "本人の嗜好に基づく回答");
+    let source = sources::load(&c, 1, 0, 8192).unwrap();
+    episode_export::capture_snapshot_inputs(
+        &c,
+        "snapshot-run",
+        &std::collections::BTreeSet::from([source.source.key]),
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO memory_episode_artifacts VALUES('snapshot-run','derived')",
+        [],
+    )
+    .unwrap();
+    c.execute("DELETE FROM conversation_messages WHERE id='origin'", [])
+        .unwrap();
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM conversation_messages WHERE id='derived'",
+            [],
+            |r| r.get::<_, u32>(0)
+        )
+        .unwrap(),
+        0
+    );
 }

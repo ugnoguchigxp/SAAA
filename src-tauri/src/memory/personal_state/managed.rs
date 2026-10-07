@@ -74,7 +74,7 @@ impl Adapter {
             .ok_or("personal-extraction-source")?;
         self.certification
             .check(&source.access.principal, super::now())?;
-        let messages = json!([{"role":"system","content":input["instruction"]},{"role":"user","content":super::encode(&json!({"current":input["current"],"dialogue":input["dialogue"],"now":input["now"],"source_ref":source.key,"request_scope":input["request_scope"],"instructionAuthority":"none"}))?}]);
+        let messages = json!([{"role":"system","content":input["instruction"]},{"role":"user","content":super::encode(&json!({"current":input["current"],"dialogue":input["dialogue"],"now":input["now"],"source_ref":source.key,"source":{"role":source.role,"recorded_at":source.recorded_at,"finalized":source.finalized},"request_scope":input["request_scope"],"instructionAuthority":"none"}))?}]);
         let base_tokens = self.delivery.measure(&messages, cancel.clone()).await?;
         self.certification
             .budget()
@@ -229,15 +229,6 @@ impl Adapter {
             let mut sources = prepared.exposed;
             if !sources.iter().any(|s| s.key == source.key) {
                 sources.push(source.clone());
-            }
-            for a in ledger.assertions.values() {
-                for k in &a.input_dependencies {
-                    if let Some(s) = ledger.sources.get(k) {
-                        if !sources.iter().any(|prior| prior.key == s.key) {
-                            sources.push(s.clone());
-                        }
-                    }
-                }
             }
             let m = generation::Manifest {
                 request_digest: generation::request_digest(&json!({"model":self.certification.model,"messages":messages,"max_tokens":2000,"stream":false}))?,

@@ -1,0 +1,23 @@
+[package]
+name = "saaa-feature-lab"
+version = "0.1.0"
+license = "MIT"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+fs2 = "0.4"
+libc = "0.2"
+rusqlite = { version = "0.37", features = ["bundled"] }
+saaa-larm-session = { path = "../../crates/larm-session" }
+saaa-media = { path = "../../crates/saaa-media" }
+saaa-provider-routing = { path = "../../crates/saaa-provider-routing" }
+serde = { version = "1", features = ["derive"] }
+futures-util = "0.3"
+serde_json = "1"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
